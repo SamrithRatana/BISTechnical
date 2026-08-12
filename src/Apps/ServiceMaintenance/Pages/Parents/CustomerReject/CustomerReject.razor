@@ -1,0 +1,1389 @@
+@page "/customer-reject"
+@page "/customer-reject/{ReportNo}"
+
+@using ServiceMaintenance.Models
+@using Microsoft.AspNetCore.SignalR.Client
+@using System.Timers
+@using ServiceMaintenance.Pages.Reports
+@using ServiceMaintenance.Services
+@using Syncfusion.Blazor.Cards
+@inject RepairItemService RepairItemService
+@inject CustomerService CustomerService
+@inject NavigationManager NavigationManager
+@inject StateManagementAction StateManagementAction
+@inject ServiceSparePart SparePartService
+  @inject IJSRuntime JSRuntime
+ @inject CustomerRejectedService CustomerRejectedService
+@inject GlobalUserService GlobalUserCache
+@inject PrintPreviewService PrintPreviewService
+@implements IAsyncDisposable
+<DxToastProvider Name="Customization"
+                 MaxToastCount="5"
+                 HorizontalAlignment="HorizontalAlignment.Right"
+                 VerticalAlignment="VerticalEdge.Top"
+                 AnimationType="@Animation" />
+<DxToastProvider Name="Error"
+                 MaxToastCount="5"
+                 HorizontalAlignment="HorizontalAlignment.Right"
+                 VerticalAlignment="VerticalEdge.Top"
+                 AnimationType="@Animation" />
+<ActionToolbox CanCreate="CanCreate"
+               CanEdit="CanEdit"
+               CanDelete="CanDelete"
+               CanExport="CanExport"
+               IsCreateEnabled="false"
+               IsEditEnabled="false"
+               IsDeleteEnabled="false"
+               IsExportEnabled="@exportEnabled"
+               OnCreate="NewRepairService_Click"
+               OnEdit="EditRepairService_Click"
+               OnExportExcel="ExportToExcel"
+               OnExportPdf="ExportToPdf">
+    <CustomActions>
+        @if (CanPrint)
+        {
+            <button class="btn btn-sm btn-outline-secondary compact-btn" @onclick="() => ShowReportPreview(_selectedRepairService)" disabled="@(!printEnabled)">
+                <i class="fas fa-print me-1"></i> Print Report
+            </button>
+        }
+    </CustomActions>
+</ActionToolbox>
+<SfMediaQuery @bind-ActiveBreakPoint="activeBreakpoint"></SfMediaQuery>
+@{
+    bool enableAdaptiveUIMode = false;
+    RowDirection renderingMode = RowDirection.Vertical; // Default rendering mode
+
+    // Set properties based on the active breakpoint
+    if (activeBreakpoint == "Small")
+    {
+        enableAdaptiveUIMode = true;
+        renderingMode = RowDirection.Vertical; // Stack items vertically
+    }
+    else if (activeBreakpoint == "Medium")
+    {
+        enableAdaptiveUIMode = true; 
+        renderingMode = RowDirection.Horizontal;
+    }
+    else
+    {
+        enableAdaptiveUIMode = false;
+    }
+}
+@if (CanAccess)
+{
+@if (CanView)
+{
+  @if (isGridView)
+    {
+    <div style="margin-bottom: 15px; padding: 15px; background-color: #f9f9f9; border-radius: 4px;">
+        <div style="display: flex; gap: 10px; align-items: center;">
+
+            <SfTextBox @ref="GridSearchBox"
+                       Placeholder="Search by Report No, Company, Serial Number..."
+                       ShowClearButton="true"
+                       Width="400px"
+                       @bind-Value="GridSearchValue"
+                       Input="OnGridSearchInput">
+            </SfTextBox>
+
+            <SfButton Content="Search"
+                      CssClass="e-btn e-primary"
+                      IconCss="fas fa-search"
+                      OnClick="PerformGridSearch" />
+
+            <SfButton Content="Clear"
+                      CssClass="e-btn e-outline"
+                      IconCss="fas fa-times"
+                      OnClick="ClearGridSearch" />
+        </div>
+
+        @if (!string.IsNullOrEmpty(GridSearchValue))
+        {
+            <div style="margin-top: 10px; color: #666; font-size: 14px;">
+                <i class="fas fa-info-circle"></i>
+                Searching for: <strong>@GridSearchValue</strong>
+            </div>
+        }
+    </div>
+
+    <SfGrid @ref="MyGrid"
+            DataSource="@filteredRepairServices2"
+            AllowPaging="false"
+            AllowSorting="true"
+            ShowColumnChooser="true"
+            AllowExcelExport="true"
+            AllowPdfExport="true"
+            SelectionMode="GridSelectionMode.Single"
+            Toolbar="@ToolbarItems"
+            EnableAdaptiveUI="@enableAdaptiveUIMode"
+            RowRenderingMode="@renderingMode"
+                    AllowResizing="true"
+                    AllowFiltering="true"
+            AllowSelection="true">
+        <GridFilterSettings Type="Syncfusion.Blazor.Grids.FilterType.Excel"></GridFilterSettings>
+        <GridEvents RowSelected="RowSelectHandler" TValue="RepairServices"></GridEvents>
+        <GridColumns>
+            <GridColumn Field="Id" HeaderText="Id" Width="150" Format="d" Visible="false" />
+            <GridColumn Field="reportNo" HeaderText="@Loc[nameof(ResourceStrings.Textref)]" Width="150" />
+            <GridColumn Field="customerRejectedDate"
+                        HeaderText="@Loc[nameof(ResourceStrings.TextDate)]"
+                        Width="150">
+                <Template>
+                    @{
+                        var item = context as RepairServices;
+                        var localTime = item.customerRejectedDate?.ToLocalTime();
+                    }
+                    @(localTime?.ToString("dd/MM/yyyy hh:mm tt") ?? "N/A")
+                </Template>
+            </GridColumn>            <GridColumn Field="CompanyName" HeaderText="@Loc[nameof(ResourceStrings.TextCompanyName)]" Width="200" />
+            <GridColumn Field="itemName" HeaderText="@Loc[nameof(ResourceStrings.TextItemName)]" Width="200" />
+            <GridColumn Field="serialNumber" HeaderText="@Loc[nameof(ResourceStrings.TextSerialNumber)]" Width="200" />
+            <GridColumn Field="ServiceLocation" HeaderText="@Loc[nameof(ResourceStrings.TextServiceLocation)]" Width="200" />
+                    <GridColumn Field="Status" HeaderText="@Loc[nameof(ResourceStrings.TextStatus)]" Width="150">
+                        <Template>
+                            @{
+                                var item = context as RepairServices;
+                                var khmerStatus = GetKhmerStatus(item?.Status);
+                            }
+                            @khmerStatus
+                        </Template>
+                    </GridColumn>
+                    <GridColumn Field="setCustomerRejectedBy" HeaderText="@Loc[nameof(ResourceStrings.TextSetCustomerReject)]" Width="150">
+                <Template>
+                    @{
+                        var item = context as RepairServices;
+                        var username = GetUserNameById(item.setCustomerRejectedBy);
+                    }
+                    @username
+                </Template>
+            </GridColumn>
+            <GridColumn HeaderText="Actions" Width="120">
+                <Template>
+                    @{
+                        var item = context as RepairServices;
+                    }
+                    <DxButton IconCssClass="fas fa-eye"
+                              CssClass="icon-button info"
+                              RenderStyle="ButtonRenderStyle.Info"
+                              RenderStyleMode="ButtonRenderStyleMode.Text"
+                              Text="@Loc[nameof(ResourceStrings.TextView)]"
+                              @onclick="() => ShowRepairServiceDetails(item)" />
+                </Template>
+            </GridColumn>
+        </GridColumns>
+    </SfGrid>
+
+    <!-- Custom Pagination -->
+            <FooterPagination CurrentPage="currentGridPage"
+                              TotalPages="totalGridPages"
+                              TotalItems="totalGridItems"
+                              PageSize="gridPageSize"
+                              OnFirstPage="GridFirstPage"
+                              OnPreviousPage="GridPreviousPage"
+                              OnNextPage="GridNextPage"
+                              OnLastPage="GridLastPage" />
+    }
+@* Replace the entire section starting from "else" block (around line 180) in customer-reject.razor *@
+
+else
+{
+    <div class="row">
+        @* Properties Panel - Shows first on mobile due to order-first class *@
+        <div class="col-lg-3 order-lg-2 order-first property-section">
+            <div class="property-panel-section">
+                <div class="property-panel-header">Properties</div>
+                <div class="property-panel-content">
+                    <table class="table">
+                        <tr>
+                            <td>
+                                <SfTextBox Placeholder="Search services"
+                                           ShowClearButton="true"
+                                           Width="100%"
+                                           ValueChange="OnSearch"
+                                           @oninput="OnInputClick"
+                                           @bind-Value="SearchValue">
+                                </SfTextBox>
+                            </td>
+                        </tr>
+                        <tr>
+                            <td>
+                                <SfDropDownList TValue="string"
+                                                TItem="string"
+                                                DataSource="@SortingType"
+                                                Placeholder="Sorting order"
+                                                Width="100%"
+                                                @bind-Value="SortingValue">
+                                    <DropDownListEvents TValue="string" TItem="string" ValueChange="OnSorting"></DropDownListEvents>
+                                </SfDropDownList>
+                            </td>
+                        </tr>
+                        <tr>
+                            <td>
+                                <SfMultiSelect TValue="string[]"
+                                               TItem="ServiceStatus"
+                                               AllowFiltering="true"
+                                               DataSource="@_serviceStatuses"
+                                               Placeholder="Select Service Statuses"
+                                               ShowClearButton="true"
+                                               Width="100%"
+                                               @bind-Value="FilteringValue">
+                                    <MultiSelectFieldSettings Text="Name" Value="Id" />
+                                    <MultiSelectEvents TValue="string[]" TItem="ServiceStatus" ValueChange="OnFiltering"></MultiSelectEvents>
+                                </SfMultiSelect>
+                            </td>
+                        </tr>
+                        <tr>
+                            <td>
+                                <SfButton Content="Reset" OnClick="OnReset" CssClass="w-100"></SfButton>
+                            </td>
+                        </tr>
+                    </table>
+                </div>
+            </div>
+        </div>
+
+        @* Cards Section - Shows second on mobile, first on large screens *@
+        <div class="col-lg-9 order-lg-1 order-last">
+            <div class="e-card-layout">
+                @if (filteredRepairServices == null || !filteredRepairServices.Any())
+                {
+                    <div class="e-error">
+                        <div class="e-error-content">No results found. Please try a different search.</div>
+                    </div>
+                }
+                else
+                {
+                    <div class="row">
+                        @foreach (RepairServices service in PaginatedRepairServices)
+                        {
+                            var companyName = string.IsNullOrEmpty(service.CompanyName) ? "N/A" : service.CompanyName;
+                            var serviceDate = service.ServiceDate != default(DateTime) ? service.ServiceDate.ToString("dd/MM/yyyy HH:mm tt") : "N/A";
+                            var customerType = GetCustomerType(service.CompanyName);
+                            var imagePath = GetImagePath(customerType);
+
+                            <div class="col-lg-3 col-md-4 col-sm-6" style="padding: 15px;">
+                                <div id="card_sample_1" class="card_sample">
+                                    <SfCard>
+                                        <CardImage Image="@imagePath" />
+
+                                        <CardHeader Title="@companyName" SubTitle="@serviceDate" />
+
+                                        <CardContent>
+                                            <div style="display: flex; align-items: center; justify-content: space-between;">
+                                                <div>
+                                                    <strong>@Loc[nameof(ResourceStrings.Textref)]:</strong>
+                                                    <span style="color: red;">@(service.reportNo ?? "N/A")</span>
+                                                </div>
+                                                <button class="view-icon" @onclick="() => ShowRepairServiceDetails(service)">
+                                                    <i class="fa fa-eye" aria-hidden="true"></i> View
+                                                </button>
+                                            </div>
+
+                                            <div><strong>@Loc[nameof(ResourceStrings.TextItemName)]:</strong> @(service.itemName ?? "N/A")</div>
+                                            <div><strong>@Loc[nameof(ResourceStrings.TextSerialNumber)]:</strong> @(service.serialNumber ?? "N/A")</div>
+                                            <div><strong>@Loc[nameof(ResourceStrings.TextServiceLocation)]:</strong> @(service.ServiceLocation ?? "N/A")</div>
+
+                                            <div>
+                                                <strong>@Loc[nameof(ResourceStrings.TextStatus)]:</strong>
+                                                <span class="@GetStatusClass(service.Status)">
+                                                    @(service.Status ?? "N/A")
+                                                </span>
+                                            </div>
+                                        </CardContent>
+
+                                        <CardFooter>
+                                            <CardFooterContent>
+                                                <SfButton CssClass="e-btn e-outline e-primary" @onclick="() => OnApplyButtonClick(service)">
+                                                    @Loc[nameof(ResourceStrings.TextCustomerReject)]
+                                                </SfButton>
+                                            </CardFooterContent>
+                                        </CardFooter>
+                                    </SfCard>
+                                </div>
+                            </div>
+                        }
+                    </div>
+
+                            <FooterPagination CurrentPage="currentPage"
+                                              TotalPages="totalPages"
+                                              TotalItems="totalItems"
+                                              PageSize="pageSize"
+                                              OnFirstPage="GoToFirstPageCard"
+                                              OnPreviousPage="GoToPreviousPage"
+                                              OnNextPage="GoToNextPage"
+                                              OnLastPage="GoToLastPageCard" />
+                    <br />
+                }
+            </div>
+        </div>
+    </div>
+    }
+  }
+}
+<RepairServiceViewDialog Service="_selectedRepairService"
+                         @bind-Visible="isViewDialogVisible"
+                         SpareParts="_spareParts.ToList()"
+                         GetUserNameById="GetUserNameById"
+                         StatusLabelResolver="GetKhmerStatus"
+                         AllowEditRemarks="false" />
+<PrintPreviewSidebar @bind-IsOpen="isPrintSidebarOpen"
+                     Base64Pdf="@_printPreviewBase64"
+                     ReportNo="@(_selectedRepairService?.reportNo)" />
+@code {
+    [Parameter] public string ReportNo { get; set; }
+    private SfGrid<RepairServices> MyGrid;
+    ToastAnimationType Animation { get; set; } = ToastAnimationType.Slide;
+    private string activeBreakpoint { get; set; }
+    public string[] ToolbarItems = new string[] { "ColumnChooser" };
+    private IEnumerable<RepairServices> filteredRepairServices = new List<RepairServices>();
+    private IEnumerable<RepairServices> filteredRepairServices2 = new List<RepairServices>();
+    private IEnumerable<ServiceStatus> _serviceStatuses;
+    private IEnumerable<RepairServices> PaginatedRepairServices = new List<RepairServices>();
+    private IEnumerable<SparePartObject> _spareParts = Enumerable.Empty<SparePartObject>();
+    private HubConnection hubConnection;
+    private string SearchValue { get; set; }
+    private string SortingValue { get; set; }
+    private string[] FilteringValue { get; set; }
+    public List<string> SortingType = new List<string>() { "Ascending", "Descending" };
+    private IEnumerable<Customer> _customers = new List<Customer>();
+    private bool isViewDialogVisible = false;
+
+    // Card View Pagination
+    private int currentPage = 1;
+    private int pageSize = 10;
+    private int totalPages = 0;
+    private int totalItems = 0;
+
+    // Grid View Pagination
+    private int currentGridPage = 1;
+    private int gridPageSize = 10;
+    private int totalGridPages = 0;
+    private int totalGridItems = 0;
+
+
+    private SfTextBox GridSearchBox;
+    private string GridSearchValue { get; set; }
+    private System.Threading.Timer _gridSearchDebounceTimer;
+
+    private SfDialog ConfirmationDialog;
+    private string pageTitle = "Edit Repair Service";
+    private CustomerRejectedRequest customerRejected = new CustomerRejectedRequest();
+    private RepairServices _selectedRepairService;
+    private bool isConfirmationDialogVisible = false;
+    private bool isGridView = true;
+    private bool exportEnabled = true;
+    private bool printEnabled = true;
+    private Dictionary<string, string> _allUsers = new Dictionary<string, string>();
+    private bool _usersLoaded = false;
+    private bool _isPrintSidebarOpen = false;
+    private bool isPrintSidebarOpen
+    {
+        get => _isPrintSidebarOpen;
+        set
+        {
+            _isPrintSidebarOpen = value;
+            if (!value) _printPreviewBase64 = string.Empty;
+        }
+    }
+    private string _printPreviewBase64 = string.Empty;
+    private string GetKhmerStatus(string englishStatus)
+    {
+        if (string.IsNullOrEmpty(englishStatus))
+            return string.Empty;
+
+        var statusMap = new Dictionary<string, string>
+    {
+        { "Item Recieved", "ម៉ាស៊ីនចូល" },
+        { "Inspection", "កំពុងវិនិច្ឆ័យ" },
+        { "Awaiting Customer Confirm", "រង់ចាំយល់ព្រមពីភ្ញៀវ" },
+        { "Awaiting Sparepart", "រង់ចាំគ្រឿងបន្លាស់" },
+        { "Repairing", "កំពុងជួសជុល" },
+        { "Finished", "ជួសជុលរួចរាល់" },
+        { "Customer Rejected", "អតិថិជនមិនជួសជុល" },
+        { "Unrepairable", "ជួសជុលមិនបាន" },
+        { "Repair by Third-Party", "ជួសជុលដោយជាងខាងក្រៅ" }
+    };
+
+        if (englishStatus.Contains("(Historical)"))
+        {
+            var baseStatus = englishStatus.Replace(" (Historical)", "").Trim();
+            return statusMap.ContainsKey(baseStatus)
+                ? $"{statusMap[baseStatus]} (ប្រវត្តិ)"
+                : englishStatus;
+        }
+
+        return statusMap.ContainsKey(englishStatus)
+            ? statusMap[englishStatus]
+            : englishStatus;
+    }
+    protected override async Task OnInitializedAsync()
+    {
+        await base.OnInitializedAsync();
+        try
+        {
+            await LoadAllUsersAsync();
+
+            // ✅ OPTIMIZED Card View (exclude specific statuses)
+            var cardViewResult = await RepairItemService.SearchRepairServicesAsync(
+                pageNumber: currentPage,
+                pageSize: pageSize,
+                sortBy: "reportNo",
+                sortDescending: true,
+                excludedStatuses: new[]
+                {
+                "Customer Rejected",
+                "Finished",
+                "Repairing"
+                }
+            );
+
+            filteredRepairServices = cardViewResult.Items ?? new List<RepairServices>(); // ✅ Null-safe
+            totalPages = cardViewResult.TotalPages;
+            totalItems = cardViewResult.TotalCount;
+
+            // ✅ Grid View (ONLY Awaiting Customer Confirm)
+            var gridViewResult = await RepairItemService.SearchRepairServicesAsync(
+                pageNumber: currentGridPage,
+                pageSize: gridPageSize,
+                status: "Customer Rejected",
+                sortBy: "reportNo",
+                sortDescending: true
+            );
+
+            filteredRepairServices2 = gridViewResult.Items ?? new List<RepairServices>(); // ✅ Null-safe
+            totalGridPages = gridViewResult.TotalPages;
+            totalGridItems = gridViewResult.TotalCount;
+
+            UpdatePagination();
+
+            // Load other data
+
+
+
+            // ✅ Load customers with null safety
+            var customerResult = await CustomerService.GetCustomersPaginatedAsync(pageNumber: 1, pageSize: 10);
+            _customers = customerResult?.Data ?? new List<Customer>(); // ✅ Null-safe
+
+            _serviceStatuses = await RepairItemService.GetServiceStatusesAsync();
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Error loading data: {ex.Message}");
+            // ✅ Initialize with empty collections on error
+            filteredRepairServices = new List<RepairServices>();
+            filteredRepairServices2 = new List<RepairServices>();
+            _customers = new List<Customer>();
+            PaginatedRepairServices = new List<RepairServices>();
+        }
+
+        // SignalR
+        hubConnection = new HubConnectionBuilder()
+            .WithUrl(Navigation.ToAbsoluteUri("/itemHub"))
+            .Build();
+
+        // ✅ FIX: was On<string> — server broadcasts ItemUpdateMessage
+        hubConnection.On<ItemUpdateMessage>("ReceiveItemUpdate", async (msg) =>
+        {
+            await LoadPageData();
+            await InvokeAsync(StateHasChanged);
+        });
+
+        hubConnection.On<Guid>("BroadcastItemDelete", async (deletedItemId) =>
+        {
+            await LoadPageData();
+            await InvokeAsync(StateHasChanged);
+        });
+
+        await hubConnection.StartAsync();
+
+        // ✅ ADDED — auto-reconnect
+        hubConnection.Closed += async (error) =>
+        {
+            Console.WriteLine($"⚠️ SignalR closed: {error?.Message}. Reconnecting...");
+            await Task.Delay(new Random().Next(0, 5) * 1000);
+            try
+            {
+                await hubConnection.StartAsync();
+                await InvokeAsync(async () =>
+                {
+                    await LoadPageData();
+                    StateHasChanged();
+                });
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"❌ SignalR reconnection failed: {ex.Message}");
+            }
+        };
+    }
+    private async Task LoadAllUsersAsync()
+    {
+        if (_usersLoaded)
+            return;
+
+        try
+        {
+            Console.WriteLine("📥 Loading all users from API...");
+            _allUsers = await GlobalUserCache.GetUsersAsync();
+            _usersLoaded = true;
+            Console.WriteLine($"✅ Loaded {_allUsers.Count} users into cache");
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"❌ Error loading users: {ex.Message}");
+            _allUsers = new Dictionary<string, string>();
+        }
+    }
+    private async Task LoadPageData()
+    {
+        try
+        {
+            if (isGridView)
+            {
+                // Grid View = ONLY Awaiting Customer Confirm
+                var result = await RepairItemService.SearchRepairServicesAsync(
+                    pageNumber: currentGridPage,
+                    pageSize: gridPageSize,
+                    status: "Customer Rejected",
+                    sortBy: "reportNo",
+                    sortDescending: true
+                );
+
+                filteredRepairServices2 = result.Items;
+                totalGridPages = result.TotalPages;
+                totalGridItems = result.TotalCount;
+            }
+            else
+            {
+                // Card View = EXCLUDE bad statuses
+                var result = await RepairItemService.SearchRepairServicesAsync(
+                    pageNumber: currentPage,
+                    pageSize: pageSize,
+                    sortBy: "reportNo",
+                    sortDescending: true,
+                    excludedStatuses: new[]
+                    {
+                    "Customer Rejected",
+                    "Finished",
+                    "Repairing"
+                    }
+                );
+
+                filteredRepairServices = result.Items;
+                totalPages = result.TotalPages;
+                totalItems = result.TotalCount;
+            }
+
+            UpdatePagination();
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Error loading page data: {ex.Message}");
+        }
+    }
+    private async Task GoToFirstPageCard()
+    {
+        if (currentPage != 1)
+        {
+            currentPage = 1;
+            if (isGridView)
+                await LoadPageData();
+            else
+                UpdatePagination();
+            StateHasChanged();
+        }
+    }
+
+    private async Task GoToLastPageCard()
+    {
+        if (currentPage != totalPages)
+        {
+            currentPage = totalPages;
+            if (isGridView)
+                await LoadPageData();
+            else
+                UpdatePagination();
+            StateHasChanged();
+        }
+    }
+    private async Task GridNextPage()
+    {
+        if (currentGridPage < totalGridPages)
+        {
+            currentGridPage++;
+            await LoadGridData();
+            StateHasChanged();
+        }
+    }
+
+    private async Task GridPreviousPage()
+    {
+        if (currentGridPage > 1)
+        {
+            currentGridPage--;
+            await LoadGridData();
+            StateHasChanged();
+        }
+    }
+
+    private async Task GridFirstPage()
+    {
+        if (currentGridPage != 1)
+        {
+            currentGridPage = 1;
+            await LoadGridData();
+            StateHasChanged();
+        }
+    }
+
+    private async Task GridLastPage()
+    {
+        if (currentGridPage != totalGridPages)
+        {
+            currentGridPage = totalGridPages;
+            await LoadGridData();
+            StateHasChanged();
+        }
+    }
+
+    private async void ToggleView()
+    {
+        isGridView = !isGridView;
+        exportEnabled = isGridView;
+        printEnabled = isGridView;
+
+        if (isGridView)
+        {
+            currentGridPage = 1;
+            GridSearchValue = string.Empty; // Clear search
+            await LoadGridData();
+        }
+        else
+        {
+            currentPage = 1;
+            SearchValue = string.Empty;
+            await LoadPageData();
+        }
+
+        StateHasChanged();
+    }
+
+
+    private async Task LoadGridData()
+    {
+        try
+        {
+            var result = await RepairItemService.SearchRepairServicesAsync(
+                pageNumber: currentGridPage,
+                pageSize: gridPageSize,
+                status: "Customer Rejected",
+                searchTerm: string.IsNullOrWhiteSpace(GridSearchValue) ? null : GridSearchValue.Trim(),
+                sortBy: "reportNo",
+                sortDescending: true
+            );
+
+            filteredRepairServices2 = result.Items;
+            totalGridPages = result.TotalPages;
+            totalGridItems = result.TotalCount;
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Error loading grid data: {ex.Message}");
+        }
+    }
+    private void RowSelectHandler(RowSelectEventArgs<RepairServices> args)
+    {
+        if (args.Data != null)
+        {
+            _selectedRepairService = args.Data;
+
+
+        }
+    }
+    private string GetUserNameById(Guid? userId)
+    {
+        if (!userId.HasValue || userId.Value == Guid.Empty)
+            return "Unknown";
+
+        string userIdString = userId.Value.ToString();
+
+        if (!_usersLoaded)
+            return "Loading...";
+
+        if (_allUsers.TryGetValue(userIdString, out string username))
+            return username;
+
+        return "Unknown User";
+    }
+    private void UpdatePagination()
+    {
+        try
+        {
+            if (isGridView)
+            {
+                // ✅ Null-safe grid view pagination
+                var gridItems = filteredRepairServices2 ?? new List<RepairServices>();
+                totalPages = (int)Math.Ceiling((double)gridItems.Count() / pageSize);
+                PaginatedRepairServices = gridItems
+                    .Skip((currentPage - 1) * pageSize)
+                    .Take(pageSize)
+                    .ToList();
+            }
+            else
+            {
+                // ✅ Null-safe card view pagination
+                var cardItems = filteredRepairServices ?? new List<RepairServices>();
+                totalPages = (int)Math.Ceiling((double)cardItems.Count() / pageSize);
+                PaginatedRepairServices = cardItems
+                    .Skip((currentPage - 1) * pageSize)
+                    .Take(pageSize)
+                    .ToList();
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"❌ Error in UpdatePagination: {ex.Message}");
+            PaginatedRepairServices = new List<RepairServices>();
+            totalPages = 0;
+        }
+    }
+
+    // Go to the previous page
+    private async Task GoToPreviousPage()
+    {
+        if (currentPage > 1)
+        {
+            currentPage--;
+
+            if (isGridView)
+            {
+                await LoadPageData();
+            }
+            else
+            {
+                UpdatePagination();
+            }
+
+            StateHasChanged();
+        }
+    }
+
+    // Go to the next page
+    private async Task GoToNextPage()
+    {
+        if (currentPage < totalPages)
+        {
+            currentPage++;
+
+            if (isGridView)
+            {
+                await LoadPageData();
+            }
+            else
+            {
+                UpdatePagination();
+            }
+
+            StateHasChanged();
+        }
+    }
+
+    private bool IsFirstPage => currentPage == 1;
+
+    private bool IsLastPage => currentPage == totalPages;
+
+
+    public async Task ExportToExcel()
+    {
+        await MyGrid.ExportToExcelAsync();
+    }
+    public async Task ExportToPdf()
+    {
+        await MyGrid.ExportToPdfAsync();
+    }
+    private void NewRepairService_Click()
+    {
+
+    }
+    private void EditRepairService_Click()
+    {
+
+    }
+  
+    private async Task PerformGridSearch()
+    {
+        if (string.IsNullOrWhiteSpace(GridSearchValue))
+        {
+            await LoadGridData();
+            return;
+        }
+
+        await PerformGridSearchInternal(GridSearchValue);
+    }
+
+    private async Task PerformGridSearchInternal(string searchValue)
+    {
+        try
+        {
+            var result = await RepairItemService.SearchRepairServicesAsync(
+                pageNumber: 1,
+                pageSize: gridPageSize,
+                status: "Customer Rejected",
+                searchTerm: searchValue.Trim(),
+                sortBy: "reportNo",
+                sortDescending: true
+            );
+
+            filteredRepairServices2 = result.Items;
+            totalGridPages = result.TotalPages;
+            totalGridItems = result.TotalCount;
+            currentGridPage = 1;
+
+            StateHasChanged();
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Grid search error: {ex.Message}");
+
+            ToastNotificationService.ShowToast(new ToastOptions
+            {
+                ProviderName = "Error",
+                Title = "Search Error",
+                Text = $"Failed to search: {ex.Message}",
+                ThemeMode = ToastThemeMode.Pastel,
+                RenderStyle = ToastRenderStyle.Danger
+            });
+        }
+    }
+
+    private void OnGridSearchInput(InputEventArgs args)
+    {
+        _gridSearchDebounceTimer?.Dispose();
+
+        if (string.IsNullOrWhiteSpace(args.Value))
+        {
+            _ = Task.Run(async () =>
+            {
+                await InvokeAsync(async () =>
+                {
+                    await LoadGridData();
+                    StateHasChanged();
+                });
+            });
+            return;
+        }
+
+        _gridSearchDebounceTimer = new System.Threading.Timer(async _ =>
+        {
+            try
+            {
+                await InvokeAsync(async () =>
+                {
+                    await PerformGridSearchInternal(args.Value);
+                });
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Grid search error: {ex.Message}");
+            }
+        }, null, 500, Timeout.Infinite);
+    }
+
+    private async Task ClearGridSearch()
+    {
+        GridSearchValue = string.Empty;
+        await LoadGridData();
+        StateHasChanged();
+    }
+    private async Task ShowReportPreview(RepairServices selectedRepairService)
+    {
+        if (selectedRepairService == null)
+        {
+            ToastNotificationService.ShowToast(new ToastOptions
+            {
+                ProviderName = "Error",
+                Title = "No Selection",
+                Text = "Please select a report row before printing.",
+                ThemeMode = ToastThemeMode.Pastel,
+                RenderStyle = ToastRenderStyle.Danger
+            });
+            return;
+        }
+
+        try
+        {
+            _selectedRepairService = selectedRepairService;
+            _printPreviewBase64 = string.Empty;
+            isPrintSidebarOpen = true;
+            StateHasChanged();
+
+            _printPreviewBase64 = await PrintPreviewService.GenerateReportBase64Async(
+                selectedRepairService,
+                GetUserNameById
+            );
+
+            StateHasChanged();
+        }
+        catch (Exception ex)
+        {
+            isPrintSidebarOpen = false;
+            _printPreviewBase64 = string.Empty;
+
+            ToastNotificationService.ShowToast(new ToastOptions
+            {
+                ProviderName = "Error",
+                Title = "Report Error",
+                Text = $"Failed to generate report: {ex.Message}",
+                ThemeMode = ToastThemeMode.Pastel,
+                RenderStyle = ToastRenderStyle.Danger
+            });
+        }
+    }
+    private void CancelConfirmationDialog()
+    {
+        // Close the confirmation dialog without doing anything
+        isConfirmationDialogVisible = false;
+    }
+    private void OverlayClick(OverlayModalClickEventArgs args)
+    {
+        this.isViewDialogVisible = false;
+    }
+    private async Task ShowRepairServiceDetails(RepairServices repairService)
+    {
+        _selectedRepairService = repairService;
+
+        if (_selectedRepairService?.SparePartItems != null && _selectedRepairService.SparePartItems.Any())
+        {
+            foreach (var item in _selectedRepairService.SparePartItems)
+            {
+                if (!item.SparePartId.HasValue || item.SparePartId.Value == Guid.Empty)
+                    continue;
+
+                try
+                {
+                    var sparePartDetails = await SparePartService.GetSparePartByIdAsync(item.SparePartId.Value);
+                    if (sparePartDetails != null && !_spareParts.Any(x => x.Id == sparePartDetails.Id))
+                    {
+                        _spareParts = _spareParts.Append(sparePartDetails);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"❌ Error fetching spare part {item.SparePartId}: {ex.Message}");
+                }
+            }
+        }
+
+        isViewDialogVisible = true;
+    }
+
+    private void OnApplyButtonClick(RepairServices selectedRepairService)
+    {
+        // Set the selected repair service
+        _selectedRepairService = selectedRepairService;
+
+        if (_selectedRepairService != null)
+        {
+            // Populate InspectItemRequest with selected row data
+            customerRejected.Id = _selectedRepairService.Id; // This sets the ID in the model
+
+            // Show the confirmation dialog
+            pageTitle = "Customer Rejected";
+            isConfirmationDialogVisible = true;  // This will make the dialog visible
+        }
+    }
+
+    private async Task ConfirmCustomerConfirm()
+    {
+        // Proceed with saving the customer confirm
+        await Save();
+
+        // Close the confirmation dialog after saving
+        isConfirmationDialogVisible = false;
+    }
+
+    private void CloseDialog()
+    {
+        this.isViewDialogVisible = false;
+    }
+
+    private async Task Save()
+    {
+        try
+        {
+            // ✅ Get current user ID from authentication state
+            var authState = await AuthenticationStateProvider.GetAuthenticationStateAsync();
+            var user = authState.User;
+
+            if (!user.Identity.IsAuthenticated)
+            {
+                Console.WriteLine("❌ User is not authenticated");
+                ToastNotificationService.ShowToast(new ToastOptions
+                {
+                    ProviderName = "Error",
+                    Title = "Authentication Error",
+                    Text = "User is not authenticated",
+                    ThemeMode = ToastThemeMode.Pastel,
+                    RenderStyle = ToastRenderStyle.Danger
+                });
+                return;
+            }
+
+            // ✅ Get user ID from claims
+            var userIdClaim = user.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
+
+            if (string.IsNullOrEmpty(userIdClaim))
+            {
+                Console.WriteLine("❌ No user ID found in claims");
+                customerRejected.SetCustomerRejectedBy = Guid.Empty;
+            }
+            else if (Guid.TryParse(userIdClaim, out Guid userGuid))
+            {
+                customerRejected.SetCustomerRejectedBy = userGuid;
+            }
+            else
+            {
+                Console.WriteLine("❌ Invalid user ID format");
+                customerRejected.SetCustomerRejectedBy = Guid.Empty;
+            }
+
+            await CustomerRejectedService.SetCustomerRejectedAsync(customerRejected);
+
+            // ✅ SignalR notification
+            if (hubConnection != null)
+            {
+                if (hubConnection.State == HubConnectionState.Disconnected)
+                {
+                    await hubConnection.StartAsync();
+                }
+
+                if (hubConnection.State == HubConnectionState.Connected)
+                {
+                    // ✅ FIX: ItemHub.BroadcastItemUpdate expects ItemUpdateMessage, not string
+                    await hubConnection.SendAsync("BroadcastItemUpdate", new ItemUpdateMessage
+                    {
+                        AffectedStatuses = Array.Empty<string>()
+                    });
+                }
+            }
+
+            string reportNo = !string.IsNullOrEmpty(ReportNo)
+                ? ReportNo
+                : _selectedRepairService?.reportNo;
+
+
+            currentPage = 1;
+            await LoadPageData();
+
+            isConfirmationDialogVisible = false;
+
+            // ✅ Success notification
+            ToastNotificationService.ShowToast(new ToastOptions
+            {
+                ProviderName = "Customization",
+                Title = "Success",
+                Text = "Customer rejection set successfully",
+                ThemeMode = ToastThemeMode.Pastel,
+                RenderStyle = ToastRenderStyle.Success
+            });
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"❌ Error during save: {ex.Message}");
+
+            ToastNotificationService.ShowToast(new ToastOptions
+            {
+                ProviderName = "Error",
+                Title = "Save Error",
+                Text = $"Failed to save: {ex.Message}",
+                ThemeMode = ToastThemeMode.Pastel,
+                RenderStyle = ToastRenderStyle.Danger
+            });
+        }
+    }
+
+
+
+
+    public async void OnSearch(Syncfusion.Blazor.Inputs.ChangedEventArgs args)
+    {
+        if (args.Value != null && args.Value.ToString().Trim().Length > 0)
+        {
+            string searchValue = args.Value.ToString().Trim();
+
+            try
+            {
+                if (isGridView)
+                {
+                    var result = await RepairItemService.SearchRepairServicesAsync(
+                        pageNumber: 1,
+                        pageSize: gridPageSize,
+                        status: "Customer Rejected",
+                        searchTerm: searchValue,
+                        sortBy: "reportNo",
+                        sortDescending: true
+                    );
+
+                    filteredRepairServices2 = result.Items;
+                    totalGridPages = result.TotalPages;
+                    totalGridItems = result.TotalCount;
+                    currentGridPage = 1;
+                }
+                else
+                {
+                    var result = await RepairItemService.SearchRepairServicesAsync(
+                        pageNumber: 1,
+                        pageSize: pageSize,
+                        searchTerm: searchValue,
+                        sortBy: "reportNo",
+                        sortDescending: true,
+                        excludedStatuses: new[]
+                        {
+                        "Customer Rejected",
+                        "Finished",
+                        "Repairing"
+                        }
+                    );
+
+                    filteredRepairServices = result.Items;
+                    totalPages = result.TotalPages;
+                    totalItems = result.TotalCount;
+                    currentPage = 1;
+                }
+
+                UpdatePagination();
+                StateHasChanged();
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Search error: {ex.Message}");
+            }
+        }
+        else
+        {
+            await LoadPageData();
+        }
+    }
+    private async void OnInputClick(ChangeEventArgs args)
+    {
+        if (args.Value != null && args.Value.ToString().Trim().Length > 0)
+        {
+            string searchValue = args.Value.ToString().Trim();
+
+            try
+            {
+                if (isGridView)
+                {
+                    var result = await RepairItemService.SearchRepairServicesAsync(
+                        pageNumber: 1,
+                        pageSize: gridPageSize,
+                        status: "Customer Rejected",
+                        searchTerm: searchValue,
+                        sortBy: "reportNo",
+                        sortDescending: true
+                    );
+
+                    filteredRepairServices2 = result.Items;
+                    totalGridPages = result.TotalPages;
+                    totalGridItems = result.TotalCount;
+                    currentGridPage = 1;
+                }
+                else
+                {
+                    var result = await RepairItemService.SearchRepairServicesAsync(
+                        pageNumber: 1,
+                        pageSize: pageSize,
+                        searchTerm: searchValue,
+                        sortBy: "reportNo",
+                        sortDescending: true,
+                        excludedStatuses: new[]
+                        {
+                        "Customer Rejected",
+                        "Finished",
+                        "Repairing"
+                        }
+                    );
+
+                    filteredRepairServices = result.Items;
+                    totalPages = result.TotalPages;
+                    totalItems = result.TotalCount;
+                    currentPage = 1;
+                }
+
+                UpdatePagination();
+                StateHasChanged();
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Search error: {ex.Message}");
+            }
+        }
+        else
+        {
+            await LoadPageData();
+        }
+    }
+
+
+    public async void OnSorting(Syncfusion.Blazor.DropDowns.ChangeEventArgs<string, string> args)
+    {
+        SortingValue = args.Value;
+        bool descending = SortingValue == "Descending";
+
+        try
+        {
+            if (isGridView)
+            {
+                var result = await RepairItemService.SearchRepairServicesAsync(
+                    pageNumber: currentGridPage,
+                    pageSize: gridPageSize,
+                    status: "Customer Rejected",
+                    sortBy: "CompanyName",
+                    sortDescending: descending
+                );
+
+                filteredRepairServices2 = result.Items;
+                totalGridPages = result.TotalPages;
+                totalGridItems = result.TotalCount;
+            }
+            else
+            {
+                var result = await RepairItemService.SearchRepairServicesAsync(
+                    pageNumber: currentPage,
+                    pageSize: pageSize,
+                    sortBy: "CompanyName",
+                    sortDescending: descending,
+                    excludedStatuses: new[]
+                    {
+                    "Customer Rejected",
+                    "Finished",
+                    "Repairing"
+                    }
+                );
+
+                filteredRepairServices = result.Items;
+                totalPages = result.TotalPages;
+                totalItems = result.TotalCount;
+            }
+
+            UpdatePagination();
+            StateHasChanged();
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Sorting error: {ex.Message}");
+        }
+    }
+
+    public async void OnFiltering(MultiSelectChangeEventArgs<string[]> args)
+    {
+        FilteringValue = args.Value;
+
+        try
+        {
+            if (FilteringValue != null && FilteringValue.Any())
+            {
+                string selectedStatus = FilteringValue.First();
+
+                if (isGridView)
+                {
+                    var result = await RepairItemService.SearchRepairServicesAsync(
+                        pageNumber: 1,
+                        pageSize: gridPageSize,
+                        status: selectedStatus,
+                        sortBy: "reportNo",
+                        sortDescending: true
+                    );
+
+                    filteredRepairServices2 = result.Items;
+                    totalGridPages = result.TotalPages;
+                    totalGridItems = result.TotalCount;
+                    currentGridPage = 1;
+                }
+                else
+                {
+                    var result = await RepairItemService.SearchRepairServicesAsync(
+                        pageNumber: 1,
+                        pageSize: pageSize,
+                        status: selectedStatus,
+                        sortBy: "reportNo",
+                        sortDescending: true
+                    );
+
+                    filteredRepairServices = result.Items;
+                    totalPages = result.TotalPages;
+                    totalItems = result.TotalCount;
+                    currentPage = 1;
+                }
+            }
+            else
+            {
+                await LoadPageData();
+            }
+
+            UpdatePagination();
+            StateHasChanged();
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Filtering error: {ex.Message}");
+        }
+    }
+
+    private string GetCustomerType(string companyName)
+    {
+        // ✅ Check if _customers is null or empty
+        if (_customers == null || !_customers.Any())
+        {
+            return "Unknown";
+        }
+
+        var customer = _customers.FirstOrDefault(c => c.CompanyName == companyName);
+        return customer?.CustomerType ?? "Unknown";
+    }
+    private string GetImagePath(string customerType)
+    {
+        // ✅ Add null check
+        if (string.IsNullOrEmpty(customerType) || customerType == "Unknown")
+        {
+            return "./images/partner_logo/Default.jpg"; // Default image
+        }
+
+        // Clean the customerType name to make it safe for file names
+        string cleanedCustomerType = customerType.Replace(" ", "_");
+
+        // Build the image path using the customerType
+        return $"./images/partner_logo/{cleanedCustomerType}.jpg";
+    }
+    public async void OnReset()
+    {
+        SearchValue = null;
+        SortingValue = null;
+        FilteringValue = null;
+
+        currentPage = 1;
+        await LoadPageData();
+    }
+
+    private string GetStatusClass(string status)
+    {
+        if (status == "Awaiting Sparepart")
+        {
+            return "status-active"; // Custom CSS class for yellow color
+        }
+        return string.Empty; // Default, no specific class
+    }
+    public async ValueTask DisposeAsync()
+    {
+        _gridSearchDebounceTimer?.Dispose();
+        if (hubConnection != null)
+        {
+            try { await hubConnection.DisposeAsync(); }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"⚠️ Error disposing hubConnection: {ex.Message}");
+            }
+        }
+    }
+
+}

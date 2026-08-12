@@ -1,0 +1,130 @@
+@using Microsoft.Extensions.Localization
+@using ServiceMaintenance.Models
+@inject IStringLocalizer<App> Loc
+
+<div class="compact-toolbox-wrapper mb-2">
+    <div class="compact-toolbox">
+        @if (CanCreate)
+        {
+            <button type="button" class="soft-btn soft-btn-primary compact-btn" @onclick="OnCreate" disabled="@(!IsCreateEnabled)" title="Create New">
+                <i class="far fa-file me-1"></i> @Loc[nameof(ResourceStrings.TextCreate)]
+            </button>
+        }
+        @if (CanEdit)
+        {
+            <button type="button" class="soft-btn soft-btn-secondary compact-btn" @onclick="OnEdit" disabled="@(!IsEditEnabled)" title="Edit Selected">
+                <i class="far fa-edit me-1"></i> @Loc[nameof(ResourceStrings.TextEdit)]
+            </button>
+        }
+        @if (CanDelete)
+        {
+            <button type="button" class="soft-btn soft-btn-danger compact-btn" @onclick="OnDelete" disabled="@(!IsDeleteEnabled)" title="Delete Selected">
+                <i class="fas fa-trash-alt me-1"></i> @Loc[nameof(ResourceStrings.TextDelete)]
+            </button>
+        }
+        @if (CanExport)
+        {
+            <div class="dropdown-soft-container position-relative d-inline-block" @onmouseleave="CloseExportMenu">
+                <button type="button" class="soft-btn soft-btn-info compact-btn" @onclick="ToggleExportMenu" disabled="@(!IsExportEnabled)" title="Export Options">
+                    <i class="fas fa-download me-1"></i> @Loc[nameof(ResourceStrings.TextExport)]
+                    <i class="fas fa-chevron-down ms-1 style-chevron"></i>
+                </button>
+
+                @if (isExportMenuOpen)
+                {
+                    <div class="soft-dropdown-menu shadow-lg show">
+                        @if (OnExportExcel.HasDelegate)
+                        {
+                            <button type="button" class="dropdown-item soft-dropdown-item" @onclick="HandleExportExcel">
+                                <i class="fas fa-file-excel text-success me-2"></i> @Loc[nameof(ResourceStrings.TextToExcel)]
+                            </button>
+                        }
+                        @if (OnExportPdf.HasDelegate)
+                        {
+                            <button type="button" class="dropdown-item soft-dropdown-item" @onclick="HandleExportPdf">
+                                <i class="fas fa-file-pdf text-danger me-2"></i> @Loc[nameof(ResourceStrings.TextToPdf)]
+                            </button>
+                        }
+                    </div>
+                }
+            </div>
+        }
+        @if (CanCheckList)
+        {
+            <button type="button" class="soft-btn soft-btn-success compact-btn" @onclick="OnCheckList" disabled="@(!IsCheckListEnabled)" title="Check List">
+                <i class="fas fa-check-circle me-1"></i> @Loc[nameof(ResourceStrings.TextCheckList)]
+            </button>
+        }
+        @if (CustomActions != null)
+        {
+            @CustomActions
+        }
+    </div>
+</div>
+
+@code {
+    [Parameter] public bool CanCreate { get; set; } = true;
+    [Parameter] public bool CanEdit { get; set; } = true;
+    [Parameter] public bool CanDelete { get; set; } = true;
+    [Parameter] public bool CanExport { get; set; } = true;
+    [Parameter] public bool CanCheckList { get; set; } = false;
+
+    [Parameter] public bool IsCreateEnabled { get; set; } = true;
+    [Parameter] public bool IsEditEnabled { get; set; } = false;
+    [Parameter] public bool IsDeleteEnabled { get; set; } = false;
+    [Parameter] public bool IsExportEnabled { get; set; } = true;
+    [Parameter] public bool IsCheckListEnabled { get; set; } = true;
+
+    [Parameter]
+    public bool IsRowSelected
+    {
+        get => IsEditEnabled && IsDeleteEnabled;
+        set
+        {
+            IsEditEnabled = value;
+            IsDeleteEnabled = value;
+        }
+    }
+
+    [Parameter] public EventCallback OnCreate { get; set; }
+    [Parameter] public EventCallback OnEdit { get; set; }
+    [Parameter] public EventCallback OnDelete { get; set; }
+    [Parameter] public EventCallback OnExportExcel { get; set; }
+    [Parameter] public EventCallback OnExportPdf { get; set; }
+    [Parameter] public EventCallback OnCheckList { get; set; }
+
+    [Parameter] public RenderFragment? CustomActions { get; set; }
+
+    private bool isExportMenuOpen = false;
+
+    private void ToggleExportMenu()
+    {
+        if (IsExportEnabled)
+        {
+            isExportMenuOpen = !isExportMenuOpen;
+        }
+    }
+
+    private void CloseExportMenu()
+    {
+        isExportMenuOpen = false;
+    }
+
+    private async Task HandleExportExcel()
+    {
+        isExportMenuOpen = false;
+        if (OnExportExcel.HasDelegate)
+        {
+            await OnExportExcel.InvokeAsync();
+        }
+    }
+
+    private async Task HandleExportPdf()
+    {
+        isExportMenuOpen = false;
+        if (OnExportPdf.HasDelegate)
+        {
+            await OnExportPdf.InvokeAsync();
+        }
+    }
+}

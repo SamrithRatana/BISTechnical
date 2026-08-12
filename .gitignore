@@ -1,0 +1,28 @@
+﻿.vs/
+bin/
+obj/
+*.user
+.env
+.env.*
+!.env.example
+
+# Secrets — real appsettings.json files contain live credentials.
+# Development variants only hold logging config, so those stay tracked.
+appsettings.json
+
+# ASP.NET Data Protection key material
+dataprotection-keys/
+src/Apps/ServiceMaintenance/keys/
+
+# Local DevExpress NuGet cache (~500MB, restored via NuGet.Config) and license key
+nuget-packages/
+DevExpress_License.txt
+
+# Editor/IDE personal cache
+.cr/
+
+# Stray log files
+*.log
+
+# Local Claude Code settings (machine-specific)
+.claude/settings.local.json

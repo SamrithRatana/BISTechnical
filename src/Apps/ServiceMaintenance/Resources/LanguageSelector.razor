@@ -1,0 +1,144 @@
+@using Microsoft.AspNetCore.Localization
+@inject ILocalStorageService LocalStorage
+@inject NavigationManager NavigationManager
+@inject IJSRuntime JSRuntime
+
+<!-- Button with flag and text based on current culture -->
+<button class="btn no-background language-selector-btn" @onclick="ShowLanguageSelector">
+    <div class="language-selector-content">
+        <img src="@GetFlagUrl(currentCulture)" class="flag-icon" />
+        <span class="language-text">@GetLanguageText(currentCulture)</span>
+    </div>
+</button>
+
+@if (isModalVisible)
+{
+    <div class="modal">
+        <!-- Modal Overlay: Close modal when clicking outside -->
+        <div class="modal-overlay" @onclick="CloseModal"></div>
+        <div class="modal-content" @onclick="StopPropagation">
+            <!-- Prevent modal from closing on click inside -->
+            <button class="close-btn" @onclick="CloseModal">&times;</button>
+            <h2 class="modal-title">@Loc[nameof(ResourceStrings.TextSelectLanuage)]</h2> <!-- Title added here -->
+            <div class="language-selector">
+                <label>
+                    <input type="radio" name="language" value="en-US" @onchange="ChangeLanguage" checked="@(currentCulture == "en-US")" />
+                    <img src="https://flagcdn.com/w80/us.png" class="flag-icon" />
+                    English (US)
+                </label>
+                <label>
+                    <input type="radio" name="language" value="km-KH" @onchange="ChangeLanguage" checked="@(currentCulture == "km-KH")" />
+                    <img src="https://flagcdn.com/w80/kh.png" class="flag-icon" />
+                    ខ្មែរ (Cambodia)
+                </label>
+                <label>
+                    <input type="radio" name="language" value="zh-CN" @onchange="ChangeLanguage" checked="@(currentCulture == "zh-CN")" disabled />
+                    <img src="https://flagcdn.com/w80/cn.png" class="flag-icon" />
+                    中文 (Chinese)
+                </label>
+            </div>
+        </div>
+    </div>
+}
+
+
+@code {
+    private string currentCulture = "en-US";
+    private bool isModalVisible = false;
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender)
+        {
+            try
+            {
+                // ✅ Still read from LocalStorage just to drive the flag/text
+                // shown on the button — this is display-only now, since the
+                // ACTUAL culture used for rendering/resources is set server-side
+                // by app.UseRequestLocalization reading the cookie before this
+                // component (or any component) even started rendering.
+                var storedCulture = await LocalStorage.GetItemAsStringAsync("AppCulture");
+                if (!string.IsNullOrEmpty(storedCulture))
+                {
+                    currentCulture = storedCulture;
+                    StateHasChanged();
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.Error.WriteLine($"Error loading culture from LocalStorage: {ex.Message}");
+                currentCulture = "en-US";
+            }
+        }
+    }
+
+    private async Task ChangeLanguage(ChangeEventArgs e)
+    {
+        var selectedCulture = e.Value.ToString();
+
+        try
+        {
+            await LocalStorage.SetItemAsStringAsync("AppCulture", selectedCulture);
+
+            // ✅ NEW — write the standard ASP.NET Core culture cookie so
+            // app.UseRequestLocalization picks it up on the very next request
+            // (the forced reload below), setting CurrentCulture/CurrentUICulture
+            // correctly for EVERY component — sidebar and content alike —
+            // before any of them render.
+            var cookieValue = CookieRequestCultureProvider
+                .MakeCookieValue(new RequestCulture(selectedCulture));
+
+            await JSRuntime.InvokeVoidAsync("eval",
+                $"document.cookie = '{CookieRequestCultureProvider.DefaultCookieName}={Uri.EscapeDataString(cookieValue)}; path=/; max-age=31536000'");
+
+            currentCulture = selectedCulture;
+            isModalVisible = false;
+
+            StateHasChanged();
+            NavigationManager.NavigateTo(NavigationManager.Uri, forceLoad: true);
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"Error changing culture: {ex.Message}");
+        }
+    }
+
+    private void ShowLanguageSelector()
+    {
+        isModalVisible = true;
+    }
+
+    private void CloseModal()
+    {
+        isModalVisible = false;
+    }
+
+    private void StopPropagation(EventArgs e)
+    {
+        // Prevent the modal from closing when clicking inside the modal content
+    }
+
+    // Get the flag URL based on the selected culture
+    private string GetFlagUrl(string culture)
+    {
+        return culture switch
+        {
+            "en-US" => "https://flagcdn.com/w80/us.png",
+            "km-KH" => "https://flagcdn.com/w80/kh.png",
+            "zh-CN" => "https://flagcdn.com/w80/cn.png",
+            _ => "https://flagcdn.com/w80/us.png",
+        };
+    }
+
+    // Get the language text based on the selected culture
+    private string GetLanguageText(string culture)
+    {
+        return culture switch
+        {
+            "en-US" => "English",
+            "km-KH" => "ខ្មែរ",
+            "zh-CN" => "中文",
+            _ => "English",
+        };
+    }
+}

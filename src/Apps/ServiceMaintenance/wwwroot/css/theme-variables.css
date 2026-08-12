@@ -1,0 +1,341 @@
+/* ════════════════════════════════════════════════════════════════════════════
+   theme-variables.css  —  Single Source of Truth for Design Tokens
+   All CSS custom properties are defined here ONLY.
+   app.css, layout-master.css and all other files just consume these vars.
+   ════════════════════════════════════════════════════════════════════════════ */
+
+@import url('open.iconic/font/css/open-iconic-bootstrap.min.css');
+
+/* ═══════════════════════════════
+   LIGHT MODE (default / :root)
+═══════════════════════════════ */
+:root {
+    /* Brand Colors */
+    --primary-color:    #1FA9D3;
+    --primary-hover:    #1789ac;
+    --secondary-color:  #0ea5e9;
+    --accent-color:     #20c997;
+    --success-color:    #10b981;
+    --warning-color:    #f59e0b;
+    --danger-color:     #ef4444;
+    --info-color:       #06b6d4;
+
+    /* Backgrounds */
+    --bg-primary:       #f1f5f9;
+    --bg-secondary:     #ffffff;
+    --card-bg:          #ffffff;
+    --sidebar-bg:       #e2e8f0;  /* Distinct cool slate gray sidebar */
+    --topbar-bg:        #ffffff;
+    --header-bg:        #1FA9D3;
+
+    /* Text */
+    --text-primary:     #212529;
+    --text-secondary:   #6c757d;
+    --text-muted:       #9ca3af;
+
+    /* Typography */
+    --font-family:      'Khmer OS Siemreap', 'Helvetica Neue', Helvetica, Arial, sans-serif;
+    --base-font-size:   14px;
+
+    /* Shape */
+    --border-radius:    8px;
+    --btn-radius:       6px;
+    --table-radius:     6px;
+    --table-padding-y:  8px;
+
+    /* Borders & Shadows */
+    --border-subtle:    rgba(0, 0, 0, 0.08);
+    --shadow-soft:      0 4px 12px rgba(0, 0, 0, 0.05);
+    --shadow-glow:      0 0 15px rgba(31, 169, 211, 0.2);
+}
+
+/* ═══════════════════════════════════════
+   DARK MODE  — all 8 theme variants
+   Activated by theme.js setting
+   data-theme-mode on <html> and <body>
+═══════════════════════════════════════ */
+.dark-theme,
+[data-theme-mode="midnight"],
+[data-theme-mode="rose"],
+[data-theme-mode="cyberpunk"],
+[data-theme-mode="luxury"],
+[data-theme-mode="emerald"],
+[data-theme-mode="ocean"] {
+    --bg-primary:       #0f172a;
+    --bg-secondary:     #162032;
+    --card-bg:          #1e293b;
+    --topbar-bg:        #0f172a;
+    --sidebar-bg:       #1e293b;
+
+    --text-primary:     #f1f5f9;
+    --text-secondary:   #94a3b8;
+    --text-muted:       #64748b;
+    --border-subtle:    rgba(255, 255, 255, 0.08);
+
+    --shadow-soft:      0 4px 16px rgba(0, 0, 0, 0.4);
+    --shadow-glow:      0 0 20px rgba(31, 169, 211, 0.25);
+}
+
+/* Preset-specific dark overrides (bg only — primary/header set by theme.js) */
+[data-theme-mode="midnight"] { --bg-primary: #0b132b; --bg-secondary: #121d38; --card-bg: #1c2541; --sidebar-bg: #1c2541; }
+[data-theme-mode="rose"]     { --bg-primary: #180914; --bg-secondary: #210c1b; --card-bg: #2d0a1e; --sidebar-bg: #2d0a1e; }
+[data-theme-mode="cyberpunk"]{ --bg-primary: #05050d; --bg-secondary: #080814; --card-bg: #0d0d1a; --sidebar-bg: #0d0d1a; }
+[data-theme-mode="luxury"]   { --bg-primary: #111111; --bg-secondary: #161616; --card-bg: #1a1a1a; --sidebar-bg: #1a1a1a; }
+[data-theme-mode="emerald"]  { --bg-primary: #064e3b; --bg-secondary: #055040; --card-bg: #065f46; --sidebar-bg: #065f46; }
+[data-theme-mode="ocean"]    { --bg-primary: #0c4a6e; --bg-secondary: #0d5280; --card-bg: #0369a1; --sidebar-bg: #0369a1; }
+
+/* ═══════════════════════════════════════
+   STRUCTURAL LAYOUT — use CSS vars
+═══════════════════════════════════════ */
+html, body {
+    background-color: var(--bg-primary);
+    color: var(--text-primary);
+    font-family: var(--font-family);
+    font-size: var(--base-font-size);
+    transition: background-color 0.3s ease, color 0.3s ease;
+}
+
+/* ═══════════════════════════════════════
+   COMPONENT GEOMETRY — global defaults
+═══════════════════════════════════════ */
+.btn,
+.e-btn,
+.dxbl-btn,
+.page-link,
+.toolbar-item,
+.e-toolbar .e-btn,
+.dxbl-toolbar .dxbl-btn {
+    border-radius: var(--btn-radius, 6px) !important;
+    transition: all 0.15s ease;
+}
+
+.table,
+.report-table,
+.e-grid,
+.e-grid .e-table,
+.dxbl-grid,
+.dxbl-grid-table {
+    border-radius: var(--table-radius, 6px) !important;
+}
+
+.table th,
+.table td,
+.report-table th,
+.report-table td,
+.e-grid .e-rowcell,
+.e-grid .e-headercell,
+.dxbl-grid-data-row td,
+.dxbl-grid-header-row th {
+    padding-top: var(--table-padding-y, 8px) !important;
+    padding-bottom: var(--table-padding-y, 8px) !important;
+}
+
+.card,
+.e-card,
+.dx-card,
+.theme-card {
+    border-radius: var(--card-radius, 8px) !important;
+}
+
+
+/* ═══════════════════════════════════════
+   DARK MODE STRUCTURAL OVERRIDES
+   These cover elements whose CSS is NOT
+   in a scoped .razor.css file.
+═══════════════════════════════════════ */
+
+/* Cards & Modals */
+.dark-theme .card,
+.dark-theme .card-body,
+.dark-theme .card-header,
+.dark-theme .card-footer,
+.dark-theme .modal-content {
+    background-color: var(--card-bg) !important;
+    color: var(--text-primary) !important;
+    border-color: var(--border-subtle) !important;
+}
+
+/* Apply dark to all 8 dark variants */
+[data-theme-mode="midnight"] .card,
+[data-theme-mode="rose"] .card,
+[data-theme-mode="cyberpunk"] .card,
+[data-theme-mode="luxury"] .card,
+[data-theme-mode="emerald"] .card,
+[data-theme-mode="ocean"] .card {
+    background-color: var(--card-bg) !important;
+    color: var(--text-primary) !important;
+    border-color: var(--border-subtle) !important;
+}
+
+/* Header/Topbar */
+.dark-theme .header-navbar,
+.dark-theme .navbar.header-navbar {
+    background-color: var(--topbar-bg) !important;
+    border-bottom: 1px solid var(--border-subtle) !important;
+}
+
+/* Sidebar container — belt-and-suspenders alongside NavMenu.razor.css */
+.dark-theme .app-sidebar-container,
+.dark-theme .sidebar-header,
+.dark-theme .sidebar,
+.dark-theme .nav-menu {
+    background-color: var(--sidebar-bg) !important;
+}
+
+.dark-theme .nav-section-label {
+    color: var(--text-secondary) !important;
+}
+
+.dark-theme .sidebar-brand-text {
+    color: var(--text-primary) !important;
+}
+
+/* Tables */
+.dark-theme .table,
+.dark-theme .report-table {
+    color: var(--text-primary) !important;
+}
+
+.dark-theme .table td,
+.dark-theme .table th,
+.dark-theme .report-table td,
+.dark-theme .report-table th {
+    color: var(--text-primary) !important;
+    border-color: var(--border-subtle) !important;
+    background-color: var(--card-bg) !important;
+}
+
+/* Form elements */
+.dark-theme .form-control,
+.dark-theme .form-select,
+.dark-theme .input-group-text {
+    background-color: rgba(255, 255, 255, 0.06) !important;
+    color: var(--text-primary) !important;
+    border-color: var(--border-subtle) !important;
+}
+
+.dark-theme .form-control::placeholder {
+    color: var(--text-muted) !important;
+}
+
+.dark-theme .form-control:focus,
+.dark-theme .form-select:focus {
+    background-color: rgba(255, 255, 255, 0.08) !important;
+    border-color: var(--primary-color) !important;
+    box-shadow: 0 0 0 3px rgba(31, 169, 211, 0.2) !important;
+}
+
+/* Labels & Text */
+.dark-theme label,
+.dark-theme .form-label,
+.dark-theme h1,
+.dark-theme h2,
+.dark-theme h3,
+.dark-theme h4,
+.dark-theme h5,
+.dark-theme h6,
+.dark-theme .username-text,
+.dark-theme .nav-title {
+    color: var(--text-primary) !important;
+}
+
+.dark-theme .text-muted,
+.dark-theme .form-text {
+    color: var(--text-muted) !important;
+}
+
+/* Bootstrap alerts — muted dark versions */
+.dark-theme .alert-info    { background: rgba(31,169,211,0.12)  !important; border-color: rgba(31,169,211,0.3)  !important; color: #7dd3fc !important; }
+.dark-theme .alert-success { background: rgba(16,185,129,0.12)  !important; border-color: rgba(16,185,129,0.3)  !important; color: #6ee7b7 !important; }
+.dark-theme .alert-warning { background: rgba(245,158,11,0.12)  !important; border-color: rgba(245,158,11,0.3)  !important; color: #fcd34d !important; }
+.dark-theme .alert-danger  { background: rgba(239,68,68,0.12)   !important; border-color: rgba(239,68,68,0.3)   !important; color: #fca5a5 !important; }
+
+/* Dropdowns */
+.dark-theme .dropdown-menu {
+    background-color: var(--card-bg) !important;
+    border-color: var(--border-subtle) !important;
+    box-shadow: var(--shadow-soft) !important;
+}
+
+.dark-theme .dropdown-item {
+    color: var(--text-primary) !important;
+}
+
+.dark-theme .dropdown-item:hover {
+    background-color: rgba(255, 255, 255, 0.07) !important;
+}
+
+.dark-theme .dropdown-divider {
+    border-color: var(--border-subtle) !important;
+}
+
+/* List groups */
+.dark-theme .list-group-item {
+    background-color: var(--card-bg) !important;
+    color: var(--text-primary) !important;
+    border-color: var(--border-subtle) !important;
+}
+
+/* Borders */
+.dark-theme .border,
+.dark-theme .border-bottom,
+.dark-theme .border-top {
+    border-color: var(--border-subtle) !important;
+}
+
+.dark-theme hr {
+    border-color: var(--border-subtle) !important;
+}
+
+/* bg-light / bg-white become dark surfaces */
+.dark-theme .bg-light,
+.dark-theme .bg-white {
+    background-color: var(--bg-secondary) !important;
+}
+
+/* ═══════════════════════════════════════
+   SCROLLBAR STYLING
+═══════════════════════════════════════ */
+::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+}
+
+::-webkit-scrollbar-track {
+    background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+    background: rgba(148, 163, 184, 0.35);
+    border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+    background: rgba(148, 163, 184, 0.6);
+}
+
+/* ═══════════════════════════════════════
+   UTILITIES
+═══════════════════════════════════════ */
+
+/* Search highlight */
+mark, .highlight-match, .search-highlight {
+    background-color: #FFD700 !important;
+    color: #000000 !important;
+    padding: 0 4px !important;
+    border-radius: 3px !important;
+    font-weight: bold !important;
+}
+
+/* Flag icons */
+.flag-icon {
+    width: 24px !important;
+    height: 16px !important;
+    max-width: 24px !important;
+    max-height: 16px !important;
+    object-fit: cover !important;
+    border-radius: 2px !important;
+    display: inline-block !important;
+    vertical-align: middle !important;
+}
+

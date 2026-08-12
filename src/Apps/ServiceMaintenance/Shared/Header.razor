@@ -1,0 +1,377 @@
+@using Microsoft.AspNetCore.Http.Connections
+@using Microsoft.EntityFrameworkCore
+@using ServiceMaintenance.Resources
+@using ServiceMaintenance.Services
+@using ServiceMaintenance.Services.AsyncServices
+@inject Microsoft.AspNetCore.Components.NavigationManager UriHelper
+@using Syncfusion.Blazor.Lists
+@inject RepairItemService RepairItemService
+@inject UserService UserService
+@inject JwtSessionService JwtSessionService
+@inject IHttpContextAccessor HttpContextAccessor
+@inject AppThemeService ThemeService
+
+<nav class="navbar header-navbar p-0 navbar-expand-md">
+ 
+    <div class="collapse navbar-collapse">
+        <div class="d-flex justify-content-between w-100">
+            <div class="d-flex align-items-center">
+                
+            </div>
+            <div class="d-flex justify-content-end">
+                <AuthorizeView>
+                    <Authorized Context="authContext">
+                        <div class="header-icons-container">
+                            <!-- Quick Dark/Light Theme Toggle -->
+                            <div class="notification-icon-wrapper me-1">
+                                <button class="btn-icon" @onclick="ToggleThemeMode" title="Toggle Dark/Light Mode" style="border:none; background:none; cursor:pointer;">
+                                    @if (ThemeService.CurrentTheme.Mode == "dark" || ThemeService.CurrentTheme.Mode == "midnight" || ThemeService.CurrentTheme.Mode == "cyberpunk")
+                                    {
+                                        <i class="fas fa-sun text-warning" style="font-size: 18px;"></i>
+                                    }
+                                    else
+                                    {
+                                        <i class="fas fa-moon text-secondary" style="font-size: 18px;"></i>
+                                    }
+                                </button>
+                            </div>
+
+                            <!-- Envelope Icon (Messages) -->
+                            <div class="notification-icon-wrapper">
+                                <DxButton RenderStyle="ButtonRenderStyle.None"
+                                          IconCssClass="fas fa-envelope"
+                                          CssClass="btn-icon"
+                                          @onclick="ToggleEnvelopeDropdown" />
+                                @if (totalUnreadMessages > 0)
+                                {
+                                    <span class="notification-badge">@totalUnreadMessages</span>
+                                }
+                            </div>
+
+                            <!-- Message List Dropdown -->
+                            <div class="notification-dropdown @envelopeDropdownClass" id="envelopeDropdown">
+                                <div class="notification-header">
+                                    <span class="notification-title">Messages</span>
+                                </div>
+                                <div id="notificationArea">
+                                    @if (userMessages != null && userMessages.Any())
+                                    {
+                                        @foreach (var userMsg in userMessages)
+                                        {
+                                            <div class="message-item">
+                                                <div class="message-avatar-wrapper">
+                                                    @if (!string.IsNullOrEmpty(userMsg.ProfilePicture))
+                                                    {
+                                                        <img src="@userMsg.ProfilePicture" alt="@userMsg.UserName" class="message-avatar" />
+                                                    }
+                                                    else
+                                                    {
+                                                        <img src="/images/default-profile.png" alt="@userMsg.UserName" class="message-avatar" />
+                                                    }
+                                                    @if (userMsg.IsOnline)
+                                                    {
+                                                        <span class="online-indicator"></span>
+                                                    }
+                                                </div>
+                                                <div class="message-content">
+                                                    <div class="message-username">@userMsg.UserName</div>
+                                                    <p class="message-text">@userMsg.LastMessageText</p>
+                                                    <div class="message-time">@GetRelativeTime(userMsg.LastMessageTime)</div>
+                                                </div>
+                                                @if (userMsg.UnreadCount > 0)
+                                                {
+                                                    <span class="message-unread-badge">@userMsg.UnreadCount</span>
+                                                }
+                                            </div>
+                                        }
+                                    }
+                                    else
+                                    {
+                                        <div class="no-messages">
+                                            <i class="fas fa-comments"></i>
+                                            <p>No conversations yet</p>
+                                        </div>
+                                    }
+                                </div>
+                            </div>
+
+                            <!-- ⛔ Bell Icon (Notifications) — REMOVED.
+                                 The bell button, its badge, the
+                                 notification-dropdown-menu, the "View
+                                 Information" SfDialog it opened, and every
+                                 code-behind method that only existed to
+                                 support it (MarkAsRead, DeleteNotification,
+                                 ClearAllNotifications, ToggleNotificationDropdown,
+                                 NavigateToModule, HandleAccept, HandleInfo,
+                                 ExtractModuleNameFromHeading,
+                                 ExtractReportNoFromHeading) have all been
+                                 deleted along with the `articles` list and its
+                                 DB load in OnInitializedAsync. Messages
+                                 (envelope) are untouched and still work. -->
+
+                            <span class="username-text hide-on-responsive">Hello <strong>@userName</strong>!</span>
+
+                            @if (isSignedIn)
+                            {
+                                <div style="position: relative;">
+                                    <button class="btn-user user-avatar-frame" @onclick="ToggleProfileMenu" title="User Profile & Settings">
+                                        @if (!string.IsNullOrEmpty(userProfilePictureUrl))
+                                        {
+                                            <img src="@userProfilePictureUrl"
+                                                 alt="Profile"
+                                                 class="user-img"
+                                                 onerror="this.src='./images/avatar.jpg'" />
+                                        }
+                                        else
+                                        {
+                                            <img src="./images/avatar.jpg" alt="Profile" class="user-img" />
+                                        }
+                                        <span class="avatar-status-dot" title="Online"></span>
+                                    </button>
+
+                                    <div class="dropdown-menu user-dropdown-glass @dropdownClass">
+                                        <div class="user-profile-summary p-2 text-center border-bottom mb-1">
+                                            <strong class="d-block text-truncate">@userName</strong>
+                                            <small class="text-muted">Active System Member</small>
+                                        </div>
+                                        <a href="/Identity/Account/Manage" class="dropdown-item">
+                                            <i class="fas fa-user-circle me-2"></i> Profile
+                                        </a>
+                                        <a href="/admin/theme-settings" class="dropdown-item">
+                                            <i class="fas fa-palette me-2"></i> Theme Settings
+                                        </a>
+                                        <a href="/Identity/Account/Logout" class="dropdown-item text-danger">
+                                            <i class="fas fa-sign-out-alt me-2"></i> Logout
+                                        </a>
+                                    </div>
+                                </div>
+                            }
+                        </div>
+                    </Authorized>
+                    <NotAuthorized>
+                        <a class="btn-modern outlined" href="/identity/account/login">
+                            <i class="fas fa-sign-in-alt"></i>
+                            Login
+                        </a>
+                    </NotAuthorized>
+                </AuthorizeView>
+            </div>
+        </div>
+    </div>
+
+    <div style="margin-left: 12px; margin-right: 12px;">
+        <LanguageSelector />
+    </div>
+</nav>
+
+@code {
+    private string drawerClass => ToggleOn ? "show" : "";
+    private int totalUnreadMessages = 0;
+
+    [Inject] private JwtHttpClientService JwtHttpClientService { get; set; }
+
+    private bool IsDarkMode { get; set; }
+    private bool IsProfileMenuVisible { get; set; }
+    private List<UserMessagePreview> userMessages = new List<UserMessagePreview>();
+    private string dropdownClass => IsProfileMenuVisible ? "show" : "";
+
+    [Parameter] public bool ToggleOn { get; set; }
+    [Parameter] public EventCallback<bool> ToggleOnChanged { get; set; }
+
+    @inject IJSRuntime JSRuntime
+
+    private bool showEnvelopeDropdown = false;
+    private string envelopeDropdownClass => showEnvelopeDropdown ? "show" : "";
+
+    private bool isSignedIn = false;
+    private string userName;
+
+    private string currentUsername = "";
+
+    private string currentUserId;
+    private UserDto currentUser;
+    private string userProfilePictureUrl;
+
+    protected override async Task OnInitializedAsync()
+    {
+        try
+        {
+            // Get authentication state
+            var authState = await AuthenticationStateProvider.GetAuthenticationStateAsync();
+            var user = authState.User;
+
+            if (!user.Identity.IsAuthenticated)
+                return;
+
+            isSignedIn = true;
+            currentUserId = user.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
+            userName = user.Identity.Name ?? "Unknown User";
+
+            if (string.IsNullOrEmpty(currentUserId))
+                return;
+
+            // Load user details
+            currentUser = await UserService.GetApplicationUserAsync(currentUserId);
+            if (currentUser != null)
+            {
+                var fullName = $"{currentUser.FirstName} {currentUser.LastName}".Trim();
+                userName = !string.IsNullOrEmpty(fullName) ? fullName : currentUser.UserName ?? userName;
+                currentUsername = currentUser.UserName ?? user.Identity.Name ?? "Unknown User";
+            }
+            else
+            {
+                currentUsername = user.Identity.Name ?? "Unknown User";
+            }
+
+            // Load profile picture from JWT API
+            try
+            {
+                var profileResponse = await JwtHttpClientService.GetAsync("api/Auth/profile");
+                if (profileResponse.IsSuccessStatusCode)
+                {
+                    var profileData = await profileResponse.Content.ReadFromJsonAsync<ProfileApiResponse>();
+                    userProfilePictureUrl = profileData?.Data?.ProfilePictureUrl;
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Error loading profile picture: {ex.Message}");
+                userProfilePictureUrl = null;
+            }
+
+
+            StateHasChanged();
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Error in OnInitializedAsync: {ex.Message}");
+        }
+    }
+
+ 
+    private bool IsImageFile(string fileUrl)
+    {
+        if (string.IsNullOrEmpty(fileUrl)) return false;
+        return fileUrl.Contains("image/", StringComparison.OrdinalIgnoreCase)
+            || fileUrl.EndsWith(".jpg", StringComparison.OrdinalIgnoreCase)
+            || fileUrl.EndsWith(".jpeg", StringComparison.OrdinalIgnoreCase)
+            || fileUrl.EndsWith(".png", StringComparison.OrdinalIgnoreCase)
+            || fileUrl.EndsWith(".gif", StringComparison.OrdinalIgnoreCase)
+            || fileUrl.EndsWith(".webp", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private bool IsVideoFile(string fileUrl)
+    {
+        if (string.IsNullOrEmpty(fileUrl)) return false;
+        return fileUrl.Contains("video/", StringComparison.OrdinalIgnoreCase)
+            || fileUrl.EndsWith(".mp4", StringComparison.OrdinalIgnoreCase)
+            || fileUrl.EndsWith(".webm", StringComparison.OrdinalIgnoreCase)
+            || fileUrl.EndsWith(".avi", StringComparison.OrdinalIgnoreCase)
+            || fileUrl.EndsWith(".mov", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private string GetMessagePreviewText(string messageText, string fileUrl, string audioUrl)
+    {
+        if (!string.IsNullOrEmpty(audioUrl)) return "🎤 Sent a voice message";
+        if (!string.IsNullOrEmpty(fileUrl))
+        {
+            if (IsImageFile(fileUrl)) return "📷 Sent a photo";
+            if (IsVideoFile(fileUrl)) return "🎥 Sent a video";
+            return "📎 Sent an attachment";
+        }
+        return TruncateMessage(messageText, 50);
+    }
+
+    private string TruncateMessage(string message, int maxLength)
+    {
+        if (string.IsNullOrEmpty(message)) return "No message";
+        var decoded = System.Net.WebUtility.HtmlDecode(message);
+        return decoded.Length <= maxLength ? decoded : decoded.Substring(0, maxLength) + "...";
+    }
+
+    private void ToggleEnvelopeDropdown()
+    {
+        showEnvelopeDropdown = !showEnvelopeDropdown;
+        StateHasChanged();
+    }
+
+   
+
+    [JSInvokable]
+    public void CloseNotificationDropdown()
+    {
+        showEnvelopeDropdown = false;
+        StateHasChanged();
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender)
+        {
+            await JSRuntime.InvokeVoidAsync(
+                "addOutsideClickListener",
+                DotNetObjectReference.Create(this)
+            );
+        }
+    }
+
+  
+
+    void ToggleProfileMenu() => IsProfileMenuVisible = !IsProfileMenuVisible;
+
+    private string GetRelativeTime(DateTime timestamp)
+    {
+        DateTime now = DateTime.UtcNow;
+        DateTime utcTimestamp = timestamp.Kind == DateTimeKind.Utc
+            ? timestamp
+            : timestamp.ToUniversalTime();
+
+        var timeDiff = now - utcTimestamp;
+
+        if (timeDiff.TotalSeconds < 0) return "just now";
+        if (timeDiff.TotalSeconds < 60) return $"{(int)timeDiff.TotalSeconds}s ago";
+        if (timeDiff.TotalMinutes < 60) return $"{(int)timeDiff.TotalMinutes}m ago";
+        if (timeDiff.TotalHours < 24) return $"{(int)timeDiff.TotalHours}h ago";
+        if (timeDiff.TotalDays < 7) return $"{(int)timeDiff.TotalDays}d ago";
+        if (timeDiff.TotalDays < 30) return $"{(int)(timeDiff.TotalDays / 7)}w ago";
+
+        return utcTimestamp.ToLocalTime().ToString("MMM d, yyyy");
+    }
+
+    private async Task ToggleThemeMode()
+    {
+        var newMode = (ThemeService.CurrentTheme.Mode == "dark" || ThemeService.CurrentTheme.Mode == "midnight" || ThemeService.CurrentTheme.Mode == "cyberpunk") ? "light" : "dark";
+        await ThemeService.SetModeAsync(newMode);
+    }
+
+    // DTO classes
+    public class ProfileApiResponse
+    {
+        public string Status { get; set; }
+        public string Message { get; set; }
+        public ProfileApiData Data { get; set; }
+    }
+
+    public class ProfileApiData
+    {
+        public string Id { get; set; }
+        public string UserName { get; set; }
+        public string Email { get; set; }
+        public string FirstName { get; set; }
+        public string LastName { get; set; }
+        public string PhoneNumber { get; set; }
+        public string ProfilePictureUrl { get; set; }
+        public List<string> Roles { get; set; }
+    }
+
+    public class UserMessagePreview
+    {
+        public string UserId { get; set; }
+        public string UserName { get; set; }
+        public string ProfilePicture { get; set; }
+        public string LastMessageText { get; set; }
+        public DateTime LastMessageTime { get; set; }
+        public int UnreadCount { get; set; }
+        public bool IsOnline { get; set; }
+    }
+}

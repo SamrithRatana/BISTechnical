@@ -1,0 +1,588 @@
+@page "/sparepart-hold"
+@using ServiceMaintenance.Models
+@using ServiceMaintenance.Services.BISServices
+@inject SparepartHoldService SparepartHoldService
+@inject NavigationManager Navigation
+@inject IJSRuntime JS
+
+<PageTitle>Sparepart Hold Status</PageTitle>
+
+<div class="hold-page">
+
+    <!-- Header -->
+    <div class="page-header">
+        <div class="header-left">
+            <div class="header-icon">
+                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M18 11V6a2 2 0 0 0-2-2v0a2 2 0 0 0-2 2v0M14 10V4a2 2 0 0 0-2-2v0a2 2 0 0 0-2 2v0m0 0v0a2 2 0 0 0-2-2v0a2 2 0 0 0-2 2v5" />
+                    <path d="M6 14v1a6 6 0 0 0 12 0v-2" />
+                </svg>
+            </div>
+            <div>
+                <h1 class="page-title">Sparepart Hold Status</h1>
+                <p class="page-subtitle">Reserved spareparts pending stock deduction</p>
+            </div>
+        </div>
+
+        <!-- Summary chips -->
+        <div class="header-actions">
+            @if (result != null)
+            {
+                <div class="summary-chips">
+                    <span class="chip chip-blue">
+                        <strong>@result.TotalCount</strong> unique parts
+                    </span>
+                    <span class="chip chip-amber">
+                        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" style="flex-shrink:0">
+                            <path d="M18 11V6a2 2 0 0 0-2-2v0a2 2 0 0 0-2 2v0M14 10V4a2 2 0 0 0-2-2v0a2 2 0 0 0-2 2v0m0 0v0a2 2 0 0 0-2-2v0a2 2 0 0 0-2 2v5" />
+                            <path d="M6 14v1a6 6 0 0 0 12 0v-2" />
+                        </svg>
+                        <strong>@result.TotalHoldQty</strong> total hold qty
+                    </span>
+                    <span class="chip chip-red">
+                        <strong>@result.TotalHoldJobs</strong> hold jobs
+                    </span>
+                </div>
+            }
+        </div>
+    </div>
+
+    <!-- Filter Card -->
+    <div class="filter-card">
+        <div class="filter-row">
+
+            <div class="filter-group filter-group--wide">
+                <label class="filter-label">Search Sparepart</label>
+                <div class="search-wrapper">
+                    <svg class="search-icon" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <circle cx="11" cy="11" r="8" />
+                        <path d="m21 21-4.35-4.35" />
+                    </svg>
+                    <input type="text" class="filter-input filter-input--search"
+                           placeholder="Name or serial..."
+                           @bind="searchTerm"
+                           @bind:event="oninput"
+                           @onkeyup="OnSearchKeyUp" />
+                </div>
+            </div>
+
+            <div class="filter-group">
+                <label class="filter-label">Status</label>
+                <select class="filter-input" @bind="statusFilter">
+                    <option value="">All Statuses</option>
+                    <option value="Item Recieved">Item Received</option>
+                    <option value="Inspection">Inspection</option>
+                    <option value="Awaiting Customer Confirm">Awaiting Confirm</option>
+                    <option value="Awaiting Sparepart">Awaiting Sparepart</option>
+                    <option value="Repairing">Repairing</option>
+                    <option value="Customer Rejected">Customer Rejected</option>
+                    <option value="Repair by Third-Party">Third-Party</option>
+                    <option value="Unrepairable">Unrepairable</option>
+                </select>
+            </div>
+
+            <div class="filter-group">
+                <label class="filter-label">Service Type</label>
+                <select class="filter-input" @bind="serviceTypeFilter">
+                    <option value="">All Types</option>
+                    <option value="Free">Free</option>
+                    <option value="Charge">Charge</option>
+                </select>
+            </div>
+
+            <div class="filter-group">
+                <label class="filter-label">Sort By</label>
+                <select class="filter-input" @bind="sortBy">
+                    <option value="holdqty">Hold Qty</option>
+                    <option value="itemname">Name</option>
+                    <option value="holdcount">Hold Jobs</option>
+                </select>
+            </div>
+
+            <div class="filter-group filter-group--actions" style="margin-left:auto;">
+                <label class="filter-label">&nbsp;</label>
+                <div class="action-buttons">
+                    <button class="btn btn-primary" @onclick="Search" disabled="@isLoading">
+                        @if (isLoading)
+                        {
+                            <span class="spinner"></span>
+                        }
+                        else
+                        {
+                            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+                                <circle cx="11" cy="11" r="8" />
+                                <path d="m21 21-4.35-4.35" />
+                            </svg>
+                        }
+                        Search
+                    </button>
+                    <button class="btn btn-ghost" @onclick="ResetFilters">Reset</button>
+                    <button class="btn btn-export" @onclick="ExportToExcel" disabled="@(result == null || !result.Items.Any())">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+                            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                            <polyline points="7 10 12 15 17 10" />
+                            <line x1="12" y1="15" x2="12" y2="3" />
+                        </svg>
+                        Export Excel
+                    </button>
+                </div>
+            </div>
+
+        </div>
+
+        <!-- Active filter chips -->
+        @if (!string.IsNullOrEmpty(statusFilter) || !string.IsNullOrEmpty(serviceTypeFilter))
+        {
+            <div class="active-filters">
+                <span class="filter-label" style="margin-right:.4rem;">Active:</span>
+                @if (!string.IsNullOrEmpty(statusFilter))
+                {
+                    <span class="active-chip">
+                        Status: @statusFilter
+                        <span @onclick="() => { statusFilter = string.Empty; }">×</span>
+                    </span>
+                }
+                @if (!string.IsNullOrEmpty(serviceTypeFilter))
+                {
+                    <span class="active-chip active-chip--blue">
+                        Type: @serviceTypeFilter
+                        <span @onclick="() => { serviceTypeFilter = string.Empty; }">×</span>
+                    </span>
+                }
+            </div>
+        }
+    </div>
+
+    <!-- Info Banner -->
+    <div class="info-banner">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/>
+            <line x1="12" y1="16" x2="12.01" y2="16"/>
+        </svg>
+        Spareparts shown here are <strong>reserved (hold)</strong> — stock has <strong>not yet been deducted</strong>.
+        Stock will be deducted automatically when service status changes to <strong>Repairing</strong>.
+    </div>
+
+    <!-- Error -->
+    @if (!string.IsNullOrEmpty(errorMessage))
+    {
+        <div class="alert alert-error">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/>
+                <line x1="12" y1="16" x2="12.01" y2="16"/>
+            </svg>
+            @errorMessage
+        </div>
+    }
+
+    <!-- Table -->
+    <div class="table-card">
+        @if (isLoading)
+        {
+            <div class="loading-state">
+                <div class="loading-spinner"></div>
+                <p>Loading hold spareparts...</p>
+            </div>
+        }
+        else if (result == null || !result.Items.Any())
+        {
+            <div class="empty-state">
+                <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.2">
+                    <path d="M18 11V6a2 2 0 0 0-2-2v0a2 2 0 0 0-2 2v0M14 10V4a2 2 0 0 0-2-2v0a2 2 0 0 0-2 2v0m0 0v0a2 2 0 0 0-2-2v0a2 2 0 0 0-2 2v5"/>
+                    <path d="M6 14v1a6 6 0 0 0 12 0v-2"/>
+                </svg>
+                <p>No hold spareparts found</p>
+                <span>All spareparts have been released or no holds exist</span>
+            </div>
+        }
+        else
+        {
+            <div class="table-header-row">
+                <span class="table-info">
+                    Showing
+                    <strong>@((currentPage - 1) * pageSize + 1)–@Math.Min(currentPage * pageSize, result.TotalCount)</strong>
+                    of <strong>@result.TotalCount</strong> unique parts on hold
+                </span>
+                <div class="sort-toggle">
+                    <label class="filter-label" style="margin:0">Order</label>
+                    <button class="sort-dir-btn @(sortDescending ? "active" : "")" @onclick="() => ToggleSortDir(true)">↓ Desc</button>
+                    <button class="sort-dir-btn @(!sortDescending ? "active" : "")" @onclick="() => ToggleSortDir(false)">↑ Asc</button>
+                </div>
+            </div>
+
+            <div class="table-wrapper">
+                <table class="data-table">
+                    <thead>
+                        <tr>
+                            <th>#</th>
+                            <th>Sparepart Name</th>
+                            <th>Serial Number</th>
+                            <th>Current Stock</th>
+                            <th>Hold Qty</th>
+                            <th>Effective Stock</th>
+                            <th>Hold Jobs</th>
+                            <th>Service Orders</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @{
+                            int rowNum = (currentPage - 1) * pageSize + 1;
+                        }
+                        @foreach (var item in result.Items)
+                        {
+                            var effectiveStock = item.CurrentStock - item.TotalHoldQty;
+                            var effectiveClass = effectiveStock <= 0 ? "qty-danger" : effectiveStock <= 3 ? "qty-warn" : "qty-ok";
+                            var isExpanded = expandedRows.Contains(item.SparepartId);
+
+                            <tr class="data-row @(isExpanded ? "row-expanded" : "")"
+                                @onclick="() => ToggleExpand(item.SparepartId)"
+                                style="cursor:pointer;">
+                                <td class="td-num">@rowNum</td>
+                                <td class="td-name">
+                                    <div style="display:flex;align-items:center;gap:6px;">
+                                        <span class="expand-icon">@(isExpanded ? "▼" : "▶")</span>
+                                        <span class="part-name">@item.ItemName</span>
+                                    </div>
+                                </td>
+                                <td class="td-serial">
+                                    <code class="serial-code">@(string.IsNullOrEmpty(item.SerialNumber) ? "—" : item.SerialNumber)</code>
+                                </td>
+                                <td class="td-qty">
+                                    <span class="qty-badge qty-stock">@item.CurrentStock</span>
+                                </td>
+                                <td class="td-qty">
+                                    <span class="qty-badge qty-hold">
+                                        <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" style="flex-shrink:0">
+                                            <path d="M18 11V6a2 2 0 0 0-2-2v0a2 2 0 0 0-2 2v0M14 10V4a2 2 0 0 0-2-2v0a2 2 0 0 0-2 2v0m0 0v0a2 2 0 0 0-2-2v0a2 2 0 0 0-2 2v5"/>
+                                            <path d="M6 14v1a6 6 0 0 0 12 0v-2"/>
+                                        </svg>
+                                        @item.TotalHoldQty
+                                    </span>
+                                </td>
+                                <td class="td-qty">
+                                    <span class="qty-badge @effectiveClass">
+                                        @effectiveStock
+                                        @if (effectiveStock <= 0)
+                                        {
+                                            <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" style="flex-shrink:0">
+                                                <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/>
+                                                <line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/>
+                                            </svg>
+                                        }
+                                    </span>
+                                </td>
+                                <td class="td-qty">
+                                    <span class="hold-count">@item.HoldCount <small>jobs</small></span>
+                                </td>
+                                <td class="td-services">
+                                    @foreach (var svc in item.Services.Take(2))
+                                    {
+                                        <span class="svc-pill @GetStatusClass(svc.ServiceStatus)">
+                                            @svc.ReportNo
+                                        </span>
+                                    }
+                                    @if (item.Services.Count > 2)
+                                    {
+                                        <span class="svc-pill svc-more">+@(item.Services.Count - 2) more</span>
+                                    }
+                                </td>
+                            </tr>
+
+                            <!-- Expanded detail rows -->
+                            @if (isExpanded)
+                            {
+                                <tr class="detail-row">
+                                    <td colspan="8">
+                                        <div class="detail-panel">
+                                            <div class="detail-title">
+                                                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                                    <path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/>
+                                                </svg>
+                                                Service Orders holding this sparepart
+                                            </div>
+                                            <table class="detail-table">
+                                                <thead>
+                                                    <tr>
+                                                        <th>Report No</th>
+                                                        <th>Company</th>
+                                                        <th>Service Status</th>
+                                                        <th>Hold Qty</th>
+                                                        <th>Condition</th>
+                                                    </tr>
+                                                </thead>
+                                                <tbody>
+                                                    @foreach (var svc in item.Services)
+                                                    {
+                                                        <tr>
+                                                            <td>
+                                                                <code class="serial-code">@svc.ReportNo</code>
+                                                            </td>
+                                                            <td class="svc-company">@svc.CompanyName</td>
+                                                            <td>
+                                                                <span class="status-badge @GetStatusClass(svc.ServiceStatus)">
+                                                                    @svc.ServiceStatus
+                                                                </span>
+                                                            </td>
+                                                            <td class="td-qty">
+                                                                <span class="qty-badge qty-hold" style="font-size:.8rem;">@svc.Quantity</span>
+                                                            </td>
+                                                            <td>
+                                                                <span class="cond-badge">@(string.IsNullOrEmpty(svc.Condition) ? "N/A" : svc.Condition)</span>
+                                                            </td>
+                                                        </tr>
+                                                    }
+                                                </tbody>
+                                            </table>
+                                        </div>
+                                    </td>
+                                </tr>
+                            }
+
+                            rowNum++;
+                        }
+                    </tbody>
+
+                    <!-- Footer totals -->
+                    <tfoot>
+                        <tr class="totals-row">
+                            <td colspan="3" class="totals-label">
+                                Page @currentPage Subtotal
+                                @if (result.TotalPages > 1)
+                                {
+                                    <span class="totals-note">
+                                        — Grand total: <strong>@result.TotalHoldQty</strong> hold qty
+                                        across <strong>@result.TotalCount</strong> parts
+                                    </span>
+                                }
+                            </td>
+                            <td class="td-qty">
+                                <span class="qty-badge totals-stock">@result.Items.Sum(x => x.CurrentStock)</span>
+                            </td>
+                            <td class="td-qty">
+                                <span class="qty-badge qty-hold" style="font-size:.9rem;font-weight:800;">
+                                    @result.Items.Sum(x => x.TotalHoldQty)
+                                </span>
+                            </td>
+                            <td class="td-qty">
+                                @{
+                                    var totalEff = result.Items.Sum(x => x.CurrentStock - x.TotalHoldQty);
+                                    var totalEffClass = totalEff <= 0 ? "qty-danger" : "qty-ok";
+                                }
+                                <span class="qty-badge @totalEffClass" style="font-size:.9rem;font-weight:800;">@totalEff</span>
+                            </td>
+                            <td class="td-qty">
+                                <span class="hold-count">@result.Items.Sum(x => x.HoldCount) <small>jobs</small></span>
+                            </td>
+                            <td></td>
+                        </tr>
+                    </tfoot>
+                </table>
+            </div>
+
+            @if (result.TotalPages > 1)
+            {
+                <div class="pagination">
+                    <button class="page-btn" disabled="@(currentPage == 1)" @onclick="() => GoToPage(currentPage - 1)">← Prev</button>
+                    @for (int p = Math.Max(1, currentPage - 2); p <= Math.Min(result.TotalPages, currentPage + 2); p++)
+                    {
+                        var pageNum = p;
+                        <button class="page-btn @(pageNum == currentPage ? "page-btn--active" : "")" @onclick="() => GoToPage(pageNum)">@pageNum</button>
+                    }
+                    <button class="page-btn" disabled="@(currentPage == result.TotalPages)" @onclick="() => GoToPage(currentPage + 1)">Next →</button>
+                    <span class="page-info">Page @currentPage / @result.TotalPages</span>
+                </div>
+            }
+        }
+    </div>
+</div>
+
+@code {
+    private string searchTerm;
+    private string statusFilter = string.Empty;
+    private string serviceTypeFilter = string.Empty;
+    private string sortBy = "holdqty";
+    private bool sortDescending = true;
+    private int currentPage = 1;
+    private int pageSize = 15;
+
+    private SparepartHoldResult result;
+    private bool isLoading;
+    private string errorMessage;
+    private HashSet<Guid> expandedRows = new();
+
+    protected override async Task OnInitializedAsync()
+    {
+        await Search();
+    }
+
+    private async Task Search()
+    {
+        currentPage = 1;
+        await LoadData();
+    }
+
+    private async Task LoadData()
+    {
+        isLoading = true;
+        errorMessage = null;
+        StateHasChanged();
+
+        try
+        {
+            result = await SparepartHoldService.GetSparepartHoldAsync(
+                pageNumber: currentPage,
+                pageSize: pageSize,
+                searchTerm: searchTerm,
+                status: string.IsNullOrEmpty(statusFilter) ? null : statusFilter,
+                serviceType: string.IsNullOrEmpty(serviceTypeFilter) ? null : serviceTypeFilter,
+                sortBy: sortBy,
+                sortDescending: sortDescending
+            );
+        }
+        catch (Exception ex)
+        {
+            errorMessage = $"Failed to load data: {ex.Message}";
+        }
+        finally
+        {
+            isLoading = false;
+        }
+    }
+
+    private async Task GoToPage(int page)
+    {
+        currentPage = page;
+        await LoadData();
+    }
+
+    private async Task ToggleSortDir(bool desc)
+    {
+        sortDescending = desc;
+        await Search();
+    }
+
+    private async Task OnSearchKeyUp(KeyboardEventArgs e)
+    {
+        if (e.Key == "Enter") await Search();
+    }
+
+    private void ResetFilters()
+    {
+        searchTerm = null;
+        statusFilter = string.Empty;
+        serviceTypeFilter = string.Empty;
+        sortBy = "holdqty";
+        sortDescending = true;
+        currentPage = 1;
+        result = null;
+    }
+
+    private void ToggleExpand(Guid id)
+    {
+        if (expandedRows.Contains(id))
+            expandedRows.Remove(id);
+        else
+            expandedRows.Add(id);
+    }
+
+    private string GetStatusClass(string status) => status switch
+    {
+        "Repairing"                  => "status-repairing",
+        "Finished"                   => "status-finished",
+        "Awaiting Sparepart"         => "status-awaiting",
+        "Awaiting Customer Confirm"  => "status-awaiting",
+        "Customer Rejected"          => "status-rejected",
+        "Repair by Third-Party"      => "status-thirdparty",
+        "Unrepairable"               => "status-rejected",
+        _                            => "status-default"
+    };
+    private async Task ExportToExcel()
+    {
+        if (result == null) return;
+
+        isLoading = true;
+        errorMessage = null;
+        StateHasChanged();
+
+        try
+        {
+            // Fetch ALL pages
+            var allData = await SparepartHoldService.GetSparepartHoldAsync(
+                pageNumber: 1,
+                pageSize: result.TotalCount,   // ← fetch everything
+                searchTerm: searchTerm,
+                status: string.IsNullOrEmpty(statusFilter) ? null : statusFilter,
+                serviceType: string.IsNullOrEmpty(serviceTypeFilter) ? null : serviceTypeFilter,
+                sortBy: sortBy,
+                sortDescending: sortDescending
+            );
+
+            if (allData == null || !allData.Items.Any())
+            {
+                errorMessage = "No data to export.";
+                return;
+            }
+
+            var headers = new[]
+            {
+            "No", "Sparepart Name", "Serial Number",
+            "Current Stock", "Hold Qty", "Effective Stock", "Hold Jobs",
+            "Report No", "Company", "Service Status", "Hold Qty (per job)", "Condition"
+        };
+
+            var rows = new List<object[]>();
+            int no = 1;
+
+            foreach (var item in allData.Items)
+            {
+                var effectiveStock = item.CurrentStock - item.TotalHoldQty;
+
+                if (item.Services == null || !item.Services.Any())
+                {
+                    rows.Add(new object[]
+                    {
+                    no++, item.ItemName, item.SerialNumber ?? "—",
+                    item.CurrentStock, item.TotalHoldQty, effectiveStock, item.HoldCount,
+                    "", "", "", "", ""
+                    });
+                }
+                else
+                {
+                    bool first = true;
+                    foreach (var svc in item.Services)
+                    {
+                        rows.Add(new object[]
+                        {
+                        first ? (object)no : "",
+                        first ? item.ItemName : "",
+                        first ? (item.SerialNumber ?? "—") : "",
+                        first ? (object)item.CurrentStock : "",
+                        first ? (object)item.TotalHoldQty : "",
+                        first ? (object)effectiveStock : "",
+                        first ? (object)item.HoldCount : "",
+                        svc.ReportNo,
+                        svc.CompanyName,
+                        svc.ServiceStatus,
+                        svc.Quantity,
+                        string.IsNullOrEmpty(svc.Condition) ? "N/A" : svc.Condition
+                        });
+                        first = false;
+                    }
+                    no++;
+                }
+            }
+
+            var fileName = $"SparepartHold_{DateTime.Today:yyyyMMdd}.xlsx";
+            await JS.InvokeVoidAsync("exportToExcel", rows, headers, fileName, "Sparepart Hold");
+        }
+        catch (Exception ex)
+        {
+            errorMessage = $"Export failed: {ex.Message}";
+        }
+        finally
+        {
+            isLoading = false;
+            StateHasChanged();
+        }
+    }
+}

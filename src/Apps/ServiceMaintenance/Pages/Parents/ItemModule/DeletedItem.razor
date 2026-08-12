@@ -1,0 +1,43 @@
+﻿@page "/items/deleted/{id:guid}"
+@inject ItemService ItemService
+@inject NavigationManager NavigationManager
+
+<h3>Item Deleted</h3>
+
+@if (deleting)
+{
+    <p><em>Deleting item...</em></p>
+}
+else
+{
+    <p>The item with ID @Id has been deleted.</p>
+    <button class="btn btn-primary" @onclick="NavigateToItemsList">Back to Items List</button>
+}
+
+@code {
+    [Parameter]
+    public Guid Id { get; set; }
+
+    private bool deleting = true;
+
+    protected override async Task OnInitializedAsync()
+    {
+        try
+        {
+            // Perform the delete operation
+            await ItemService.DeleteItemAsync(Id);
+            deleting = false;
+        }
+        catch (Exception ex)
+        {
+            // Handle the exception
+            Console.WriteLine($"Error deleting item: {ex.Message}");
+            deleting = false;
+        }
+    }
+
+    private void NavigateToItemsList()
+    {
+        NavigationManager.NavigateTo("/items");
+    }
+}

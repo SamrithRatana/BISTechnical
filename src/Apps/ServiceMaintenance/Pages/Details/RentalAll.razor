@@ -1,0 +1,967 @@
+@page "/rental-all"
+@using ServiceMaintenance.Models
+@using ServiceMaintenance.Services
+@using Syncfusion.Blazor.Popups
+@inject RentalServicesService RentalService
+@inject RentalItemService RentalItemService
+@inject UserService UserService
+@inject ServiceSparePart SparePartService
+@inject IJSRuntime JSRuntime
+@using System.Text
+@implements IDisposable
+
+<PageTitle>Rental Services Report</PageTitle>
+
+<div class="container-fluid">
+    <div class="row">
+        <div class="col-12">
+            <div class="card shadow">
+                <div class="card-header bg-primary text-white">
+                    <h3 class="card-title mb-0">
+                        <i class="fas fa-chart-line me-2"></i>
+                        Rental Services Report
+                    </h3>
+                </div>
+
+                <div class="card-body">
+                    <!-- Filter Section -->
+                    <div class="row mb-4">
+                        <div class="col-md-12">
+                            <div class="card border-light">
+                                <div class="card-header bg-light">
+                                    <h5 class="mb-0">
+                                        <i class="fas fa-filter me-2"></i>
+                                        Filters
+                                    </h5>
+                                </div>
+                                <div class="card-body">
+                                    <div class="row g-3">
+                                        <!-- Date Range Filter -->
+                                        <div class="col-md-3">
+                                            <label for="startDate" class="form-label">Start Date</label>
+                                            <input type="date"
+                                                   class="form-control"
+                                                   id="startDate"
+                                                   @bind="StartDate"
+                                                   @bind:event="oninput"
+                                                   @onchange="OnStartDateChanged" />
+                                        </div>
+
+                                        <div class="col-md-3">
+                                            <label for="endDate" class="form-label">End Date</label>
+                                            <input type="date"
+                                                   class="form-control"
+                                                   id="endDate"
+                                                   @bind="EndDate"
+                                                   @bind:event="oninput"
+                                                   @onchange="OnEndDateChanged" />
+                                        </div>
+                                        <div class="col-md-3">
+                                            <label for="userId" class="form-label">Engineer Name</label>
+                                            <input type="text"
+                                                   class="form-control"
+                                                   id="userId"
+                                                   placeholder="Enter Name"
+                                                   @bind="FilterUserId"
+                                                   @oninput="OnUserIdChanged" />
+                                        </div>
+                                        <div class="col-md-3">
+                                            <label for="serialNumber" class="form-label">Serial Number</label>
+                                            <input type="text"
+                                                   class="form-control"
+                                                   id="serialNumber"
+                                                   placeholder="Enter Serial Number"
+                                                   @bind="FilterSerialNumber"
+                                                   @oninput="OnSerialNumberChanged" />
+                                        </div>
+
+                                        <!-- Action Buttons -->
+                                        <div class="col-md-3 d-flex align-items-end gap-2">
+                                            <button class="btn btn-secondary"
+                                                    @onclick="ClearFilters"
+                                                    disabled="@isLoading">
+                                                <i class="fas fa-times me-1"></i>
+                                                Clear
+                                            </button>
+
+                                          
+                                            <!-- Print Report Button -->
+                                            <button class="btn btn-info"
+                                                    @onclick="PrintReport"
+                                                    disabled="@(isLoading || !filteredServices.Any())"
+                                                    title="Print Report">
+                                                <i class="fas fa-print me-1"></i>
+                                                Print
+                                            </button>
+
+                                            <!-- Optional: PDF Export Button -->
+                                            <button class="btn btn-warning"
+                                                    @onclick="PrintReportToPdf"
+                                                    disabled="@(isLoading || !filteredServices.Any())"
+                                                    title="Export to PDF">
+                                                <i class="fas fa-file-pdf me-1"></i>
+                                                PDF
+                                            </button>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Loading indicator -->
+                    @if (isLoading && !initialLoadComplete)
+                    {
+                        <div class="text-center p-5">
+                            <div class="spinner-border text-primary" role="status">
+                                <span class="visually-hidden">Loading...</span>
+                            </div>
+                            <p class="mt-3">Loading rental services data...</p>
+                        </div>
+                    }
+
+                 
+
+                    <!-- Data Table -->
+                    <div class="row">
+                        <div class="col-12">
+                            @if (isLoading && filteredServices.Any())
+                            {
+                                <div class="d-flex justify-content-center align-items-center p-2">
+                                    <div class="spinner-border spinner-border-sm text-primary me-2" role="status">
+                                        <span class="visually-hidden">Filtering...</span>
+                                    </div>
+                                    <span class="text-muted">Applying filters...</span>
+                                </div>
+                            }
+
+                            @if (errorMessage != null)
+                            {
+                                <div class="alert alert-danger" role="alert">
+                                    <i class="fas fa-exclamation-triangle me-2"></i>
+                                    <strong>Error:</strong> @errorMessage
+                                    <button type="button" class="btn btn-sm btn-outline-danger ms-3" @onclick="LoadData">
+                                        <i class="fas fa-redo me-1"></i>Retry
+                                    </button>
+                                </div>
+                            }
+                            else if (!filteredServices.Any() && initialLoadComplete)
+                            {
+                                <div class="text-center p-5">
+                                    <i class="fas fa-inbox fa-3x text-muted mb-3"></i>
+                                    <h5 class="text-muted">No rental services found</h5>
+                                    <p class="text-muted">Try adjusting your filters to see more results.</p>
+                                </div>
+                            }
+                            else if (filteredServices.Any() && initialLoadComplete)
+                            {
+                                <div class="table-responsive">
+                                    <table class="table table-striped table-hover">
+                                        <thead class="table-dark">
+                                            <tr>
+                                                <th scope="col">
+                                                    <button class="btn btn-link text-white p-0 text-decoration-none"
+                                                            @onclick="() => SortBy(nameof(RentalServices.Date))">
+                                                        Date
+                                                        @if (currentSortColumn == nameof(RentalServices.Date))
+                                                        {
+                                                            <i class="fas @(isAscending ? "fa-sort-up" : "fa-sort-down") ms-1"></i>
+                                                        }
+                                                    </button>
+                                                </th>
+                                                <!-- Customer Name column -->
+                                                <th scope="col">
+                                                    <button class="btn btn-link text-white p-0 text-decoration-none"
+                                                            @onclick='() => SortBy("CustomerName")'>
+                                                        Customer Name
+                                                        @if (currentSortColumn == "CustomerName")
+                                                        {
+                                                            <i class="fas @(isAscending ? "fa-sort-up" : "fa-sort-down") ms-1"></i>
+                                                        }
+                                                    </button>
+                                                </th>
+                                                <th scope="col">
+                                                    <button class="btn btn-link text-white p-0 text-decoration-none"
+                                                            @onclick="() => SortBy(nameof(RentalServices.RentalItemId))">
+                                                        Rental Item
+                                                        @if (currentSortColumn == nameof(RentalServices.RentalItemId))
+                                                        {
+                                                            <i class="fas @(isAscending ? "fa-sort-up" : "fa-sort-down") ms-1"></i>
+                                                        }
+                                                    </button>
+                                                </th>
+                                                <th scope="col">
+                                                    <button class="btn btn-link text-white p-0 text-decoration-none"
+                                                            @onclick="() => SortBy(nameof(RentalServices.Action))">
+                                                        Action
+                                                        @if (currentSortColumn == nameof(RentalServices.Action))
+                                                        {
+                                                            <i class="fas @(isAscending ? "fa-sort-up" : "fa-sort-down") ms-1"></i>
+                                                        }
+                                                    </button>
+                                                </th>
+                                                <th scope="col">Note</th>
+                                                <th scope="col">
+                                                    <button class="btn btn-link text-white p-0 text-decoration-none"
+                                                            @onclick="() => SortBy(nameof(RentalServices.UserId))">
+                                                        User
+                                                        @if (currentSortColumn == nameof(RentalServices.UserId))
+                                                        {
+                                                            <i class="fas @(isAscending ? "fa-sort-up" : "fa-sort-down") ms-1"></i>
+                                                        }
+                                                    </button>
+                                                </th>
+                                                <th scope="col">Spare Parts</th>
+                                            </tr>
+                                        </thead>
+
+                                        <tbody>
+                                            @foreach (var service in paginatedServices)
+                                            {
+                                                <tr>
+                                                    <td>
+                                                        @service.Date.ToString("yyyy-MM-dd HH:mm")
+                                                    </td>
+                                                    <!-- Customer Name cell -->
+                                                    <td>
+                                                        @if (rentalItemLookup.TryGetValue(service.RentalItemId, out var rentalItem))
+                                                        {
+                                                            <div class="fw-bold">@rentalItem.CustomerName</div>
+                                                        }
+                                                        else
+                                                        {
+                                                            <span class="text-muted">-</span>
+                                                        }
+                                                    </td>
+                                                    <td>
+                                                        @if (rentalItemLookup.TryGetValue(service.RentalItemId, out var rentalItemData))
+                                                        {
+                                                            <div>
+                                                                <div class="fw-bold">@rentalItemData.ItemName</div>
+                                                                <small class="text-muted">@rentalItemData.SerialNumber</small>
+                                                            </div>
+                                                        }
+                                                        else
+                                                        {
+                                                            <div>
+                                                                <code class="text-primary">@service.RentalItemId</code>
+                                                                <small class="text-muted d-block">Item not found</small>
+                                                            </div>
+                                                        }
+                                                    </td>
+                                                    <td>
+                                                        @service.Action
+                                                    </td>
+                                                    <td>
+                                                        <span title="@service.Note" class="text-truncate d-inline-block" style="max-width: 200px;">
+                                                            @service.Note
+                                                        </span>
+                                                    </td>
+                                                    <td>
+                                                        @if (userLookup.TryGetValue(service.UserId, out var userInfo))
+                                                        {
+                                                            <div>
+                                                                <strong>@userInfo.LastName</strong>
+                                                            </div>
+                                                        }
+                                                        else
+                                                        {
+                                                            <small class="text-muted">@service.UserId</small>
+                                                        }
+                                                    </td>
+                                                    <td>
+                                                        @if (service.SpareParts.Any())
+                                                        {
+                                                            <button class="btn btn-sm btn-outline-info"
+                                                                    @onclick="() => ShowSparePartsModal(service)">
+                                                                <i class="fas fa-cogs me-1"></i>
+                                                                @service.SpareParts.Count parts
+                                                            </button>
+                                                        }
+                                                        else
+                                                        {
+                                                            <span class="text-muted">No parts</span>
+                                                        }
+                                                    </td>
+                                                </tr>
+                                            }
+                                        </tbody>
+                                    </table>
+                                </div>
+
+                                <!-- Pagination -->
+                                @if (totalPages > 1)
+                                {
+                                    <nav aria-label="Table pagination">
+                                        <ul class="pagination justify-content-center">
+                                            <li class="page-item @(currentPage == 1 ? "disabled" : "")">
+                                                <button class="page-link" @onclick="() => GoToPage(currentPage - 1)">
+                                                    <i class="fas fa-chevron-left"></i>
+                                                </button>
+                                            </li>
+
+                                            @for (int i = Math.Max(1, currentPage - 2); i <= Math.Min(totalPages, currentPage + 2); i++)
+                                            {
+                                                <li class="page-item @(currentPage == i ? "active" : "")">
+                                                    <button class="page-link" @onclick="() => GoToPage(i)">@i</button>
+                                                </li>
+                                            }
+
+                                            <li class="page-item @(currentPage == totalPages ? "disabled" : "")">
+                                                <button class="page-link" @onclick="() => GoToPage(currentPage + 1)">
+                                                    <i class="fas fa-chevron-right"></i>
+                                                </button>
+                                            </li>
+                                        </ul>
+                                    </nav>
+                                }
+
+                                <!-- Results info -->
+                                <div class="d-flex justify-content-between align-items-center mt-3">
+                                    <small class="text-muted">
+                                        Showing @((currentPage - 1) * pageSize + 1) to @Math.Min(currentPage * pageSize, filteredServices.Count())
+                                        of @filteredServices.Count() results
+                                    </small>
+
+                                    <div class="d-flex align-items-center">
+                                        <label class="form-label me-2 mb-0">Page Size:</label>
+                                        <select class="form-select form-select-sm" style="width: auto;" @onchange="OnPageSizeChanged">
+                                            <option value="10" selected="@(pageSize == 10)">10</option>
+                                            <option value="25" selected="@(pageSize == 25)">25</option>
+                                            <option value="50" selected="@(pageSize == 50)">50</option>
+                                            <option value="100" selected="@(pageSize == 100)">100</option>
+                                        </select>
+                                    </div>
+                                </div>
+                            }
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Spare Parts Dialog using SfDialog -->
+<SfDialog @bind-Visible="showSparePartsModal"
+          Width="800px"
+          Height="600px"
+          IsModal="true"
+          ShowCloseIcon="true"
+          AllowDragging="true">
+    <DialogTemplates>
+        <Header>
+            <div class="d-flex align-items-center">
+                <i class="fas fa-cogs me-2"></i>
+                Spare Parts - @(selectedService?.RentalItemId ?? "")
+            </div>
+        </Header>
+        <Content>
+            @if (selectedService != null)
+            {
+                <div class="table-responsive">
+                    <table class="table table-striped">
+                        <thead>
+                            <tr>
+                                <th>Item Name</th>
+                                <th>UseFor</th>
+                                <th>Quantity</th>
+                                <th>Condition</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            @foreach (var part in selectedService.SpareParts)
+                            {
+                                <tr>
+                                    <td>
+                                        @{
+                                            var catalogItem = GetSparePartFromCatalog(part);
+                                        }
+                                        @if (catalogItem != null)
+                                        {
+                                            <div>
+                                                <div class="fw-bold">@catalogItem.ItemName</div>
+                                                <small class="text-muted">@catalogItem.SerialNumber</small>
+                                                @if (!part.SparePartId.HasValue || !sparePartLookup.ContainsKey(part.SparePartId.Value))
+                                                {
+                                                    <small class="text-info d-block">? Matched by description</small>
+                                                }
+                                            </div>
+                                        }
+                                        else
+                                        {
+                                            <span class="text-muted">Not found in catalog</span>
+                                        }
+                                    </td>
+                                    <td>@catalogItem?.UseFor</td>
+                                    <td>@part.Quantity</td>
+                                    <td>@part.Condition</td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                </div>
+            }
+        </Content>
+    </DialogTemplates>
+    <DialogButtons>
+        <DialogButton Content="Close" IsPrimary="false" OnClick="CloseSparePartsModal" />
+    </DialogButtons>
+</SfDialog>
+
+@code {
+    private List<RentalServices> allServices = new();
+    private IEnumerable<RentalServices> filteredServices = new List<RentalServices>();
+    private IEnumerable<RentalServices> paginatedServices = new List<RentalServices>();
+    private Dictionary<string, UserViewModel> userLookup = new();
+    private Dictionary<string, RentalItem> rentalItemLookup = new();
+    private Dictionary<Guid, SparePartObject> sparePartLookup = new();
+
+    private DateTime? StartDate { get; set; } = DateTime.Today.AddDays(-30);
+    private DateTime? EndDate { get; set; } = DateTime.Today;
+    private string FilterUserId { get; set; } = string.Empty;
+    private string FilterSerialNumber { get; set; } = string.Empty;
+
+    private bool isLoading = false;
+    private bool initialLoadComplete = false;
+    private string errorMessage = null;
+
+    // Sorting
+    private string currentSortColumn = nameof(RentalServices.Date);
+    private bool isAscending = false;
+
+    // Pagination
+    private int currentPage = 1;
+    private int pageSize = 25;
+    private int totalPages = 1;
+
+    // Dialog
+    private bool showSparePartsModal = false;
+    private RentalServices selectedService = null;
+
+    // Debouncing
+    private Timer filterTimer;
+    private const int FilterDelay = 500; // milliseconds
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadData();
+    }
+
+    private async Task LoadData()
+    {
+        isLoading = true;
+        errorMessage = null;
+
+        try
+        {
+            // Fetch rental services data
+            allServices = (await RentalService.GetRentalServicesAsync(forceRefresh: true)).ToList();
+
+            // Get unique user IDs from the services
+            var uniqueUserIds = allServices.Select(s => s.UserId).Distinct().ToList();
+
+            // Fetch user information for all unique user IDs
+            userLookup.Clear();
+            foreach (var userId in uniqueUserIds)
+            {
+                try
+                {
+                    var user = await UserService.GetUserAsync(userId);
+                    if (user != null)
+                    {
+                        userLookup[userId] = user;
+                    }
+                }
+                catch (Exception)
+                {
+                    // If we can't get user info, skip it and show just the user ID
+                    continue;
+                }
+            }
+
+            // Get unique rental item IDs from the services
+            var uniqueRentalItemIds = allServices.Select(s => s.RentalItemId).Distinct().ToList();
+
+            // Fetch rental item information for all unique rental item IDs
+            rentalItemLookup.Clear();
+            foreach (var rentalItemId in uniqueRentalItemIds)
+            {
+                try
+                {
+                    // Convert string to Guid
+                    if (Guid.TryParse(rentalItemId, out Guid itemGuid))
+                    {
+                        var rentalItem = await RentalItemService.GetRentalItemByIdAsync(itemGuid);
+                        if (rentalItem != null)
+                        {
+                            rentalItemLookup[rentalItemId] = rentalItem;
+                        }
+                    }
+                }
+                catch (Exception)
+                {
+                    // If we can't get rental item info, skip it
+                    continue;
+                }
+            }
+
+            // Load all spare parts catalog for description matching
+            try
+            {
+                var allSpareParts = await SparePartService.GetAllSparePartsAsync();
+                if (allSpareParts != null)
+                {
+                    sparePartLookup.Clear();
+                    foreach (var sparePart in allSpareParts)
+                    {
+                        sparePartLookup[sparePart.Id] = sparePart;
+                    }
+                }
+            }
+            catch (Exception)
+            {
+                // If we can't get spare parts catalog, continue without it
+            }
+
+            initialLoadComplete = true;
+            // Apply filters
+            ApplyFilters();
+        }
+        catch (Exception ex)
+        {
+            errorMessage = $"Failed to load rental services: {ex.Message}";
+            initialLoadComplete = true;
+        }
+        finally
+        {
+            isLoading = false;
+            StateHasChanged();
+        }
+    }
+
+    private async Task OnStartDateChanged(ChangeEventArgs e)
+    {
+        if (DateTime.TryParse(e.Value?.ToString(), out DateTime newStartDate))
+        {
+            StartDate = newStartDate;
+        }
+        else
+        {
+            StartDate = null;
+        }
+        await DebouncedFilter();
+    }
+
+    private async Task OnEndDateChanged(ChangeEventArgs e)
+    {
+        if (DateTime.TryParse(e.Value?.ToString(), out DateTime newEndDate))
+        {
+            EndDate = newEndDate;
+        }
+        else
+        {
+            EndDate = null;
+        }
+        await DebouncedFilter();
+    }
+
+    private async Task OnUserIdChanged(ChangeEventArgs e)
+    {
+        FilterUserId = e.Value?.ToString() ?? string.Empty;
+        await DebouncedFilter();
+    }
+
+    private async Task OnSerialNumberChanged(ChangeEventArgs e)
+    {
+        FilterSerialNumber = e.Value?.ToString() ?? string.Empty;
+        await DebouncedFilter();
+    }
+
+    private Task DebouncedFilter()
+    {
+        // Cancel previous timer
+        filterTimer?.Dispose();
+
+        // Set loading state for visual feedback
+        isLoading = true;
+        StateHasChanged();
+
+        // Create new timer
+        filterTimer = new Timer(_ =>
+        {
+            InvokeAsync(() =>
+            {
+                ApplyFilters();
+                isLoading = false;
+                StateHasChanged();
+            });
+        }, null, FilterDelay, Timeout.Infinite);
+
+        return Task.CompletedTask;
+    }
+
+    private void ApplyFilters()
+    {
+        var filtered = allServices.AsEnumerable();
+
+        // Date range filter
+        if (StartDate.HasValue)
+        {
+            filtered = filtered.Where(s => s.Date.Date >= StartDate.Value.Date);
+        }
+
+        if (EndDate.HasValue)
+        {
+            filtered = filtered.Where(s => s.Date.Date <= EndDate.Value.Date);
+        }
+
+        // User ID filter - now also searches by LastName
+        if (!string.IsNullOrWhiteSpace(FilterUserId))
+        {
+            filtered = filtered.Where(s =>
+                s.UserId.Contains(FilterUserId, StringComparison.OrdinalIgnoreCase) ||
+                (userLookup.TryGetValue(s.UserId, out var user) &&
+                 user.LastName != null &&
+                 user.LastName.Contains(FilterUserId, StringComparison.OrdinalIgnoreCase))
+            );
+        }
+
+        // Serial Number filter - ADD THIS SECTION
+        if (!string.IsNullOrWhiteSpace(FilterSerialNumber))
+        {
+            filtered = filtered.Where(s =>
+                rentalItemLookup.TryGetValue(s.RentalItemId, out var item) &&
+                item.SerialNumber != null &&
+                item.SerialNumber.Contains(FilterSerialNumber, StringComparison.OrdinalIgnoreCase)
+            );
+        }
+
+        filteredServices = filtered.ToList();
+
+        // Apply sorting
+        ApplySorting();
+
+        // Reset pagination
+        currentPage = 1;
+        ApplyPagination();
+    }
+
+    private void ApplySorting()
+    {
+        filteredServices = currentSortColumn switch
+        {
+            nameof(RentalServices.Date) => isAscending
+                ? filteredServices.OrderBy(s => s.Date)
+                : filteredServices.OrderByDescending(s => s.Date),
+            "CustomerName" => isAscending
+                ? filteredServices.OrderBy(s => rentalItemLookup.TryGetValue(s.RentalItemId, out var item) ? item.CustomerName ?? string.Empty : string.Empty)
+                : filteredServices.OrderByDescending(s => rentalItemLookup.TryGetValue(s.RentalItemId, out var item) ? item.CustomerName ?? string.Empty : string.Empty),
+            nameof(RentalServices.RentalItemId) => isAscending
+                ? filteredServices.OrderBy(s => rentalItemLookup.TryGetValue(s.RentalItemId, out var item) ? item.ItemName : s.RentalItemId)
+                : filteredServices.OrderByDescending(s => rentalItemLookup.TryGetValue(s.RentalItemId, out var item) ? item.ItemName : s.RentalItemId),
+            nameof(RentalServices.Action) => isAscending
+                ? filteredServices.OrderBy(s => s.Action)
+                : filteredServices.OrderByDescending(s => s.Action),
+            nameof(RentalServices.UserId) => isAscending
+                ? filteredServices.OrderBy(s => userLookup.TryGetValue(s.UserId, out var user) ? user.LastName : s.UserId)
+                : filteredServices.OrderByDescending(s => userLookup.TryGetValue(s.UserId, out var user) ? user.LastName : s.UserId),
+            _ => filteredServices.OrderByDescending(s => s.Date)
+        };
+    }
+
+    private void ApplyPagination()
+    {
+        totalPages = (int)Math.Ceiling((double)filteredServices.Count() / pageSize);
+        currentPage = Math.Min(currentPage, totalPages == 0 ? 1 : totalPages);
+
+        paginatedServices = filteredServices
+            .Skip((currentPage - 1) * pageSize)
+            .Take(pageSize);
+    }
+
+    private void SortBy(string columnName)
+    {
+        if (currentSortColumn == columnName)
+        {
+            isAscending = !isAscending;
+        }
+        else
+        {
+            currentSortColumn = columnName;
+            isAscending = true;
+        }
+
+        ApplySorting();
+        ApplyPagination();
+    }
+
+    private void GoToPage(int page)
+    {
+        if (page >= 1 && page <= totalPages)
+        {
+            currentPage = page;
+            ApplyPagination();
+        }
+    }
+
+    private void OnPageSizeChanged(ChangeEventArgs e)
+    {
+        if (int.TryParse(e.Value?.ToString(), out int newPageSize))
+        {
+            pageSize = newPageSize;
+            currentPage = 1;
+            ApplyPagination();
+        }
+    }
+
+    private void ClearFilters()
+    {
+        StartDate = DateTime.Today.AddDays(-30);
+        EndDate = DateTime.Today;
+        FilterUserId = string.Empty;
+        FilterSerialNumber = string.Empty; // Don't forget this one!
+        ApplyFilters();
+
+    }
+
+    private async Task ExportData()
+    {
+        // Implement export functionality here
+        // This is a placeholder for the export feature
+        await Task.CompletedTask;
+    }
+
+    private void ShowSparePartsModal(RentalServices service)
+    {
+        selectedService = service;
+        showSparePartsModal = true;
+    }
+
+    private void CloseSparePartsModal()
+    {
+        showSparePartsModal = false;
+        selectedService = null;
+    }
+
+    private string GetActionBadgeClass(string action)
+    {
+        return action?.ToLower() switch
+        {
+            "check" => "bg-info",
+            "repair" => "bg-warning text-dark",
+            "install" => "bg-success",
+            "precheck" => "bg-secondary",
+            _ => "bg-primary"
+        };
+    }
+
+    private string GetConditionBadgeClass(string condition)
+    {
+        return condition?.ToLower() switch
+        {
+            "replace" => "bg-danger",
+            "fix" => "bg-warning text-dark",
+            _ => "bg-secondary"
+        };
+    }
+
+    private SparePartObject GetSparePartFromCatalog(SparePartOb servicePart)
+    {
+        if (servicePart.SparePartId.HasValue && sparePartLookup.TryGetValue(servicePart.SparePartId.Value, out var directMatch))
+        {
+            return directMatch;
+        }
+
+        if (!string.IsNullOrWhiteSpace(servicePart.Description))
+        {
+            var exactMatch = sparePartLookup.Values.FirstOrDefault(sp =>
+                !string.IsNullOrWhiteSpace(sp.Description) &&
+                sp.Description.Equals(servicePart.Description, StringComparison.OrdinalIgnoreCase));
+
+            if (exactMatch != null)
+                return exactMatch;
+
+            var partialMatch = sparePartLookup.Values.FirstOrDefault(sp =>
+                !string.IsNullOrWhiteSpace(sp.Description) &&
+                (sp.Description.Contains(servicePart.Description, StringComparison.OrdinalIgnoreCase) ||
+                 servicePart.Description.Contains(sp.Description, StringComparison.OrdinalIgnoreCase)));
+
+            if (partialMatch != null)
+                return partialMatch;
+
+            // Try matching by ItemName
+            var itemNameMatch = sparePartLookup.Values.FirstOrDefault(sp =>
+                !string.IsNullOrWhiteSpace(sp.ItemName) &&
+                (sp.ItemName.Contains(servicePart.Description, StringComparison.OrdinalIgnoreCase) ||
+                 servicePart.Description.Contains(sp.ItemName, StringComparison.OrdinalIgnoreCase)));
+
+            return itemNameMatch;
+        }
+
+        return null;
+    }
+
+    private string GetDateRangeText()
+    {
+        if (!filteredServices.Any()) return "No data";
+
+        var minDate = filteredServices.Min(s => s.Date);
+        var maxDate = filteredServices.Max(s => s.Date);
+
+        if (minDate.Date == maxDate.Date)
+            return minDate.ToString("MMM dd, yyyy");
+
+        return $"{minDate:MMM dd} - {maxDate:MMM dd, yyyy}";
+    }
+
+    public void Dispose()
+    {
+        filterTimer?.Dispose();
+    }
+    // Add this method to your @code section in the Blazor page
+
+    private async Task PrintReport()
+    {
+        try
+        {
+            if (!filteredServices.Any())
+            {
+                await JSRuntime.InvokeVoidAsync("alert", "No data to print. Please adjust your filters.");
+                return;
+            }
+
+            Console.WriteLine("=== STARTING PRINT REPORT ===");
+            Console.WriteLine($"Filtered services count: {filteredServices.Count()}");
+
+            // Create the report instance
+            var report = new ServiceMaintenance.Pages.Reports.RentalAll();
+
+            // Get current user name
+            string currentUserName = await GetCurrentUserName();
+
+            Console.WriteLine("Setting report data source...");
+
+            // Set the data source using the simplified method
+            report.SetDataSource(
+                filteredServices,
+                rentalItemLookup,
+                userLookup,
+                sparePartLookup,
+                StartDate,
+                EndDate,
+                FilterUserId,
+                currentUserName
+            );
+
+            Console.WriteLine("Exporting report to PDF...");
+
+            byte[] reportBytes;
+            using (var ms = new MemoryStream())
+            {
+                report.ExportToPdf(ms);
+                reportBytes = ms.ToArray();
+            }
+
+            // Convert byte array to base64 string for JavaScript
+            string base64Report = Convert.ToBase64String(reportBytes);
+
+            // Use the existing blazorReportsPrint.printReport function
+            await JSRuntime.InvokeVoidAsync("blazorReportsPrint.printReport", base64Report, "RentalServicesReport.pdf");
+
+            Console.WriteLine("Print report completed successfully");
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"ERROR in PrintReport: {ex.Message}");
+            Console.WriteLine($"Stack trace: {ex.StackTrace}");
+
+            // Show user-friendly error message
+            await JSRuntime.InvokeVoidAsync("alert", $"Error generating report: {ex.Message}");
+        }
+    }
+
+    private async Task PrintReportToPdf()
+    {
+        try
+        {
+            if (!filteredServices.Any())
+            {
+                await JSRuntime.InvokeVoidAsync("alert", "No data to export. Please adjust your filters.");
+                return;
+            }
+
+
+            // Create the report instance
+            var report = new ServiceMaintenance.Pages.Reports.RentalAll();
+
+            // Get current user name
+            string currentUserName = await GetCurrentUserName();
+
+
+            // Set the data source using the simplified method
+            report.SetDataSource(
+                filteredServices,
+                rentalItemLookup,
+                userLookup,
+                sparePartLookup,
+                StartDate,
+                EndDate,
+                FilterUserId,
+                currentUserName
+            );
+
+            Console.WriteLine("Exporting to PDF...");
+
+            byte[] reportBytes;
+            using (var ms = new MemoryStream())
+            {
+                report.ExportToPdf(ms);
+                reportBytes = ms.ToArray();
+            }
+
+            // Convert byte array to base64 string for JavaScript
+            string base64Report = Convert.ToBase64String(reportBytes);
+
+            // Use the existing blazorReportsPrint.downloadPDF function for direct download
+            await JSRuntime.InvokeVoidAsync("blazorReportsPrint.downloadPDF", base64Report, "RentalServicesReport.pdf");
+
+            Console.WriteLine("PDF export completed successfully");
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Error in PrintReportToPdf: {ex.Message}");
+            await JSRuntime.InvokeVoidAsync("alert", $"Error generating PDF: {ex.Message}");
+        }
+    }
+
+    // Method to get current user info (implement based on your auth system)
+    private Task<string> GetCurrentUserName()
+    {
+        try
+        {
+            // Replace this with your actual user service call
+            // For example:
+            // var currentUser = await AuthService.GetCurrentUserAsync();
+            // return currentUser?.DisplayName ?? "Unknown User";
+
+            return Task.FromResult("System User"); // Placeholder
+        }
+        catch
+        {
+            return Task.FromResult("Unknown User");
+        }
+    }
+}
+
+<script>
+    window.downloadFile = (filename, dataUri) => {
+        const link = document.createElement('a');
+        link.href = dataUri;
+        link.download = filename;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+    };
+</script>
+

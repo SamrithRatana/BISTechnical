@@ -1,0 +1,225 @@
+﻿@page
+@model IndexModel
+@{
+    ViewData["Title"] = "Profile";
+    ViewData["ActivePage"] = ManageNavPages.Index;
+}
+
+<div class="container emp-profile py-5">
+    <h3 class="text-center mb-4">@ViewData["Title"]</h3>
+    <partial name="_StatusMessage" for="StatusMessage" />
+
+    <form id="profile-form" method="post" enctype="multipart/form-data">
+        <div class="row">
+            <!-- Left Column: Profile Picture -->
+            <div class="col-md-4">
+                <div class="profile-img text-center">
+                    @if (!string.IsNullOrEmpty(Model.ProfilePictureUrl))
+                    {
+                        <!-- ✅ Add cache-busting query parameter to force reload -->
+                        <img id="profilePicture"
+                             src="@(Model.ProfilePictureUrl)?v=@DateTime.UtcNow.Ticks"
+                             alt="Profile Picture"
+                             onerror="this.src='/images/avatar.jpg'" />
+                    }
+                    else
+                    {
+                        <img id="profilePicture" src="~/images/avatar.jpg" alt="Profile Picture" />
+                    }
+
+                    <div class="file btn btn-lg btn-primary mt-3">
+                        Change Photo
+                        <input type="file"
+                               accept="image/*"
+                               asp-for="Input.ProfilePictureFile"
+                               onchange="previewImage(this)" />
+                    </div>
+
+                    @if (!string.IsNullOrEmpty(Model.ProfilePictureUrl))
+                    {
+                        <button type="submit"
+                                asp-page-handler="DeletePicture"
+                                class="btn btn-danger btn-sm mt-2"
+                                onclick="return confirm('Are you sure you want to delete your profile picture?')">
+                            <i class="fas fa-trash"></i> Delete Picture
+                        </button>
+                    }
+
+                    <span asp-validation-for="Input.ProfilePictureFile" class="text-danger"></span>
+                </div>
+            </div>
+
+            <!-- Right Column: Profile Form -->
+            <div class="col-md-8">
+                <div class="profile-head">
+                    <h5 class="mb-3">
+                        @Model.Input.FirstName @Model.Input.LastName
+                    </h5>
+                    <p class="proile-rating">RANKINGS : <span>8/10</span></p>
+                    <ul class="nav nav-tabs" id="myTab" role="tablist">
+                        <li class="nav-item">
+                            <a class="nav-link active" id="home-tab" data-toggle="tab" href="#home" role="tab" aria-controls="home" aria-selected="true">Profile Details</a>
+                        </li>
+                    </ul>
+                </div>
+
+                <div class="tab-content profile-tab mt-3" id="myTabContent">
+                    <div class="tab-pane fade show active" id="home" role="tabpanel" aria-labelledby="home-tab">
+                        <div class="form-floating mb-3">
+                            <input asp-for="Input.FirstName" class="form-control" placeholder="First Name" />
+                            <label asp-for="Input.FirstName"></label>
+                            <span asp-validation-for="Input.FirstName" class="text-danger"></span>
+                        </div>
+                        <div class="form-floating mb-3">
+                            <input asp-for="Input.LastName" class="form-control" placeholder="Last Name" />
+                            <label asp-for="Input.LastName"></label>
+                            <span asp-validation-for="Input.LastName" class="text-danger"></span>
+                        </div>
+                        <div class="form-floating mb-3">
+                            <input asp-for="Username" class="form-control" placeholder="Username" disabled />
+                            <label asp-for="Username"></label>
+                        </div>
+                        <div class="form-floating mb-3">
+                            <input asp-for="Input.PhoneNumber" class="form-control" placeholder="Phone Number" />
+                            <label asp-for="Input.PhoneNumber"></label>
+                            <span asp-validation-for="Input.PhoneNumber" class="text-danger"></span>
+                        </div>
+                        <button id="update-profile-button" type="submit" class="profile-edit-btn btn btn-primary w-100">
+                            <i class="fas fa-save"></i> Save Changes
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </form>
+</div>
+
+@section Scripts {
+    <partial name="_ValidationScriptsPartial" />
+    <script>
+        function previewImage(input) {
+            if (input.files && input.files[0]) {
+                // Validate file size (5MB)
+                if (input.files[0].size > 5 * 1024 * 1024) {
+                    alert('File size must be less than 5MB');
+                    input.value = '';
+                    return;
+                }
+
+                // Validate file type
+                const allowedTypes = ['image/jpeg', 'image/png', 'image/webp'];
+                if (!allowedTypes.includes(input.files[0].type)) {
+                    alert('Only JPG, PNG, and WebP images are allowed');
+                    input.value = '';
+                    return;
+                }
+
+                const reader = new FileReader();
+                reader.onload = function(e) {
+                    document.getElementById('profilePicture').src = e.target.result;
+                };
+                reader.readAsDataURL(input.files[0]);
+            }
+        }
+
+        // ✅ Force image reload after page load to prevent caching issues
+        document.addEventListener('DOMContentLoaded', function() {
+            const img = document.getElementById('profilePicture');
+            if (img && img.src && !img.src.includes('avatar.jpg')) {
+                // Add timestamp to prevent browser caching
+                const separator = img.src.includes('?') ? '&' : '?';
+                img.src = img.src.split('?')[0] + '?v=' + new Date().getTime();
+            }
+        });
+    </script>
+}
+
+<style>
+    .emp-profile {
+        padding: 3%;
+        border-radius: 0.5rem;
+        background: #fff;
+        box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
+    }
+
+    .profile-img {
+        position: relative;
+        max-width: 250px;
+        margin: auto;
+    }
+
+        .profile-img img {
+            width: 100%;
+            height: auto;
+            border-radius: 50%;
+            box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
+            aspect-ratio: 1/1;
+            object-fit: cover;
+        }
+
+    .file {
+        position: relative;
+        overflow: hidden;
+        margin-top: 20px;
+        cursor: pointer;
+        display: inline-block;
+    }
+
+        .file input {
+            position: absolute;
+            opacity: 0;
+            right: 0;
+            top: 0;
+            cursor: pointer;
+            width: 100%;
+            height: 100%;
+        }
+
+    .profile-head {
+        font-family: 'Roboto', sans-serif;
+        margin-bottom: 20px;
+    }
+
+        .profile-head h5 {
+            color: #333;
+        }
+
+        .profile-head .proile-rating span {
+            color: #0062cc;
+            font-weight: 600;
+        }
+
+    .profile-edit-btn {
+        background-color: #007bff;
+        border: none;
+        transition: background-color 0.3s ease;
+        margin-top: 10px;
+    }
+
+        .profile-edit-btn:hover {
+            background-color: #0056b3;
+        }
+
+    .nav-tabs {
+        border-bottom: 2px solid #0062cc;
+    }
+
+        .nav-tabs .nav-link {
+            border: none;
+            border-bottom: 2px solid transparent;
+            color: #0062cc;
+            font-weight: 600;
+        }
+
+            .nav-tabs .nav-link.active {
+                border: none;
+                border-bottom: 2px solid #0062cc;
+                color: #0062cc;
+            }
+
+    .btn-danger.btn-sm {
+        width: auto;
+        padding: 5px 15px;
+        font-size: 14px;
+    }
+</style>

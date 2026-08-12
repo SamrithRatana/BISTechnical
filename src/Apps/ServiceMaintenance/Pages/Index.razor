@@ -1,0 +1,1485 @@
+@implements IAsyncDisposable
+@page "/"
+@inject NavigationManager NavigationManager
+@using Microsoft.AspNetCore.SignalR.Client
+@using ServiceMaintenance.Resources
+@using ServiceMaintenance.Services
+@using Syncfusion.Blazor.Navigations
+@inject GlobalUserService GlobalUserCache
+@inject RepairItemService RepairItemService
+@inject IRedisService Redis
+@inject CacheHelper Cache
+@inject MessageQueueHelper MQ
+@attribute [Authorize]
+
+<div class="row row-cols-1 row-cols-sm-2 row-cols-md-2 row-cols-lg-4 g-3 mb-3">
+    @foreach (var statistic in statistics)
+    {
+        <div class="col">
+            <div class="stat-widget-card @(selectedFilter == GetFilterFromTitle(statistic.Title) ? "active-stat-card" : "")"
+                 style="cursor: @(string.IsNullOrEmpty(statistic.RouteUrl) ? "default" : "pointer")"
+                 @onclick="() => NavigateToPage(statistic.RouteUrl)">
+                <div class="stat-widget-body">
+                    <div class="stat-widget-info">
+                        <span class="stat-widget-label" title="@statistic.Title">@statistic.Title</span>
+                        <div class="stat-widget-value-row">
+                            <span class="stat-widget-value @statistic.ValueClass">@statistic.Value</span>
+                            @if (!string.IsNullOrEmpty(statistic.Trend))
+                            {
+                                <span class="stat-widget-badge @statistic.TrendClass">@statistic.Trend</span>
+                            }
+                        </div>
+                    </div>
+                    <div class="stat-widget-icon-wrapper">
+                        <div class="stat-widget-icon">
+                            <i class="@statistic.IconClass"></i>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    }
+</div>
+
+<SfMediaQuery @bind-ActiveBreakPoint="activeBreakpoint"></SfMediaQuery>
+
+@{
+    bool enableAdaptiveUIMode = false;
+    RowDirection renderingMode = RowDirection.Vertical;
+
+    if (activeBreakpoint == "Small")
+    {
+        enableAdaptiveUIMode = true;
+        renderingMode = RowDirection.Vertical;
+    }
+    else if (activeBreakpoint == "Medium")
+    {
+        enableAdaptiveUIMode = true;
+        renderingMode = RowDirection.Horizontal;
+    }
+    else
+    {
+        enableAdaptiveUIMode = false;
+    }
+}
+
+<div class="repair-grid">
+    <div class="filter-container">
+        <SfButton Content="Export" IconCss="fas fa-download" OnClick="ShowExportDialog" CssClass="toolbar-item" style="margin-right:10px;" />
+
+        <SfDialog @bind-Visible="@isDialogExportVisible" Width="270px" Height="150px" ShowCloseIcon="true">
+            <div class="p-3">
+                <SfButton Content="Excel" IconCss="fas fa-file-excel" OnClick="ExportToExcel" CssClass="toolbar-item" style="margin-right:10px;" />
+                <SfButton Content="PDF" IconCss="fas fa-file-pdf" OnClick="ExportToPdf" CssClass="toolbar-item" style="margin-right:10px;" />
+            </div>
+        </SfDialog>
+
+        <select class="form-control filter-select" @onchange="OnFilterChange">
+            <option value="All" selected="@IsSelected("All")">All</option>
+            <option value="Today" selected="@IsSelected("Today")">Today</option>
+            <option value="Yesterday" selected="@IsSelected("Yesterday")">Yesterday</option>
+            <option value="LastWeek" selected="@IsSelected("LastWeek")">Last Week</option>
+            <option value="LastMonth" selected="@IsSelected("LastMonth")">Last Month</option>
+            <option value="Draft" selected="@IsSelected("Draft")">Draft</option>
+            <option value="Complete" selected="@IsSelected("Complete")">Complete</option>
+            <option value="Custom" selected="@IsSelected("Custom")">Custom Date</option>
+        </select>
+
+        <SfDialog @bind-Visible="@isDialogVisible" Width="400px" Height="400px" Title="Custom Date Filter">
+            <div class="p-3">
+                <div class="mb-3">
+                    <label>From Date:</label>
+                    <SfDatePicker @bind-Value="@fromDate" Placeholder="Select From Date"></SfDatePicker>
+                </div>
+
+                <div class="mb-3">
+                    <label>To Date:</label>
+                    <SfDatePicker @bind-Value="@toDate" Placeholder="Select To Date"></SfDatePicker>
+                </div>
+
+                <div class="mb-3">
+                    <label>Status:</label>
+                    <select class="form-control" @bind="selectedStatus">
+                        <option value="">All</option>
+                        <option value="Draft">Draft</option>
+                        <option value="Complete">Complete</option>
+                    </select>
+                </div>
+
+                <button class="btn btn-primary" @onclick="ApplyCustomFilter">Apply</button>
+                <button class="btn btn-secondary" @onclick="CloseDialog">Cancel</button>
+            </div>
+        </SfDialog>
+    </div>
+
+    @if (isLoading)
+
+    {
+
+        <!-- ✅ Skeleton placeholder — 6 rows -->
+
+        <div style="border: 1px solid #e0e0e0; border-radius: 4px; overflow: hidden;">
+
+            @for (int i = 0; i < 6; i++)
+
+            {
+
+                <div class="skeleton-row">
+
+                    <div class="skeleton-cell" style="width: 140px;"></div>
+
+                    <div class="skeleton-cell" style="width: 300px;"></div>
+
+                    <div class="skeleton-cell" style="width: 200px;"></div>
+
+                    <div class="skeleton-cell" style="width: 120px;"></div>
+
+                    <div class="skeleton-cell" style="width: 100px;"></div>
+
+                    <div class="skeleton-cell" style="width: 100px; margin-left: auto;"></div>
+
+                </div>
+
+            }
+
+        </div>
+
+    }
+
+    else
+
+    {
+
+        <SfGrid @ref="MyGrid"
+                DataSource="@gridData"
+                AllowSorting="true"
+                SelectionMode="GridSelectionMode.Single"
+                EnableAdaptiveUI="@enableAdaptiveUIMode"
+                RowRenderingMode="@renderingMode"
+                AllowSelection="true"
+                AllowFiltering="true"
+                AllowExcelExport="true"
+                AllowPdfExport="true"
+                Height="400"
+                AllowResizing="true"
+                AllowPaging="true">
+
+            <GridFilterSettings Type="Syncfusion.Blazor.Grids.FilterType.Excel"></GridFilterSettings>
+
+            <GridEvents RowSelected="RowSelectHandler"
+                        TValue="RepairServices"></GridEvents>
+
+            <GridPageSettings PageSize="@pageSize"
+                              PageCount="5"
+                              PageSizes="new int[] { 10, 20, 50, 100 }"></GridPageSettings>
+
+            <GridColumns>
+
+                <GridColumn Field="ServiceDate" HeaderText="@Loc[nameof(ResourceStrings.TextReceiveDate)]" Width="180" Format="dd/MM/yyyy HH:mm tt" />
+
+                <GridColumn Field="CompanyName" HeaderText="@Loc[nameof(ResourceStrings.TextCompanyName)]" Width="380" />
+
+                <GridColumn Field="itemName" HeaderText="@Loc[nameof(ResourceStrings.TextModel)]" Width="250" />
+
+                <GridColumn Field="serialNumber" HeaderText="@Loc[nameof(ResourceStrings.TextSerialNumber)]" Width="150" />
+
+                <GridColumn Field="ServicePriority" HeaderText="@Loc[nameof(ResourceStrings.TextPriority)]" Width="150" TextAlign="Syncfusion.Blazor.Grids.TextAlign.Center">
+
+                    <Template>
+
+                        @{
+
+                            var repairService = (RepairServices)context;
+
+                            var priorityClass = repairService.ServicePriority switch
+
+                            {
+
+                                "Low" => "priority-low",
+
+                                "Normal" => "priority-normal",
+
+                                "High" => "priority-high",
+
+                                _ => "priority-default"
+
+                            };
+
+                        }
+
+                        <span class="priority-badge @priorityClass">
+
+                            @repairService.ServicePriority
+
+                        </span>
+
+                    </Template>
+
+                </GridColumn>
+
+                <GridColumn HeaderText="@Loc[nameof(ResourceStrings.TextStatus)]" Width="170" IsFrozen="true" Freeze="FreezeDirection.Right" TextAlign="Syncfusion.Blazor.Grids.TextAlign.Center">
+                    <Template>
+                        @{
+                            var repairService = (RepairServices)context;
+                            var (statusClass, statusGif, statusText) = GetStatusInfo(repairService.Status);
+                        }
+                        <span class="status-badge @statusClass" @onclick="() => StatusColumnClickHandler(repairService)" style="cursor:pointer;">
+                            @statusText
+                        </span>
+                    </Template>
+                </GridColumn>
+
+            </GridColumns>
+
+        </SfGrid>
+
+    }
+
+
+
+        @if (paginatedResult != null)
+
+        {
+
+            <div class="d-flex justify-content-between align-items-center mt-3 px-3">
+
+                <div class="pagination-info">
+
+                    <span>Showing <strong>@((dialogCurrentPage - 1) * dialogPageSize + 1)</strong> to <strong>@(Math.Min(dialogCurrentPage * dialogPageSize, dialogTotalCount))</strong> of <strong>@dialogTotalCount</strong> items</span>
+
+                </div>
+
+
+
+                <nav aria-label="Page navigation">
+
+                    <ul class="pagination mb-0">
+
+                        <li class="page-item @(currentPage == 1 ? "disabled" : "")">
+
+                            <button class="page-link" @onclick="() => GoToPage(currentPage - 1)" disabled="@(currentPage == 1)">
+
+                                <i class="fas fa-chevron-left"></i>
+
+                            </button>
+
+                        </li>
+
+
+
+                        @foreach (var pageNum in GetPageNumbers())
+
+                        {
+
+                            @if (pageNum == -1)
+
+                            {
+
+                                <li class="page-item disabled">
+
+                                    <span class="page-link">...</span>
+
+                                </li>
+
+                            }
+
+                            else
+
+                            {
+
+                                var currentPageNum = pageNum;
+
+                                <li class="page-item @(currentPage == currentPageNum ? "active" : "")">
+
+                                    <button class="page-link" @onclick="() => GoToPage(currentPageNum)">
+
+                                        @currentPageNum
+
+                                    </button>
+
+                                </li>
+
+                            }
+
+                        }
+
+
+
+                        <li class="page-item @(currentPage >= paginatedResult.TotalPages ? "disabled" : "")">
+
+                            <button class="page-link" @onclick="() => GoToPage(currentPage + 1)" disabled="@(currentPage >= paginatedResult.TotalPages)">
+
+                                <i class="fas fa-chevron-right"></i>
+
+                            </button>
+
+                        </li>
+
+                    </ul>
+
+                </nav>
+
+            </div>
+
+        }
+
+    }
+</div>
+
+<hr />
+<ServiceMaintenance.Pages.Details.Member />
+<hr />
+
+<SfDialog Width="1200px" IsModal="true" ShowCloseIcon="true" @bind-Visible="isTodayDialogVisible" Header="Today's Reports">
+    <DialogEvents OnOverlayModalClick="@(() => isTodayDialogVisible = false)"></DialogEvents>
+    <div class="dialog-content">
+        @if (isDialogLoading)
+        {
+            <div class="text-center p-4">
+                <div class="spinner-border text-primary" role="status">
+                    <span class="visually-hidden">Loading...</span>
+                </div>
+            </div>
+        }
+        else
+        {
+            <div class="table-responsive">
+                <table class="table table-hover">
+                    <thead class="thead-dark">
+                        <tr>
+                            <th>Company Name</th>
+                            <th>Report No</th>
+                            <th>Status</th>
+                            <th>Received Date</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @if (dialogData?.Any() == true)
+                        {
+                            @foreach (var item in dialogData)
+                            {
+                                <tr style="cursor: pointer;" @onclick="() => NavigateToService(item.Id)">
+                                    <td class="text-start text-danger">@item.CompanyName</td>
+                                    <td class="text-start">@item.reportNo</td>
+                                    <td class="text-start">@item.Status</td>
+                                    <td class="text-start">@item.ServiceDate.ToString("yyyy-MM-dd")</td>
+                                </tr>
+                            }
+                        }
+                        else
+                        {
+                            <tr>
+                                <td colspan="4" class="text-center">No records found.</td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+
+            @if (dialogTotalPages > 0 && dialogData?.Any() == true)
+            {
+                <div class="d-flex justify-content-between align-items-center mt-3 px-3">
+                    <div class="pagination-info">
+                        <span>Showing <strong>@((dialogCurrentPage - 1) * dialogPageSize + 1)</strong> to <strong>@(Math.Min(dialogCurrentPage * dialogPageSize, dialogTotalCount))</strong> of <strong>@dialogTotalCount</strong> items</span>
+                    </div>
+
+                    <nav aria-label="Dialog pagination">
+                        <ul class="pagination mb-0">
+                            <li class="page-item @(dialogCurrentPage == 1 ? "disabled" : "")">
+                                <button class="page-link" @onclick="() => GoToDialogPage(dialogCurrentPage - 1)" disabled="@(dialogCurrentPage == 1)">
+                                    <i class="fas fa-chevron-left"></i>
+                                </button>
+                            </li>
+
+                            @foreach (var pageNum in GetDialogPageNumbers())
+                            {
+                                @if (pageNum == -1)
+                                {
+                                    <li class="page-item disabled">
+                                        <span class="page-link">...</span>
+                                    </li>
+                                }
+                                else
+                                {
+                                    var currentPageNum = pageNum;
+                                    <li class="page-item @(dialogCurrentPage == currentPageNum ? "active" : "")">
+                                        <button class="page-link" @onclick="() => GoToDialogPage(currentPageNum)">
+                                            @currentPageNum
+                                        </button>
+                                    </li>
+                                }
+                            }
+
+                            <li class="page-item @(dialogCurrentPage >= dialogPaginatedResult.TotalPages ? "disabled" : "")">
+                                <button class="page-link" @onclick="() => GoToDialogPage(dialogCurrentPage + 1)" disabled="@(dialogCurrentPage >= dialogPaginatedResult.TotalPages)">
+                                    <i class="fas fa-chevron-right"></i>
+                                </button>
+                            </li>
+                        </ul>
+                    </nav>
+                </div>
+            }
+        }
+    </div>
+</SfDialog>
+
+<SfDialog @bind-Visible="isReceiveItemDialogVisible"
+          Width="90%"
+          Height="80%"
+          IsModal="true"
+          ShowCloseIcon="true">
+    <DialogTemplates>
+        <Header>Received Items</Header>
+        <Content>
+            <SfGrid DataSource="@dialogData"
+                    AllowPaging="false"
+                    Height="400">
+                <GridColumns>
+                    <GridColumn Field="@nameof(RepairServices.CompanyName)" HeaderText="Company"></GridColumn>
+                    <GridColumn Field="@nameof(RepairServices.reportNo)" HeaderText="Report No"></GridColumn>
+                    <GridColumn Field="@nameof(RepairServices.Status)" HeaderText="Status"></GridColumn>
+                    <GridColumn Field="@nameof(RepairServices.ServiceDate)" HeaderText="Date" Format="yyyy-MM-dd"></GridColumn>
+                </GridColumns>
+            </SfGrid>
+        </Content>
+        <FooterTemplate>
+            <div class="dialog-footer-pagination">
+                <div class="pagination-info">
+                    <span>Showing <strong>@((dialogCurrentPage - 1) * dialogPageSize + 1)</strong> to <strong>@(Math.Min(dialogCurrentPage * dialogPageSize, dialogTotalCount))</strong> of <strong>@dialogTotalCount</strong> items</span>
+                </div>
+                <div class="pagination-controls">
+                    <button class="e-btn e-small"
+                            @onclick="PreviousDialogPage"
+                            disabled="@(dialogCurrentPage <= 1)">
+                        Previous
+                    </button>
+
+                    <span class="page-numbers">
+                        @for (int i = 1; i <= dialogTotalPages; i++)
+                        {
+                            int pageNum = i;
+                            <button class="e-btn e-small @(dialogCurrentPage == pageNum ? "e-active" : "")"
+                                    @onclick="() => GoToDialogPage(pageNum)">
+                                @pageNum
+                            </button>
+                        }
+                    </span>
+
+                    <button class="e-btn e-small"
+                            @onclick="NextDialogPage"
+                            disabled="@(dialogCurrentPage >= dialogTotalPages)">
+                        Next
+                    </button>
+                </div>
+            </div>
+        </FooterTemplate>
+    </DialogTemplates>
+</SfDialog>
+
+<SfDialog Width="1200px" IsModal="true" ShowCloseIcon="true" @bind-Visible="isFinishedThisMonthDialogVisible" Header="Finished This Month">
+    <DialogEvents OnOverlayModalClick="@(() => isFinishedThisMonthDialogVisible = false)"></DialogEvents>
+    <div class="dialog-content">
+        @if (isDialogLoading)
+        {
+            <div class="text-center p-4">
+                <div class="spinner-border text-primary" role="status">
+                    <span class="visually-hidden">Loading...</span>
+                </div>
+            </div>
+        }
+        else
+        {
+            <div class="table-responsive">
+                <table class="table table-hover">
+                    <thead class="thead-dark">
+                        <tr>
+                            <th>Company Name</th>
+                            <th>Report No</th>
+                            <th>Status</th>
+                            <th>Received Date</th>
+                            <th>Finished Date</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @if (dialogData?.Any() == true)
+                        {
+                            @foreach (var item in dialogData)
+                            {
+                                <tr style="cursor: pointer;" @onclick="() => NavigateToService(item.Id)">
+                                    <td class="text-start text-danger">@item.CompanyName</td>
+                                    <td class="text-start">@item.reportNo</td>
+                                    <td class="text-start">@item.Status</td>
+                                    <td class="text-start">@item.ServiceDate.ToString("yyyy-MM-dd")</td>
+                                    <td class="text-start">@item.finishedDate?.ToString("yyyy-MM-dd")</td>
+                                </tr>
+                            }
+                        }
+                        else
+                        {
+                            <tr>
+                                <td colspan="5" class="text-center">No records found.</td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+
+            @if (dialogTotalPages > 0 && dialogData?.Any() == true)
+            {
+                <div class="d-flex justify-content-between align-items-center mt-3 px-3">
+                    <div class="pagination-info">
+                        <span>Showing <strong>@((dialogCurrentPage - 1) * dialogPageSize + 1)</strong> to <strong>@(Math.Min(dialogCurrentPage * dialogPageSize, dialogTotalCount))</strong> of <strong>@dialogTotalCount</strong> items</span>
+                    </div>
+
+                    <nav aria-label="Dialog pagination">
+                        <ul class="pagination mb-0">
+                            <li class="page-item @(dialogCurrentPage == 1 ? "disabled" : "")">
+                                <button class="page-link" @onclick="() => GoToDialogPage(dialogCurrentPage - 1)" disabled="@(dialogCurrentPage == 1)">
+                                    <i class="fas fa-chevron-left"></i>
+                                </button>
+                            </li>
+
+                            @foreach (var pageNum in GetDialogPageNumbers())
+                            {
+                                @if (pageNum == -1)
+                                {
+                                    <li class="page-item disabled">
+                                        <span class="page-link">...</span>
+                                    </li>
+                                }
+                                else
+                                {
+                                    var currentPageNum = pageNum;
+                                    <li class="page-item @(dialogCurrentPage == currentPageNum ? "active" : "")">
+                                        <button class="page-link" @onclick="() => GoToDialogPage(currentPageNum)">
+                                            @currentPageNum
+                                        </button>
+                                    </li>
+                                }
+                            }
+
+                            <li class="page-item @(dialogCurrentPage >= dialogPaginatedResult.TotalPages ? "disabled" : "")">
+                                <button class="page-link" @onclick="() => GoToDialogPage(dialogCurrentPage + 1)" disabled="@(dialogCurrentPage >= dialogPaginatedResult.TotalPages)">
+                                    <i class="fas fa-chevron-right"></i>
+                                </button>
+                            </li>
+                        </ul>
+                    </nav>
+                </div>
+            }
+        }
+    </div>
+</SfDialog>
+
+<SfDialog Width="1200px" IsModal="true" ShowCloseIcon="true" @bind-Visible="isWaitingCustomerDialogVisible" Header="Waiting Customer Confirmation">
+    <DialogEvents OnOverlayModalClick="@(() => isWaitingCustomerDialogVisible = false)"></DialogEvents>
+    <div class="dialog-content">
+        @if (isDialogLoading)
+        {
+            <div class="text-center p-4">
+                <div class="spinner-border text-primary" role="status">
+                    <span class="visually-hidden">Loading...</span>
+                </div>
+            </div>
+        }
+        else
+        {
+            <div class="table-responsive">
+                <table class="table table-hover">
+                    <thead class="thead-dark">
+                        <tr>
+                            <th>Company Name</th>
+                            <th>Report No</th>
+                            <th>Status</th>
+                            <th>Received Date</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @if (dialogData?.Any() == true)
+                        {
+                            @foreach (var item in dialogData)
+                            {
+                                <tr style="cursor: pointer;" @onclick="() => NavigateToService(item.Id)">
+                                    <td class="text-start text-danger">@item.CompanyName</td>
+                                    <td class="text-start">@item.reportNo</td>
+                                    <td class="text-start">@item.Status</td>
+                                    <td class="text-start">@item.ServiceDate.ToString("yyyy-MM-dd")</td>
+                                </tr>
+                            }
+                        }
+                        else
+                        {
+                            <tr>
+                                <td colspan="4" class="text-center">No records found.</td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+
+            @if (dialogTotalPages > 0 && dialogData?.Any() == true)
+            {
+                <div class="d-flex justify-content-between align-items-center mt-3 px-3">
+                    <div class="pagination-info">
+                        <span>Showing <strong>@((dialogCurrentPage - 1) * dialogPageSize + 1)</strong> to <strong>@(Math.Min(dialogCurrentPage * dialogPageSize, dialogTotalCount))</strong> of <strong>@dialogTotalCount</strong> items</span>
+                    </div>
+
+                    <nav aria-label="Dialog pagination">
+                        <ul class="pagination mb-0">
+                            <li class="page-item @(dialogCurrentPage == 1 ? "disabled" : "")">
+                                <button class="page-link" @onclick="() => GoToDialogPage(dialogCurrentPage - 1)" disabled="@(dialogCurrentPage == 1)">
+                                    <i class="fas fa-chevron-left"></i>
+                                </button>
+                            </li>
+
+                            @foreach (var pageNum in GetDialogPageNumbers())
+                            {
+                                @if (pageNum == -1)
+                                {
+                                    <li class="page-item disabled">
+                                        <span class="page-link">...</span>
+                                    </li>
+                                }
+                                else
+                                {
+                                    var currentPageNum = pageNum;
+                                    <li class="page-item @(dialogCurrentPage == currentPageNum ? "active" : "")">
+                                        <button class="page-link" @onclick="() => GoToDialogPage(currentPageNum)">
+                                            @currentPageNum
+                                        </button>
+                                    </li>
+                                }
+                            }
+
+                            <li class="page-item @(dialogCurrentPage >= dialogPaginatedResult.TotalPages ? "disabled" : "")">
+                                <button class="page-link" @onclick="() => GoToDialogPage(dialogCurrentPage + 1)" disabled="@(dialogCurrentPage >= dialogPaginatedResult.TotalPages)">
+                                    <i class="fas fa-chevron-right"></i>
+                                </button>
+                            </li>
+                        </ul>
+                    </nav>
+                </div>
+            }
+        }
+    </div>
+</SfDialog>
+
+<SfDialog Width="1200px" IsModal="true" ShowCloseIcon="true" @bind-Visible="isWaitingSpareDialogVisible" Header="Waiting Spareparts">
+    <DialogEvents OnOverlayModalClick="@(() => isWaitingSpareDialogVisible = false)"></DialogEvents>
+    <div class="dialog-content">
+        @if (isDialogLoading)
+        {
+            <div class="text-center p-4">
+                <div class="spinner-border text-primary" role="status">
+                    <span class="visually-hidden">Loading...</span>
+                </div>
+            </div>
+        }
+        else
+        {
+            <div class="table-responsive">
+                <table class="table table-hover">
+                    <thead class="thead-dark">
+                        <tr>
+                            <th>Company Name</th>
+                            <th>Report No</th>
+                            <th>Status</th>
+                            <th>Received Date</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @if (dialogData?.Any() == true)
+                        {
+                            @foreach (var item in dialogData)
+                            {
+                                <tr style="cursor: pointer;" @onclick="() => NavigateToService(item.Id)">
+                                    <td class="text-start text-danger">@item.CompanyName</td>
+                                    <td class="text-start">@item.reportNo</td>
+                                    <td class="text-start">@item.Status</td>
+                                    <td class="text-start">@item.ServiceDate.ToString("yyyy-MM-dd")</td>
+                                </tr>
+                            }
+                        }
+                        else
+                        {
+                            <tr>
+                                <td colspan="4" class="text-center">No records found.</td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+
+            @if (dialogTotalPages > 0 && dialogData?.Any() == true)
+            {
+                <div class="d-flex justify-content-between align-items-center mt-3 px-3">
+                    <div class="pagination-info">
+                        <span>Showing <strong>@((dialogCurrentPage - 1) * dialogPageSize + 1)</strong> to <strong>@(Math.Min(dialogCurrentPage * dialogPageSize, dialogTotalCount))</strong> of <strong>@dialogTotalCount</strong> items</span>
+                    </div>
+
+                    <nav aria-label="Dialog pagination">
+                        <ul class="pagination mb-0">
+                            <li class="page-item @(dialogCurrentPage == 1 ? "disabled" : "")">
+                                <button class="page-link" @onclick="() => GoToDialogPage(dialogCurrentPage - 1)" disabled="@(dialogCurrentPage == 1)">
+                                    <i class="fas fa-chevron-left"></i>
+                                </button>
+                            </li>
+
+                            @foreach (var pageNum in GetDialogPageNumbers())
+                            {
+                                @if (pageNum == -1)
+                                {
+                                    <li class="page-item disabled">
+                                        <span class="page-link">...</span>
+                                    </li>
+                                }
+                                else
+                                {
+                                    var currentPageNum = pageNum;
+                                    <li class="page-item @(dialogCurrentPage == currentPageNum ? "active" : "")">
+                                        <button class="page-link" @onclick="() => GoToDialogPage(currentPageNum)">
+                                            @currentPageNum
+                                        </button>
+                                    </li>
+                                }
+                            }
+
+                            <li class="page-item @(dialogCurrentPage >= dialogPaginatedResult.TotalPages ? "disabled" : "")">
+                                <button class="page-link" @onclick="() => GoToDialogPage(dialogCurrentPage + 1)" disabled="@(dialogCurrentPage >= dialogPaginatedResult.TotalPages)">
+                                    <i class="fas fa-chevron-right"></i>
+                                </button>
+                            </li>
+                        </ul>
+                    </nav>
+                </div>
+            }
+        }
+    </div>
+</SfDialog>
+
+@code {
+    private SfGrid<RepairServices> MyGrid;
+    private PaginatedResult<RepairServices> paginatedResult;
+    private List<RepairServices> gridData = new();
+    private List<RepairServices> dialogData = new();
+    private PaginatedResult<RepairServices> dialogPaginatedResult;
+    private int dialogCurrentPage = 1;
+    private int dialogPageSize = 10;
+    private string currentDialogType = "";
+    private int dialogTotalPages = 1;
+    private int dialogTotalCount = 0;
+    private Dictionary<string, string> _allUsers = new Dictionary<string, string>();
+    private bool _usersLoaded = false;
+    private bool isDialogLoading = false;
+
+    // Statistics counts
+    private int _todayCount;
+    private int _receivedCount;
+    private int _finishedThisMonthCount;
+    private int waitingCustomerCount;
+    private int waitingSpareCount;
+
+    private string selectedFilter = "Today";
+    private string activeBreakpoint { get; set; }
+    private bool isDialogVisible = false;
+    private bool isDialogExportVisible = false;
+    private bool isLoading = true;
+
+    private DateTime? fromDate;
+    private DateTime? toDate;
+    private string selectedStatus = "";
+
+    private int currentPage = 1;
+    private int pageSize = 10;
+
+    private HubConnection hubConnection;
+
+    private bool isTodayDialogVisible = false;
+    private bool isReceiveItemDialogVisible = false;
+    private bool isFinishedThisMonthDialogVisible = false;
+    private bool isWaitingCustomerDialogVisible = false;
+    private bool isWaitingSpareDialogVisible = false;
+
+    private bool showCustomerCount = true;
+    private System.Timers.Timer updateTimer;
+    private string animationClass = "slide-in";
+
+    protected override async Task OnInitializedAsync()
+    {
+        try
+        {
+            await LoadAllUsersAsync();
+            await LoadStatisticsData();
+            StateHasChanged();
+            await LoadGridData();
+            await SetupSignalR();
+
+            updateTimer = new System.Timers.Timer(3000);
+            updateTimer.Elapsed += async (sender, e) => await ToggleStatistic();
+            updateTimer.AutoReset = true;
+            updateTimer.Start();
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Error in OnInitializedAsync: {ex.Message}");
+        }
+        finally
+        {
+            isLoading = false;
+            StateHasChanged();
+        }
+    }
+    // ✅ Load all users once at startup
+    private async Task LoadAllUsersAsync()
+    {
+        if (_usersLoaded)
+            return;
+
+        try
+        {
+            Console.WriteLine("📥 Loading all users from API...");
+
+            // Get all users from GlobalUserCache
+            _allUsers = await GlobalUserCache.GetUsersAsync();
+
+            _usersLoaded = true;
+            Console.WriteLine($"✅ Loaded {_allUsers.Count} users into cache");
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"❌ Error loading users: {ex.Message}");
+            _allUsers = new Dictionary<string, string>();
+        }
+    }
+
+    // ✅ Get username by GUID (works for ANY user GUID field)
+    private string GetUserNameDisplay(Guid? userId)
+    {
+        if (!userId.HasValue || userId.Value == Guid.Empty)
+            return "Unknown";
+
+        // Convert Guid to string for dictionary lookup
+        string userIdString = userId.Value.ToString();
+
+        // Check if users are loaded
+        if (!_usersLoaded)
+            return "Loading...";
+
+        // Lookup username from loaded users dictionary
+        if (_allUsers.TryGetValue(userIdString, out string username))
+            return username;
+
+        return "Unknown User";
+    }
+    private async Task LoadStatisticsData()
+    {
+        try
+        {
+            // ✅ Try Redis Cache first
+            var cachedStats = await Cache.GetOrSetAsync(
+                CacheKeys.DashboardStats,
+                async () =>
+                {
+                    Console.WriteLine("📥 Loading fresh dashboard statistics...");
+
+                    var todayTask = RepairItemService.SearchRepairServicesAsync(
+                        pageNumber: 1, pageSize: 1, dateFilter: "Today");
+
+                    var receivedTask = RepairItemService.SearchRepairServicesAsync(
+                        pageNumber: 1, pageSize: 1, status: "Item Recieved");
+
+                    var awaitingCustomerTask = RepairItemService.SearchRepairServicesAsync(
+                        pageNumber: 1, pageSize: 1, status: "Awaiting Customer Confirm");
+
+                    var awaitingSpareTask = RepairItemService.SearchRepairServicesAsync(
+                        pageNumber: 1, pageSize: 1, status: "Awaiting Sparepart");
+
+                    var startOfMonth = new DateTime(DateTime.Today.Year, DateTime.Today.Month, 1);
+                    var endOfMonth = startOfMonth.AddMonths(1).AddDays(-1);
+                    var finishedTask = RepairItemService.SearchRepairServicesAsync(
+                        pageNumber: 1, pageSize: 1, status: "Finished",
+                        fromDate: startOfMonth, toDate: endOfMonth);
+
+                    // ✅ All parallel
+                    await Task.WhenAll(todayTask, receivedTask,
+                        awaitingCustomerTask, awaitingSpareTask, finishedTask);
+
+                    return new DashboardStatistics
+                    {
+                        TodayCount = (await todayTask)?.TotalCount ?? 0,
+                        ReceivedCount = (await receivedTask)?.TotalCount ?? 0,
+                        WaitingCustomerCount = (await awaitingCustomerTask)?.TotalCount ?? 0,
+                        WaitingSpareCount = (await awaitingSpareTask)?.TotalCount ?? 0,
+                        FinishedThisMonthCount = (await finishedTask)?.TotalCount ?? 0
+                    };
+                },
+                TimeSpan.FromMinutes(2)
+            );
+
+            if (cachedStats != null)
+            {
+                _todayCount = cachedStats.TodayCount;
+                _receivedCount = cachedStats.ReceivedCount;
+                _finishedThisMonthCount = cachedStats.FinishedThisMonthCount;
+                waitingCustomerCount = cachedStats.WaitingCustomerCount;
+                waitingSpareCount = cachedStats.WaitingSpareCount;
+                Console.WriteLine("✅ Statistics loaded");
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Error loading statistics: {ex.Message}");
+        }
+    }
+    private async Task LoadGridData()
+    {
+        isLoading = true;
+        StateHasChanged();
+
+        try
+        {
+            var cacheKey = CacheKeys.DashboardGrid(selectedFilter, currentPage, pageSize);
+
+            string dateFilter = null;
+            string statusFilter = null;
+            DateTime? apiFromDate = null;
+            DateTime? apiToDate = null;
+
+            switch (selectedFilter)
+            {
+                case "Today": dateFilter = "Today"; break;
+                case "Yesterday": dateFilter = "Yesterday"; break;
+                case "LastWeek": dateFilter = "LastWeek"; break;
+                case "LastMonth": dateFilter = "LastMonth"; break;
+                case "Draft": statusFilter = "Draft"; dateFilter = "All"; break;
+                case "Complete": statusFilter = "Complete"; dateFilter = "All"; break;
+                case "Custom":
+                    apiFromDate = fromDate;
+                    apiToDate = toDate;
+                    statusFilter = string.IsNullOrEmpty(selectedStatus) ? null : selectedStatus;
+                    break;
+                case "All":
+                default: dateFilter = "All"; break;
+            }
+
+            paginatedResult = await Cache.GetOrSetAsync(
+                cacheKey,
+                () => RepairItemService.SearchRepairServicesAsync(
+                    pageNumber: currentPage,
+                    pageSize: pageSize,
+                    dateFilter: dateFilter,
+                    statusFilter: statusFilter,
+                    fromDate: apiFromDate,
+                    toDate: apiToDate),
+                selectedFilter == "Today"
+                    ? TimeSpan.FromMinutes(1)
+                    : TimeSpan.FromMinutes(5)
+            );
+
+            gridData = paginatedResult?.Items ?? new List<RepairServices>();
+            Console.WriteLine($"✅ Grid loaded: {gridData.Count} items");
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Error loading grid data: {ex.Message}");
+            gridData = new List<RepairServices>();
+            paginatedResult = new PaginatedResult<RepairServices>
+            {
+                Items = new List<RepairServices>(),
+                TotalCount = 0,
+                PageNumber = currentPage,
+                PageSize = pageSize,
+                TotalPages = 0
+            };
+        }
+        finally
+        {
+            isLoading = false;
+            StateHasChanged();
+        }
+    }
+
+    private async Task SetupSignalR()
+    {
+        hubConnection = new HubConnectionBuilder()
+            .WithUrl(NavigationManager.ToAbsoluteUri("/itemHub"))
+            .Build();
+
+        hubConnection.On<string>("ReceiveItemUpdate", async (message) =>
+        {
+            // ✅ ប្រើ prefix invalidation ជំនួស exact-key
+            // ធានាថា user ដទៃទៀតដែលកំពុងមើល filter/page ខុសគ្នា ក៏ត្រូវបាន invalidate ដែរ
+            await Cache.InvalidateAsync(CacheKeys.DashboardStats);
+            await Cache.InvalidateByPrefixAsync(CacheKeys.PrefixDashboardGrid);
+
+            await LoadStatisticsData();
+            await LoadGridData();
+            await InvokeAsync(StateHasChanged);
+        });
+
+        hubConnection.On<Guid>("BroadcastItemDelete", async (deletedItemId) =>
+        {
+            // ✅ FIXED — ដូចគ្នានឹង ReceiveItemUpdate: invalidate prefix ទាំងអស់
+            // មុននេះ Delete តែ invalidate exact key (filter/page បច្ចុប្បន្ន) ដូច្នេះ
+            // user ដទៃទៀតដែលកំពុងមើល filter/page ខុសគ្នា មិនឃើញ item ត្រូវបាន delete ភ្លាមៗទេ
+            await Cache.InvalidateAsync(CacheKeys.DashboardStats);
+            await Cache.InvalidateByPrefixAsync(CacheKeys.PrefixDashboardGrid);
+
+            await LoadStatisticsData();
+            await LoadGridData();
+            await InvokeAsync(StateHasChanged);
+        });
+
+        await hubConnection.StartAsync();
+
+        hubConnection.Closed += async (error) =>
+        {
+            if (_isDisposed) return;
+            await Task.Delay(new Random().Next(0, 5) * 1000);
+            try
+            {
+                if (!_isDisposed && hubConnection is not null && hubConnection.State == HubConnectionState.Disconnected)
+                    await hubConnection.StartAsync();
+            }
+            catch (Exception ex)
+            {
+                if (!_isDisposed)
+                    Console.WriteLine($"Reconnection failed: {ex.Message}");
+            }
+        };
+    }
+
+    private async Task OnFilterChange(Microsoft.AspNetCore.Components.ChangeEventArgs args)
+    {
+        selectedFilter = args?.Value?.ToString() ?? "Today";
+
+        if (selectedFilter == "Custom")
+        {
+            isDialogVisible = true;
+        }
+        else
+        {
+            // ✅ FIXED — ប្រើ CacheKeys constant ជំនួស hardcoded string
+            // ធានាថា prefix format ត្រូវគ្នា 100% ជាមួយ CacheKeys.DashboardGrid()
+            await Cache.InvalidateByPrefixAsync(
+                CacheKeys.DashboardGridPrefixForFilter(selectedFilter));
+            currentPage = 1;
+            await LoadGridData();
+        }
+    }
+
+    private async Task ApplyCustomFilter()
+    {
+        if (fromDate.HasValue && toDate.HasValue)
+        {
+            // ✅ FIXED — ប្រើ CacheKeys constant ជំនួស hardcoded string
+            await Cache.InvalidateByPrefixAsync(
+                CacheKeys.DashboardGridPrefixForFilter("Custom"));
+            currentPage = 1;
+            await LoadGridData();
+            CloseDialog();
+        }
+    }
+
+    private async Task GoToPage(int page)
+    {
+        if (page < 1 || page > (paginatedResult?.TotalPages ?? 1) || page == currentPage)
+            return;
+
+        currentPage = page;
+        await LoadGridData();
+    }
+
+    private List<int> GetPageNumbers()
+    {
+        var pages = new List<int>();
+        var totalPages = paginatedResult?.TotalPages ?? 1;
+
+        if (totalPages <= 7)
+        {
+            for (int i = 1; i <= totalPages; i++)
+            {
+                pages.Add(i);
+            }
+        }
+        else
+        {
+            pages.Add(1);
+
+            if (currentPage <= 4)
+            {
+                for (int i = 2; i <= 5; i++)
+                {
+                    pages.Add(i);
+                }
+                pages.Add(-1);
+                pages.Add(totalPages);
+            }
+            else if (currentPage >= totalPages - 3)
+            {
+                pages.Add(-1);
+                for (int i = totalPages - 4; i <= totalPages; i++)
+                {
+                    pages.Add(i);
+                }
+            }
+            else
+            {
+                pages.Add(-1);
+                for (int i = currentPage - 1; i <= currentPage + 1; i++)
+                {
+                    pages.Add(i);
+                }
+                pages.Add(-1);
+                pages.Add(totalPages);
+            }
+        }
+
+        return pages;
+    }
+
+    private (string statusClass, string statusGif, string statusText) GetStatusInfo(string status)
+    {
+        return status switch
+        {
+            "Item Received" or "Item Recieved" => ("status-inspection", "images/GIF/item-received.gif", Loc[nameof(ResourceStrings.Textstatusreceived)]),
+            "Inspection" or "Inspecting" => ("status-inspection", "images/GIF/inspection.gif", Loc[nameof(ResourceStrings.Textstatusinspection)]),
+            "Awaiting Customer Confirm" => ("status-awaiting-confirm", "images/GIF/awaiting-confirm.gif", Loc[nameof(ResourceStrings.Textstatuswaitcus)]),
+            "Awaiting Sparepart" => ("status-awaiting-sparepart", "images/GIF/awaiting-sparepart.gif", Loc[nameof(ResourceStrings.Textstatuswaitspare)]),
+            "Repairing" => ("status-repairing", "images/GIF/repairing.gif", Loc[nameof(ResourceStrings.Textstatusrepair)]),
+            "Finished" => ("status-finished", "images/GIF/finished.gif", Loc[nameof(ResourceStrings.Textstatusfinish)]),
+            "Customer Rejected" => ("status-rejected", "images/GIF/rejected.gif", Loc[nameof(ResourceStrings.Textstatuscusrej)]),
+            "Unrepairable" => ("status-unrepairable", "images/GIF/unrepairable.png", Loc[nameof(ResourceStrings.Textstatusunrep)]),
+            "Repair by Third-Party" => ("status-thirdParty", "images/GIF/third-party-repair.png", Loc[nameof(ResourceStrings.TextThirdPartStatus)]),
+            _ => ("status-default", "", status)
+        };
+    }
+
+    private async Task ToggleStatistic()
+    {
+        animationClass = "slide-out";
+        await InvokeAsync(StateHasChanged);
+        await Task.Delay(500);
+
+        showCustomerCount = !showCustomerCount;
+
+        animationClass = "slide-in";
+        await InvokeAsync(StateHasChanged);
+    }
+
+    private List<Statistic> statistics => new List<Statistic>
+    {
+        new Statistic
+        {
+            Title = Loc[nameof(ResourceStrings.TextTodayReportDash)],
+            Value = _todayCount.ToString(),
+            ValueClass = "text-success",
+            IconClass = "fas fa-chart-line",
+            RouteUrl = "/reports/today"
+        },
+        new Statistic
+        {
+            Title = Loc[nameof(ResourceStrings.TextReceiveItemDash)],
+            Value = _receivedCount.ToString(),
+            ValueClass = "text-success",
+            IconClass = "fas fa-box",
+            RouteUrl = "/services/receiveitem"
+        },
+        new Statistic
+        {
+            Title = showCustomerCount
+                ? Loc[nameof(ResourceStrings.TextWatingCusDash)]
+                : Loc[nameof(ResourceStrings.TextWaitingSpareDash)],
+            Value = (showCustomerCount ? waitingCustomerCount : waitingSpareCount).ToString(),
+            ValueClass = "text-info",
+            IconClass = "fas fa-hourglass-half",
+            RouteUrl = showCustomerCount
+                ? "/customer/waiting-customer"
+                : "/customer/waiting-spare"
+        },
+        new Statistic
+        {
+            Title = Loc[nameof(ResourceStrings.TextFinishDash)],
+            Value = _finishedThisMonthCount.ToString(),
+            ValueClass = "text-success",
+            IconClass = "fas fa-check-circle",
+            RouteUrl = "/services/finished"
+        }
+    };
+
+    private void CloseDialog() => isDialogVisible = false;
+    private void CloseExportDialog() => isDialogExportVisible = false;
+    private void ShowExportDialog() => isDialogExportVisible = true;
+    private string IsSelected(string filter) => selectedFilter == filter ? "selected" : null;
+
+    private void OnRowClicked(RepairServices selectedRepairService)
+    {
+        if (selectedRepairService != null)
+        {
+            NavigationManager.NavigateTo($"/repairservice/{selectedRepairService.Id}");
+        }
+    }
+
+    private Task RowSelectHandler(RowSelectEventArgs<RepairServices> args)
+    {
+        var selectedRepairService = args.Data;
+        if (selectedRepairService != null)
+        {
+            NavigationManager.NavigateTo($"/repairservice/{selectedRepairService.Id}");
+        }
+        return Task.CompletedTask;
+    }
+
+    private void StatusColumnClickHandler(RepairServices selectedRepairService)
+    {
+        if (selectedRepairService != null)
+        {
+            NavigationManager.NavigateTo($"/repairservice/{selectedRepairService.Id}");
+        }
+    }
+
+    private async Task NavigateToPage(string routeUrl)
+    {
+        try
+        {
+            currentDialogType = routeUrl;
+            dialogCurrentPage = 1;
+            await LoadDialogData(routeUrl);
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Error loading dialog data: {ex.Message}");
+            dialogData = new List<RepairServices>();
+        }
+    }
+
+    private async Task LoadDialogData(string routeUrl)
+    {
+        isDialogLoading = true;
+        StateHasChanged();
+
+        try
+        {
+            if (routeUrl == "/reports/today")
+            {
+                var result = await RepairItemService.SearchRepairServicesAsync(
+                    pageNumber: dialogCurrentPage,
+                    pageSize: dialogPageSize,
+                    dateFilter: "Today");
+                dialogData = result?.Items?.ToList() ?? new List<RepairServices>();
+                dialogTotalPages = result?.TotalPages ?? 1;
+                dialogTotalCount = result?.TotalCount ?? 0;
+                dialogPaginatedResult = result;
+                isTodayDialogVisible = true;
+            }
+            else if (routeUrl == "/services/receiveitem")
+            {
+                var result = await RepairItemService.SearchRepairServicesAsync(
+                    pageNumber: dialogCurrentPage,
+                    pageSize: dialogPageSize,
+                    status: "Item Recieved");
+                dialogData = result?.Items?.ToList() ?? new List<RepairServices>();
+                dialogTotalPages = result?.TotalPages ?? 1;
+                dialogTotalCount = result?.TotalCount ?? 0;
+                dialogPaginatedResult = result;
+                isReceiveItemDialogVisible = true;
+            }
+            else if (routeUrl == "/services/finished")
+            {
+                var startOfMonth = new DateTime(DateTime.Today.Year, DateTime.Today.Month, 1);
+                var endOfMonth = startOfMonth.AddMonths(1).AddDays(-1);
+                var result = await RepairItemService.SearchRepairServicesAsync(
+                    pageNumber: dialogCurrentPage,
+                    pageSize: dialogPageSize,
+                    status: "Finished",
+                    fromDate: startOfMonth,
+                    toDate: endOfMonth);
+                dialogData = result?.Items?.ToList() ?? new List<RepairServices>();
+                dialogTotalPages = result?.TotalPages ?? 1;
+                dialogTotalCount = result?.TotalCount ?? 0;
+                dialogPaginatedResult = result;
+                isFinishedThisMonthDialogVisible = true;
+            }
+            else if (routeUrl == "/customer/waiting-customer")
+            {
+                var result = await RepairItemService.SearchRepairServicesAsync(
+                    pageNumber: dialogCurrentPage,
+                    pageSize: dialogPageSize,
+                    status: "Awaiting Customer Confirm");
+                dialogData = result?.Items?.ToList() ?? new List<RepairServices>();
+                dialogTotalPages = result?.TotalPages ?? 1;
+                dialogTotalCount = result?.TotalCount ?? 0;
+                dialogPaginatedResult = result;
+                isWaitingCustomerDialogVisible = true;
+            }
+            else if (routeUrl == "/customer/waiting-spare")
+            {
+                var result = await RepairItemService.SearchRepairServicesAsync(
+                    pageNumber: dialogCurrentPage,
+                    pageSize: dialogPageSize,
+                    status: "Awaiting Sparepart");
+                dialogData = result?.Items?.ToList() ?? new List<RepairServices>();
+                dialogTotalPages = result?.TotalPages ?? 1;
+                dialogTotalCount = result?.TotalCount ?? 0;
+                dialogPaginatedResult = result;
+                isWaitingSpareDialogVisible = true;
+            }
+            else if (!string.IsNullOrEmpty(routeUrl))
+            {
+                NavigationManager.NavigateTo(routeUrl);
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Error loading dialog data: {ex.Message}");
+            dialogData = new List<RepairServices>();
+        }
+        finally
+        {
+            isDialogLoading = false;
+            StateHasChanged();
+        }
+    }
+
+    private string GetFilterFromTitle(string title)
+    {
+        if (string.IsNullOrEmpty(title)) return "";
+        if (title.Contains("Today")) return "Today";
+        if (title.Contains("Received")) return "Received";
+        if (title.Contains("Finished")) return "Finished";
+        if (title.Contains("Customer")) return "WaitingCustomer";
+        if (title.Contains("Spare")) return "WaitingSpare";
+        return "";
+    }
+
+    private async Task NextDialogPage()
+    {
+        if (dialogCurrentPage < dialogTotalPages)
+        {
+            dialogCurrentPage++;
+            await LoadDialogData(currentDialogType);
+        }
+    }
+
+    private async Task PreviousDialogPage()
+    {
+        if (dialogCurrentPage > 1)
+        {
+            dialogCurrentPage--;
+            await LoadDialogData(currentDialogType);
+        }
+    }
+
+    private async Task GoToDialogPage(int page)
+    {
+        if (page >= 1 && page <= dialogTotalPages)
+        {
+            dialogCurrentPage = page;
+            await LoadDialogData(currentDialogType);
+        }
+    }
+
+    private List<int> GetDialogPageNumbers()
+    {
+        var pages = new List<int>();
+        var totalPages = dialogTotalPages;
+
+        if (totalPages <= 7)
+        {
+            for (int i = 1; i <= totalPages; i++)
+            {
+                pages.Add(i);
+            }
+        }
+        else
+        {
+            pages.Add(1);
+
+            if (dialogCurrentPage <= 4)
+            {
+                for (int i = 2; i <= 5; i++)
+                {
+                    pages.Add(i);
+                }
+                pages.Add(-1);
+                pages.Add(totalPages);
+            }
+            else if (dialogCurrentPage >= totalPages - 3)
+            {
+                pages.Add(-1);
+                for (int i = totalPages - 4; i <= totalPages; i++)
+                {
+                    pages.Add(i);
+                }
+            }
+            else
+            {
+                pages.Add(-1);
+                for (int i = dialogCurrentPage - 1; i <= dialogCurrentPage + 1; i++)
+                {
+                    pages.Add(i);
+                }
+                pages.Add(-1);
+                pages.Add(totalPages);
+            }
+        }
+
+        return pages;
+    }
+
+    private void NavigateToService(Guid serviceId)
+    {
+        NavigationManager.NavigateTo($"/repairservice/{serviceId}");
+    }
+
+    private void OverlayClick(OverlayModalClickEventArgs args)
+    {
+        isTodayDialogVisible = false;
+    }
+
+    public async Task ExportToExcel()
+    {
+        await MyGrid.ExportToExcelAsync();
+        CloseExportDialog();
+    }
+
+    public async Task ExportToPdf()
+    {
+        await MyGrid.ExportToPdfAsync();
+        CloseExportDialog();
+    }
+
+    public class DashboardStatistics
+    {
+        public int TodayCount { get; set; }
+        public int ReceivedCount { get; set; }
+        public int FinishedThisMonthCount { get; set; }
+        public int WaitingCustomerCount { get; set; }
+        public int WaitingSpareCount { get; set; }
+    }
+
+    private bool _isDisposed = false;
+
+    public async ValueTask DisposeAsync()
+    {
+        _isDisposed = true;
+        updateTimer?.Stop();
+        updateTimer?.Dispose();
+
+        if (hubConnection is not null)
+        {
+            await hubConnection.DisposeAsync();
+        }
+    }
+
+    public class Statistic
+    {
+        public string Title { get; set; }
+        public string Value { get; set; }
+        public string Trend { get; set; }
+        public string TrendClass { get; set; }
+        public string IconClass { get; set; }
+        public string ValueClass { get; set; }
+        public string RouteUrl { get; set; }
+    }
+}

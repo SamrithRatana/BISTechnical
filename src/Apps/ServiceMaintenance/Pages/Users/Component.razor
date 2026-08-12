@@ -1,0 +1,63 @@
+﻿@page "/users/{UserId}/roles"
+@using ServiceMaintenance.Services
+@inject UserService UserService
+@inject NavigationManager NavigationManager
+@attribute [Authorize(Roles = "SuperAdmin")]
+
+<h3>Manage Roles for @userRolesViewModel.UserName</h3>
+
+@if (isLoading)
+{
+    <p>Loading...</p>
+}
+else
+{
+    <EditForm Model="userRolesViewModel" OnValidSubmit="UpdateRoles">
+        <div class="card mt-4">
+            <div class="card-header">
+                <h2>@userRolesViewModel.UserName</h2>
+                Add/Remove Roles
+            </div>
+            <div class="card-body">
+                @foreach (var role in userRolesViewModel.Roles)
+                {
+                    <div class="form-check m-1">
+                        <input type="checkbox" @bind="role.IsSelected" class="form-check-input" />
+                        <label class="form-check-label">
+                            @role.DisplayValue
+                        </label>
+                    </div>
+                }
+            </div>
+            <div class="card-footer">
+                <button type="submit" class="btn btn-primary">Save</button>
+                <a href="/users" class="btn btn-secondary">Cancel</a>
+            </div>
+        </div>
+    </EditForm>
+}
+
+@code {
+    [Parameter] public string UserId { get; set; }
+    private UserRolesViewModel userRolesViewModel = new UserRolesViewModel();
+    private bool isLoading;
+
+    protected override async Task OnInitializedAsync()
+    {
+        isLoading = true;
+        userRolesViewModel = await UserService.GetUserRolesAsync(UserId);
+        if (userRolesViewModel == null)
+        {
+            NavigationManager.NavigateTo("/users");
+        }
+        isLoading = false;
+    }
+
+    private async Task UpdateRoles()
+    {
+        await UserService.UpdateUserRolesAsync(userRolesViewModel);
+        NavigationManager.NavigateTo("/users");
+    }
+
+   
+}

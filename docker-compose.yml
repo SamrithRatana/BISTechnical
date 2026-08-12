@@ -1,0 +1,123 @@
+version: '3.8'
+
+services:
+
+  # ════════════════════════════════════════════════════════
+  # INFRASTRUCTURE — RabbitMQ runs as a MANAGED service on
+  # CloudAMQP (armadillo.rmq.cloudamqp.com). Redis runs as a
+  # MANAGED Upstash instance (not in-container) — both survive
+  # restarts/redeploys independently.
+  # ════════════════════════════════════════════════════════
+
+  # ════════════════════════════════════════════════════════
+  # APPLICATION
+  # ════════════════════════════════════════════════════════
+
+  servicemaintenance:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: servicemaintenance-app
+    ports:
+      - "8085:8085"   # ServiceMaintenance (Blazor)
+      - "8087:8087"   # UserManagementAPI
+      - "8081:8081"   # EmployeeManagement.Api
+      - "5000:5000"   # TechnicalService.API
+    environment:
+      - ASPNETCORE_ENVIRONMENT=Development
+      - DOTNET_SYSTEM_GLOBALIZATION_INVARIANT=false
+      - TZ=Asia/Phnom_Penh
+
+      # ── JWT ──────────────────────────────────────────────
+      - JWT__Secret=${JWT_KEY}
+      - JWT__ValidIssuer=https://user.koompi.cloud
+      - JWT__ValidAudience=https://technicalsystemservices.koompi.cloud
+      - JWT__TokenValidityInHours=8
+      - JWT__RefreshTokenValidityInDays=30
+
+      # ── JWT API helper (kept for backward-compat) ────────
+      - Jwt__Key=${JWT_KEY}
+      - Jwt__Issuer=ServiceMaintenance
+      - Jwt__Audience=ServiceMaintenance
+      - JwtApi__BaseUrl=https://user.koompi.cloud
+
+      # ── Database ─────────────────────────────────────────
+      - ConnectionStrings__UserManagementConnection=Server=${DB_SERVER};Database=EngineerUserDB;User Id=${DB_USER};Password=${DB_PASSWORD};TrustServerCertificate=True;MultipleActiveResultSets=true;Max Pool Size=100;Min Pool Size=10;
+      - ConnectionStrings__DBConnection=Server=${DB_SERVER};Database=EmployeeDB;User Id=${DB_USER};Password=${DB_PASSWORD};TrustServerCertificate=True;MultipleActiveResultSets=true;Max Pool Size=50;Min Pool Size=5;
+
+      # ── Redis (managed Upstash instance) ─────────────────
+      - Redis__ConnectionString=${UPSTASH_REDIS_ENDPOINT}:6379,password=${UPSTASH_REDIS_PASSWORD},ssl=True,abortConnect=False
+
+      # ── RabbitMQ (managed broker on CloudAMQP) ───────────
+      - RabbitMQ__Host=${RABBITMQ_HOST}
+      - RabbitMQ__Port=${RABBITMQ_PORT}
+      - RabbitMQ__Username=${RABBITMQ_USERNAME}
+      - RabbitMQ__Password=${RABBITMQ_PASSWORD}
+      - RabbitMQ__VirtualHost=${RABBITMQ_VHOST}
+      - RabbitMQ__UseSsl=true
+
+      # ── Email ─────────────────────────────────────────────
+      - AuthMessageSenderOptions__SmtpServer=smtp.gmail.com
+      - AuthMessageSenderOptions__SmtpUsername=${SMTP_USERNAME}
+      - AuthMessageSenderOptions__SmtpPassword=${SMTP_PASSWORD}
+      - AuthMessageSenderOptions__SmtpFromEmail=${SMTP_USERNAME}
+
+      # ── Kestrel ───────────────────────────────────────────
+      - Kestrel__Limits__MaxRequestBodySize=5368709120
+
+    volumes:
+      - dataprotection-keys:/app/servicemaintenance/dataprotection-keys
+      - api-dataprotection-keys:/app/usermanagementapi/dataprotection-keys
+      - uploads:/app/servicemaintenance/wwwroot/uploads
+      - spareparts:/app/servicemaintenance/wwwroot/images/spareparts
+      - api-uploads:/app/usermanagementapi/wwwroot/uploads
+      - logs:/app/servicemaintenance/logs
+      - api-logs:/app/usermanagementapi/logs
+      - employee-logs:/app/employeemanagementapi/logs
+      - technical-logs:/app/technicalserviceapi/logs
+
+    networks:
+      - servicemaintenance-network
+
+    # RabbitMQ and Redis are both external/managed now —
+    # nothing local to wait on before starting the app.
+    restart: unless-stopped
+
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8085/health", "||", "curl", "-f", "http://localhost:8085"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 90s   # Blazor apps take longer to start
+
+# ════════════════════════════════════════════════════════
+# VOLUMES (Redis volume removed — Upstash is managed externally)
+# ════════════════════════════════════════════════════════
+
+volumes:
+  dataprotection-keys:
+    driver: local
+  api-dataprotection-keys:
+    driver: local
+  uploads:
+    driver: local
+  spareparts:
+    driver: local
+  api-uploads:
+    driver: local
+  logs:
+    driver: local
+  api-logs:
+    driver: local
+  employee-logs:
+    driver: local
+  technical-logs:
+    driver: local
+
+# ════════════════════════════════════════════════════════
+# NETWORKS
+# ════════════════════════════════════════════════════════
+
+networks:
+  servicemaintenance-network:
+    driver: bridge

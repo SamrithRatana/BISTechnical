@@ -1,0 +1,58 @@
+﻿@page "/report"
+@using DevExpress.XtraReports.UI
+@using DevExpress.Blazor
+@inject NavigationManager NavigationManager
+
+<h3>Technical Report</h3>
+
+<div class="card">
+    <div class="card-body">
+        <DxToolbar ItemRenderStyleMode="ToolbarRenderStyleMode.Plain">
+            <DxToolbarItem Text="New" IconCssClass="fas fa-file" />
+            <DxToolbarItem Text="Edit" IconCssClass="fas fa-edit"  />
+            <DxToolbarItem Text="Delete" IconCssClass="fas fa-trash-alt"  />
+            <DxToolbarItem Text="Column Chooser" BeginGroup="true"  IconCssClass="grid-toolbar-column-chooser" />
+            <DxToolbarItem Text="Export" IconCssClass="grid-toolbar-export">
+                <Items>
+                    <DxToolbarItem Text="To CSV"  />
+                    <DxToolbarItem Text="To XLSX"  />
+                    <DxToolbarItem Text="To XLS"  />
+                </Items>
+            </DxToolbarItem>
+            <DxToolbarItem Text="Print Report" IconCssClass="grid-toolbar-print" />
+
+
+        </DxToolbar>
+
+    </div>
+</div>
+<DxReportViewer @ref="reportViewer" Report="@report" >
+</DxReportViewer>
+
+@code {
+    DxReportViewer reportViewer;
+    XtraReport15 report;
+
+    protected override void OnInitialized()
+    {
+        report = new XtraReport15();
+        report.Parameters["pID"].Visible = false;
+
+        var query = NavigationManager.ToAbsoluteUri(NavigationManager.Uri).Query;
+        var queryParams = System.Web.HttpUtility.ParseQueryString(query);
+        var idParam = queryParams["id"];
+
+        if (int.TryParse(idParam, out int id))
+        {
+            // Set the parameter value for the report
+            report.Parameters["pID"].Value = id;
+        }
+        else
+        {
+            // Handle default or error case
+            report.Parameters["pID"].Value = 7; // Default value or error handling
+        }
+
+        report.CreateDocument();
+    }
+}

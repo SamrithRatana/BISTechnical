@@ -1,0 +1,200 @@
+﻿using Microsoft.Extensions.Localization;
+using ServiceMaintenance;
+using ServiceMaintenance.Models;
+using System.Collections.Generic;
+using System.Linq;
+namespace ServiceMaintenance.Services.AsyncServices
+{
+    public class MenuService
+    {
+        private readonly IStringLocalizer<App> _loc;
+
+
+        public MenuService(IStringLocalizer<App> loc)
+        {
+            _loc = loc;
+        }
+
+        public List<MenuItem> GetMenuItems(IEnumerable<string> userRoles)
+        {
+            var menuItems = new List<MenuItem>
+        {
+             new MenuItem
+            {
+                Text = _loc[nameof(ResourceStrings.TextHome)],
+                NavigateUrl = "/",
+                IconCssClass = "fas fa-home",
+                AllowedRoles = new List<string> { "Admin", "User", "Sales", "SuperAdmin","Manager" }
+            },
+
+
+
+
+            new MenuItem
+            {
+                Text = _loc[nameof(ResourceStrings.TextItemlists)],
+                IconCssClass = "fas fa-clipboard-list",
+                AllowedRoles = new List<string> { "Admin", "User","SuperAdmin","Manager" },
+                SubMenuItems = new List<MenuItem>
+                {
+                    new MenuItem
+                    {
+                        Text = _loc[nameof(ResourceStrings.TextReceiveItemsInventory)],
+                        NavigateUrl = "/itemModel",
+                        IconCssClass = "fas fa-wrench"
+                    },
+                    new MenuItem
+                    {
+                        Text = _loc[nameof(ResourceStrings.TextSparePartItemsInventory)],
+                        NavigateUrl = "/SparePart Inventory Page",
+                        IconCssClass = "fas fa-cogs"
+                    }
+                }
+            },
+             new MenuItem
+            {
+                Text = _loc[nameof(ResourceStrings.TextRepairServiceTracker)],
+                IconCssClass = "fas fa-tools",
+                AllowedRoles = new List<string> { "Admin", "User","SuperAdmin" },
+                SubMenuItems = new List<MenuItem>
+                {
+                    new MenuItem
+                    {
+                        Text = _loc[nameof(ResourceStrings.TextReceivedItems)],
+                        NavigateUrl = "/receive-item",
+                        IconCssClass = "fas fa-box"
+                    },
+                    new MenuItem
+                    {
+                        Text = _loc[nameof(ResourceStrings.TextInspectItem)],
+                        NavigateUrl = "/inspect-item",
+                        IconCssClass = "fas fa-search-plus"
+                    },
+                    new MenuItem
+                    {
+                        Text = _loc[nameof(ResourceStrings.TextSetWaitCustomer)],
+                        NavigateUrl = "/await-customer",
+                        IconCssClass = "fas fa-user-clock",
+
+                    },
+                    new MenuItem
+                    {
+                        Text = _loc[nameof(ResourceStrings.TextSetWaitSparePart)],
+                        NavigateUrl = "/await-sparepart",
+                        IconCssClass = "fas fa-cogs",
+
+                    },
+                       new MenuItem
+                    {
+                        Text = _loc[nameof(ResourceStrings.TextThirdParty)],
+                        NavigateUrl = "/third-party",
+                        IconCssClass = "fas fa-handshake"
+                    },
+                      new MenuItem
+                    {
+                        Text = _loc[nameof(ResourceStrings.TextCusrej)],
+                        NavigateUrl = "/customer-reject",
+                        IconCssClass = "fas fa-ban"
+                    },
+                      new MenuItem
+                    {
+                        Text = _loc[nameof(ResourceStrings.TextUnrepairable)],
+                        NavigateUrl = "/unrepairable",
+                        IconCssClass = "fas fa-ban",
+
+                    },
+                    new MenuItem
+                    {
+                        Text = _loc[nameof(ResourceStrings.TextApproveRepairing)],
+                        NavigateUrl = "/reapairItem",
+                        IconCssClass = "fas fa-wrench"
+                    },
+                    new MenuItem
+                    {
+                        Text = _loc[nameof(ResourceStrings.TextApproveVerify)],
+                        NavigateUrl = "/finishItem",
+                        IconCssClass = "fas fa-clipboard-check"
+                    },
+
+                }
+            },
+              new MenuItem
+            {
+                Text = _loc[nameof(ResourceStrings.TextRentalServiceTracker)],
+                IconCssClass = "fas fa-calendar-check",
+                AllowedRoles = new List<string> { "Admin", "User", "Sales","SuperAdmin" },
+                SubMenuItems = new List<MenuItem>
+                {
+                    new MenuItem
+                    {
+                        Text = _loc[nameof(ResourceStrings.TextRentalItems)],
+                        NavigateUrl = "/rentalitem-optimized",
+                        IconCssClass = "fas fa-boxes"
+                    },
+                     new MenuItem
+                    {
+                        Text = _loc[nameof(ResourceStrings.TextRentalServiceLogbook)],
+                        NavigateUrl = "/rentalservice-optimized",
+                        IconCssClass = "fas fa-book"
+                    },
+                      new MenuItem
+                    {
+                        Text = _loc[nameof(ResourceStrings.TextRentalAll)],
+                        NavigateUrl = "/rental-all",
+                        IconCssClass = "fas fa-file-contract"
+                    },
+
+
+                }
+            },
+             new MenuItem
+            {
+                Text = _loc[nameof(ResourceStrings.TextInbox)],
+                IconCssClass = "fas fa-inbox",
+                AllowedRoles = new List<string> { "Admin", "User", "SuperAdmin" },
+                SubMenuItems = new List<MenuItem>
+                {
+                    new MenuItem
+                    {
+                        Text = _loc[nameof(ResourceStrings.TextMessageCenter)],
+                        NavigateUrl = "/chat",
+                        IconCssClass = "fas fa-envelope"
+                    }
+                }
+            },
+              new MenuItem
+            {
+                Text = _loc[nameof(ResourceStrings.TextReports)],
+                IconCssClass = "fas fa-file-alt",
+                AllowedRoles = new List<string> {  "Admin", "User", "Sales", "SuperAdmin","Manager" },
+                SubMenuItems = new List<MenuItem>
+                {
+                    new MenuItem { Text = _loc[nameof(ResourceStrings.TextDailyandCheck)], NavigateUrl = "daily-report", IconCssClass = "fas fa-calendar-day" },
+                    new MenuItem { Text = _loc[nameof(ResourceStrings.TextMonthlyReport)], NavigateUrl = "monthly-report", IconCssClass = "fas fa-chart-line"},
+                    new MenuItem { Text = _loc[nameof(ResourceStrings.TextCustomerReport)], NavigateUrl = "customer-report", IconCssClass="fas fa-users" },
+                    new MenuItem { Text = _loc[nameof(ResourceStrings.TextRepairHistory)], NavigateUrl = "history-report", IconCssClass="fas fa-tools" },
+                    new MenuItem { Text = _loc[nameof(ResourceStrings.TextServiceReport)], NavigateUrl = "/repairservices", IconCssClass="fas fa-toolbox"},
+                    new MenuItem { Text = _loc[nameof(ResourceStrings.TextEngineerReport)], NavigateUrl = "/engineer-report", IconCssClass="fas fa-user-tie" },
+                    new MenuItem { Text = _loc[nameof(ResourceStrings.TextSummaryReport)], NavigateUrl = "/repair-report", IconCssClass="fas fa-chart-bar" },
+                    new MenuItem { Text = _loc[nameof(ResourceStrings.Textusagesparepart)], NavigateUrl = "/sparepart-usage", IconCssClass="fas fa-tools" },
+                    new MenuItem { Text = _loc[nameof(ResourceStrings.Testholdsparepart)], NavigateUrl = "/sparepart-hold", IconCssClass="fas fa-hand-paper" },
+
+                }
+            },
+            new MenuItem
+            {
+                Text = _loc[nameof(ResourceStrings.TextAuth)],
+                IconCssClass = "fas fa-lock",
+                AllowedRoles = new List<string> { "SuperAdmin" },
+                SubMenuItems = new List<MenuItem>
+                {
+                    new MenuItem { Text = _loc[nameof(ResourceStrings.TextUserAssign)], NavigateUrl = "users", IconCssClass = "fas fa-user-tag" },
+                    new MenuItem { Text = _loc[nameof(ResourceStrings.TextRolePermission)], NavigateUrl = "manage-permissions", IconCssClass = "fas fa-user-shield" }
+                }
+            }
+        };
+
+            return menuItems.Where(m => userRoles.Intersect(m.AllowedRoles).Any()).ToList();
+        }
+    }
+}

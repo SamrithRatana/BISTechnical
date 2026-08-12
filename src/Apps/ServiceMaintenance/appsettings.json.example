@@ -1,0 +1,61 @@
+{
+  "ConnectionStrings": {
+    "UserManagementConnection": "Server=your-db-host,port;Database=EngineerUserDB;User Id=your_user;Password=your_password;Encrypt=True;TrustServerCertificate=True;",
+    "TechnicalServiceConnectionString": "Server=your-db-host,port;Database=TechnicalServiceDB;User Id=your_user;Password=your_password;Encrypt=True;TrustServerCertificate=True;"
+  },
+  "Logging": {
+    "LogLevel": {
+      "Default": "Information",
+      "Microsoft.AspNetCore": "Warning",
+      "System.Net.Http.HttpClient": "Warning",
+      "ServiceMaintenance.Services.Filters.GlobalSecurity.PermissionService": "Warning",
+      "ServiceMaintenance.Services.Filters.GlobalSecurity.PermissionBase": "Warning"
+    }
+  },
+  "JWT": {
+    "Secret": "YourStrongAndSecureJwtSecretKeyGoesHereMinimum32Chars!",
+    "ValidIssuer": "https://your-issuer.example.com",
+    "ValidAudience": "https://your-audience.example.com",
+    "TokenValidityInHours": "8",
+    "RefreshTokenValidityInDays": "30"
+  },
+  "Telegram": {
+    "BotToken": "your_telegram_bot_token",
+    "ChatId": "your_chat_id",
+    "Topics": {
+      "ItemReceived": 0,
+      "Inspecting": 0,
+      "Inspection": 0,
+      "AwaitingSparepart": 0,
+      "AwaitingCustomerConfirm": 0,
+      "SaleConfirmed": 0,
+      "CustomerRejected": 0,
+      "Unrepairable": 0,
+      "SentSpareparts": 0,
+      "Finished": 0
+    }
+  },
+  "JwtApi": {
+    "BaseUrl": "https://your-issuer.example.com"
+  },
+  "ImageUpload": {
+    "MaxFileSize": 5242880,
+    "AllowedExtensions": [ ".jpg", ".jpeg", ".png", ".gif", ".webp" ],
+    "UploadPath": "wwwroot/images/spareparts"
+  },
+  "AllowedHosts": "*",
+  "AuthMessageSenderOptions": {
+    "SmtpServer": "smtp.gmail.com",
+    "SmtpUsername": "your_email@domain.com",
+    "SmtpPassword": "your_app_password",
+    "SmtpFromEmail": "your_email@domain.com"
+  },
+  "Kestrel": {
+    "Limits": {
+      "MaxRequestBodySize": 5368709120
+    }
+  },
+  "Redis": {
+    "ConnectionString": "your-redis-host.upstash.io:6379,password=your_redis_password,ssl=True,abortConnect=False"
+  }
+}

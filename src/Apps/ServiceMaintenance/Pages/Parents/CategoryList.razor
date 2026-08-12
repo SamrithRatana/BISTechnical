@@ -1,0 +1,91 @@
+@page "/categories"
+@using ServiceMaintenance.Models
+@inject IJSRuntime JS
+
+
+<DxToastProvider Name="Customization"
+                 MaxToastCount="5"
+                 HorizontalAlignment="HorizontalAlignment.Right"
+                 VerticalAlignment="VerticalEdge.Top"
+                 AnimationType="@Animation" />
+<DxToastProvider Name="Error"
+                 MaxToastCount="5"
+                 HorizontalAlignment="HorizontalAlignment.Right"
+                 VerticalAlignment="VerticalEdge.Top"
+                 AnimationType="@Animation" />
+
+<div class="card shadow-sm rounded-lg">
+    <div class="card-body">
+        <DxToolbar ItemRenderStyleMode="ToolbarRenderStyleMode.Plain">
+            <DxToolbarItem Text="New" Click="NewItem_Click" IconCssClass="fas fa-plus-circle" CssClass="toolbar-item" />
+            <DxToolbarItem Text="Edit" Click="EditItem_Click" IconCssClass="fas fa-edit" Enabled="@EditItemsEnabled" CssClass="toolbar-item" />
+            <DxToolbarItem Text="Delete" Click="DeleteItem_Click" IconCssClass="fas fa-trash-alt" Enabled="@EditItemsEnabled" CssClass="toolbar-item" />
+            <DxToolbarItem Text="Export" IconCssClass="fas fa-file-export" CssClass="toolbar-item">
+                <Items>
+                    <DxToolbarItem Text="To CSV" Click="ExportCsvItem_Click" />
+                    <DxToolbarItem Text="To XLSX" Click="ExportXlsxItem_Click" />
+                    <DxToolbarItem Text="To XLS" Click="ExportXlsItem_Click" />
+                </Items>
+            </DxToolbarItem>
+            <DxToolbarItem Text="Print Report" Click="PrintReport_Click" IconCssClass="fas fa-print" CssClass="toolbar-item" />
+        </DxToolbar>
+    </div>
+</div>
+
+<DxLayoutBreakpoint DeviceSize="DeviceSize.XSmall" @bind-IsActive="@isXSmallScreen" />
+<hr>
+
+<div class="h-100 grid-wrapper">
+    @if (categories == null)
+    {
+        <div class="card-body w-100">
+            <div class="card-header border-0 p-2 rounded">
+                <DxLoadingPanel IndicatorAnimationType="WaitIndicatorAnimationType.Pulse"
+                                CssClass="w-100"
+                                IndicatorVisible="@indicatorVisible"
+                                IndicatorAreaVisible="@indicatorAreaVisible"
+                                Visible="true"
+                                Text="Processing..."
+                                TextAlignment="LoadingPanelTextAlignment.Right">
+                    <div style="min-height: 250px;"></div>
+                </DxLoadingPanel>
+            </div>
+        </div>
+    }
+    else
+    {
+        <DxGrid Data="categories" @ref="MyGrid" CssClass="grid-size" EditModelSaving="OnEditModelSaving" DataItemDeleting="DeleteCategoryItem" PopupEditFormCssClass="my-style" EditMode="GridEditMode.PopupEditForm" ShowPager="true" PageSize="10" PageSizeSelectorVisible="true" SelectionMode="GridSelectionMode.Single" AllowSelectRowByClick="true" HighlightRowOnHover="true" ShowSearchBox="true" FilterMenuButtonDisplayMode="GridFilterMenuButtonDisplayMode.Always" FocusedRowChanged="Grid_FocusedRowChanged" KeyFieldName="CategoryID" FocusedRowEnabled="true" ColumnResizeMode="GridColumnResizeMode.NextColumn">
+            <Columns>
+                <DxGridDataColumn FieldName="CategoryID" MinWidth="50" Width="50" Visible="false" />
+                <DxGridDataColumn FieldName="CategoryName" MinWidth="150" />
+                <DxGridDataColumn FieldName="Description" MinWidth="200" />
+                <DxGridCommandColumn Width="120px">
+                    <HeaderTemplate>
+                        <span class="command-header">Actions</span>
+                    </HeaderTemplate>
+                    <CellDisplayTemplate>
+                        <DxButton IconCssClass="fas fa-eye" CssClass="icon-button info" RenderStyle="ButtonRenderStyle.Info" RenderStyleMode="ButtonRenderStyleMode.Text" Click="showInfo" />
+                        <DxButton IconCssClass="fas fa-file-invoice" CssClass="icon-button secondary" RenderStyle="ButtonRenderStyle.Secondary" RenderStyleMode="ButtonRenderStyleMode.Text" Click="PrintReport_Click" />
+                        <DxButton IconCssClass="fas fa-trash-alt" CssClass="icon-button danger" RenderStyle="ButtonRenderStyle.Danger" RenderStyleMode="ButtonRenderStyleMode.Text" Click="() => MyGrid.ShowDataItemDeleteConfirmation(context.DataItem)" />
+                    </CellDisplayTemplate>
+                </DxGridCommandColumn>
+            </Columns>
+            <EditFormTemplate Context="editFormContext">
+                @{
+                    var category = (Category)editFormContext.EditModel;
+                }
+                <DxFormLayout CssClass="custom-edit-form">
+                    <DxFormLayoutItem ColSpanMd="12">
+                        <ValidationSummary />
+                    </DxFormLayoutItem>
+                    <DxFormLayoutItem Caption="Category Name:">
+                        <DxTextBox @bind-Text="@category.CategoryName" />
+                    </DxFormLayoutItem>
+                    <DxFormLayoutItem Caption="Description:">
+                        <DxMemo @bind-Text="@category.Description" BindValueMode="BindValueMode.OnInput" />
+                    </DxFormLayoutItem>
+                </DxFormLayout>
+            </EditFormTemplate>
+        </DxGrid>
+    }
+</div>

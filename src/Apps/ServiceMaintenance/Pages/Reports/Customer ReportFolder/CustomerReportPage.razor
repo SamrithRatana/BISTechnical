@@ -1,0 +1,1520 @@
+﻿@implements IDisposable
+@page "/customer-report"
+@using ServiceMaintenance.Components
+@using ServiceMaintenance.Models
+@using ServiceMaintenance.Services
+@inject RepairItemService RepairService
+@inject IJSRuntime JSRuntime
+@inject GlobalUserService GlobalUserCache
+@inject ServiceSparePart SparePartService
+@inject CustomerService CustomerService
+@inject AuthenticationStateProvider AuthenticationStateProvider
+@inject ILogger<CustomerReportPage> Logger  // ✅ ADD: Logger for debugging
+@inherits PermissionBase
+@if (CanAccess)
+{
+<DxToastProvider Name="Customization"
+                 MaxToastCount="5"
+                 HorizontalAlignment="HorizontalAlignment.Right"
+                 VerticalAlignment="VerticalEdge.Top"
+                 AnimationType="@Animation" />
+
+<div class="card shadow-sm rounded-lg">
+    <div class="card-body">
+        <DxToolbar ItemRenderStyleMode="ToolbarRenderStyleMode.Plain">
+            <DxToolbarItem Text="@Loc[nameof(ResourceStrings.TextNew)]" IconCssClass="far fa-file" CssClass="toolbar-item" Enabled="false" />
+            <DxToolbarItem Text="@Loc[nameof(ResourceStrings.TextEdit)]" IconCssClass="far fa-edit" CssClass="toolbar-item" Enabled="false" />
+            <DxToolbarItem Text="@Loc[nameof(ResourceStrings.TextDelete)]" IconCssClass="fas fa-trash-alt" CssClass="toolbar-item" Enabled="false" />
+            <DxToolbarItem Text="@Loc[nameof(ResourceStrings.TextExport)]" IconCssClass="fas fa-download">
+                <Items>
+                    <DxToolbarItem Text="@Loc[nameof(ResourceStrings.TextToExcel)]" Click="ExportToExcel" IconCssClass="fas fa-file-excel" />
+                    <DxToolbarItem Text="@Loc[nameof(ResourceStrings.TextToPdf)]" Click="ShowReportPreview2" IconCssClass="fas fa-file-pdf" />
+                </Items>
+            </DxToolbarItem>
+            <DxToolbarItem Text="Print Report" Click="ShowReportPreview" CssClass="toolbar-item" IconCssClass="fas fa-print" />
+            <DxToolbarItem Text="@Loc[nameof(ResourceStrings.TextCheckList)]" CssClass="toolbar-item" IconCssClass="fas fa-check-circle" Enabled="false" />
+        </DxToolbar>
+    </div>
+</div>
+
+<hr />
+
+<div class="container">
+    <!-- Expand/Collapse Button -->
+    <div class="row mb-3">
+        <div class="col-md-12 text-end">
+            <i class="fa @(IsFilterSectionVisible ? "fa-chevron-up" : "fa-chevron-down")"
+               @onclick="ToggleFilterSection"
+               style="cursor: pointer; font-size: 20px; color: #333;">
+            </i>
+        </div>
+    </div>
+
+    <!-- Filter Section -->
+    <div class="filter-section container" style="@($"display: {(IsFilterSectionVisible ? "block" : "none")};")">
+        <div class="row mb-3">
+            <!-- Company Name Search -->
+            <div class="col-md-3">
+                <label class="font-weight-bold" style="font-family:'Khmer OS'">
+                    @Loc[nameof(ResourceStrings.TextCompanyName)]:
+                </label>
+                <div class="form-item" style="position: relative;">
+                    <input type="text"
+                           value="@searchTerm"
+                           @oninput="OnSearchTermInputDebounced"
+                           @onclick="OnInputClick"
+                           @onblur="OnInputBlur"
+                           placeholder="Search by company..."
+                           class="form-control"
+                           style="height: 35px; font-size: 14px; font-family: 'Khmer OS'" />
+
+                    @if (IsDropdownVisible)
+                    {
+                        <div class="custom-dropdown"
+                             style="position: absolute; width: 100%; max-height: 300px; overflow-y: auto;
+                                border: 1px solid #ccc; background-color: white; z-index: 1000;
+                                border-radius: 4px; box-shadow: 0 2px 8px rgba(0,0,0,0.1);">
+
+                            <div style="display: flex; justify-content: space-between; align-items: center;
+                                    padding: 8px 12px; background-color: #f8f9fa; border-bottom: 1px solid #dee2e6;">
+                                <span style="font-size: 12px; color: #6c757d;">
+                                    <strong>
+                                        @if (IsLoadingCustomers)
+                                        {
+                                            <span>Loading...</span>
+                                        }
+                                        else if (FilteredCustomers.Any())
+                                        {
+                                            <span>@TotalCustomers results - Showing @FilteredCustomers.Count()</span>
+                                        }
+                                        else
+                                        {
+                                            <span>No results found</span>
+                                        }
+                                    </strong>
+                                </span>
+                                <button class="btn btn-sm btn-link p-0"
+                                        @onclick="CloseDropdown"
+                                        style="font-size: 16px; color: #dc3545; border: none; background: none;
+                                           font-weight: bold; line-height: 1;">
+                                    ×
+                                </button>
+                            </div>
+
+                            @if (IsLoadingCustomers)
+                            {
+                                <div class="text-center py-3">
+                                    <div class="spinner-border spinner-border-sm" role="status">
+                                        <span class="visually-hidden">Loading...</span>
+                                    </div>
+                                </div>
+                            }
+                            else if (FilteredCustomers.Any())
+                            {
+                                    @foreach (var company in FilteredCustomers)
+                                    {
+                                        <div class="dropdown-item px-3 py-2"
+                                             @onclick="() => OnCompanySelect(company)"
+                                             @onmousedown:preventDefault
+                                             style="cursor: pointer; border-bottom: 1px solid #f0f0f0; font-family: 'Khmer OS';">
+                                            <div class="fw-medium">@((MarkupString)HighlightMatch(company.CompanyName, searchTerm))</div>
+                                            @if (!string.IsNullOrEmpty(company.CustomerType))
+                                            {
+                                                <small class="text-muted">@company.CustomerType</small>
+                                            }
+                                        </div>
+                                    }
+
+                                @if (HasMoreCustomers && !IsLoadingCustomers)
+                                {
+                                    <div class="text-center py-2 border-top">
+                                        <button class="btn btn-sm btn-link" @onclick="LoadMoreCustomers">
+                                            Load More...
+                                        </button>
+                                    </div>
+                                }
+                            }
+                            else
+                            {
+                                <div class="px-3 py-2 text-muted">
+                                    No companies found
+                                </div>
+                            }
+                        </div>
+                    }
+                </div>
+            </div>
+
+            <div class="col-md-3">
+                <label class="font-weight-bold">@Loc[nameof(ResourceStrings.TextStatus)]:</label>
+                <SfMultiSelect TItem="ServiceStatusViewModel" TValue="string[]"
+                               Width="100%"
+                               Placeholder="Select Statuses"
+                               ShowSelectAll="true"
+                               SelectAllText="Select All"
+                               UnSelectAllText="Unselect All"
+                               Mode="VisualMode.CheckBox"
+                               DataSource="@StatusList"
+                               @bind-Value="SelectedStatuses">
+                    <MultiSelectFieldSettings Text="DisplayName" Value="Value"></MultiSelectFieldSettings>
+                </SfMultiSelect>
+            </div>
+
+            <div class="col-md-4">
+                <label class="font-weight-bold">Filtering Options:</label>
+                <InputRadioGroup @bind-Value="CompanyFilterType" class="d-flex flex-wrap">
+                    <div class="me-3"><InputRadio Value="1" /> Single Date</div>
+                    <div class="me-3"><InputRadio Value="2" /> Date Range</div>
+                    <div class="me-3"><InputRadio Value="3" /> None</div>
+                    <div><InputRadio Value="4" /> Company & Serial</div>
+                </InputRadioGroup>
+            </div>
+
+                <!-- WITH this -->
+                <div class="col-auto d-flex flex-column align-items-start">
+                    <button class="btn btn-primary" style="margin-top: 5px;"
+                            @onclick="FetchReport"
+                            disabled="@(IsLoading || SelectedStatuses == null || SelectedStatuses.Length == 0)">
+                        @if (IsLoading)
+                        {
+                            <span class="spinner-border spinner-border-sm me-2" role="status"></span>
+                        }
+                        @Loc[nameof(ResourceStrings.TextFetchReport)]
+                    </button>
+                    @if (ShowStatusValidationError)
+                    {
+                        <small class="text-danger mt-1">
+                            <i class="fas fa-exclamation-circle"></i> Please select at least one status.
+                        </small>
+                    }
+                </div>
+        </div>
+
+        <div class="row mb-3">
+            @if (CompanyFilterType == 1)
+            {
+                <div class="col-md-3">
+                    <label class="font-weight-bold">@Loc[nameof(ResourceStrings.Textfinddate)]:</label>
+                    <SfDatePicker @bind-Value="SelectedDate" class="form-control" Format="dd/MM/yyyy" />
+                </div>
+            }
+            else if (CompanyFilterType == 2)
+            {
+                <div class="col-md-3">
+                    <label class="font-weight-bold">@Loc[nameof(ResourceStrings.Textfrom)]:</label>
+                    <SfDatePicker @bind-Value="StartDate" class="form-control" Format="dd/MM/yyyy" />
+                </div>
+                <div class="col-md-3">
+                    <label class="font-weight-bold">@Loc[nameof(ResourceStrings.TextTo)]:</label>
+                    <SfDatePicker @bind-Value="EndDate" class="form-control" Format="dd/MM/yyyy" />
+                </div>
+            }
+            else if (CompanyFilterType == 4)
+            {
+                <div class="col-md-3">
+                    <label class="font-weight-bold">@Loc[nameof(ResourceStrings.Textscancodeorserial)]:</label>
+                    <SfTextBox @bind-Value="SerialNumber" class="form-control" />
+                </div>
+            }
+        </div>
+    </div>
+</div>
+
+<hr />
+
+<SfMediaQuery @bind-ActiveBreakPoint="activeBreakpoint"></SfMediaQuery>
+
+    @if (IsLoading)
+    {
+        <div class="text-center py-5">
+            <div class="spinner-border" role="status">
+                <span class="visually-hidden">Loading...</span>
+            </div>
+            <p class="mt-2">Loading repair services...</p>
+        </div>
+    }
+    else if (!HasSearched)
+    {
+        <div class="alert alert-info">
+            Please select filter criteria and click "Fetch Report" to view data.
+        </div>
+    }
+    else if (FilteredRepairServices.Count == 0)
+    {
+        <div class="alert alert-warning">
+            No data available for the selected criteria.
+        </div>
+    }
+    else
+    {
+
+
+        <SfGrid @ref="MyGrid"
+                DataSource="FilteredRepairServices"
+                AllowSorting="true"
+                ShowColumnChooser="true"
+                AllowExcelExport="true"
+                AllowPdfExport="true"
+                SelectionMode="GridSelectionMode.Single"
+                Toolbar="@ToolbarItems"
+                EnableAdaptiveUI="@enableAdaptiveUIMode"
+                RowRenderingMode="@renderingMode"
+                AllowResizing="true"
+                AllowFiltering="true"
+                Height="400"
+                AllowSelection="true">
+            <GridFilterSettings Type="Syncfusion.Blazor.Grids.FilterType.Excel"></GridFilterSettings>
+            <GridEvents RowSelected="RowSelectHandler" OnRecordDoubleClick="RowDoubleClickHandler" TValue="RepairServices"></GridEvents>
+            <GridColumns>
+                <GridColumn Field="ServiceDate" HeaderText="@Loc[nameof(ResourceStrings.TextReceiveDate)]" Format="dd-MM-yyyy HH:mm tt" Width="120"></GridColumn>
+                <GridColumn Field="CompanyName" HeaderText="@Loc[nameof(ResourceStrings.TextCompanyName)]" Width="150"></GridColumn>
+                <GridColumn Field="itemName" HeaderText="@Loc[nameof(ResourceStrings.TextItemName)]" Width="150"></GridColumn>
+                <GridColumn Field="serialNumber" HeaderText="@Loc[nameof(ResourceStrings.TextSerialNumber)]" Width="150"></GridColumn>
+                <GridColumn Field="awaitingCustomerConfirmDate" HeaderText="@Loc[nameof(ResourceStrings.TextSetWaitCustomer)]" Width="150">
+                    <Template>
+                        @{
+                            var value = (context as RepairServices)?.awaitingCustomerConfirmDate;
+                            if (value == null)
+                            {
+                                <span>None</span>
+                            }
+                            else
+                            {
+                                @value?.ToString("dd-MM-yyyy HH:mm tt")
+                            }
+                        }
+                    </Template>
+                </GridColumn>
+                <GridColumn Field="awaitingSparepartDate" HeaderText="@Loc[nameof(ResourceStrings.TextSetWaitSparePart)]" Width="150">
+                    <Template>
+                        @{
+                            var value = (context as RepairServices)?.awaitingSparepartDate;
+                            if (value == null)
+                            {
+                                <span>None</span>
+                            }
+                            else
+                            {
+                                @value?.ToString("dd-MM-yyyy HH:mm tt")
+                            }
+                        }
+                    </Template>
+                </GridColumn>
+                <GridColumn Field="inspectDate" HeaderText="@Loc[nameof(ResourceStrings.TextInspectDate)]" Format="dd-MM-yyyy HH:mm tt" Width="150"></GridColumn>
+                <GridColumn Field="repairDate" HeaderText="@Loc[nameof(ResourceStrings.TextRepairDate)]" Format="dd-MM-yyyy HH:mm tt" Width="150"></GridColumn>
+                <GridColumn Field="finishedDate" HeaderText="@Loc[nameof(ResourceStrings.TextFinishDate)]" Format="dd-MM-yyyy HH:mm tt" Width="150"></GridColumn>
+                <GridColumn HeaderText="Sparepart Items" Field="SparePartItems" Width="250">
+                    <Template>
+                        @{
+                            var service = context as RepairServices;
+                            var serviceId = service?.Id ?? Guid.Empty;
+                        }
+                        @if (LoadedSparePartIds.Contains(serviceId))
+                        {
+                            @foreach (var item in service?.SparePartItems ?? Enumerable.Empty<SparePartItem>())
+                            {
+                                <div>@item.ItemName - @item.Quantity - @item.Description $</div>
+                            }
+                        }
+                        else if (service?.SparePartItems?.Any() == true)
+                        {
+                            <button class="btn btn-sm btn-link" @onclick="async () => await LoadSparePartsForService(service)">
+                                <i class="fas fa-eye"></i> Load Parts (@service.SparePartItems.Count)
+                            </button>
+                        }
+                        else
+                        {
+                            <span class="text-muted">No parts</span>
+                        }
+                    </Template>
+                </GridColumn>
+                <!-- AFTER -->
+                <GridColumn Field="Status" HeaderText="@Loc[nameof(ResourceStrings.TextStatus)]" Width="150">
+                    <Template>
+                        @{
+                            var item = context as RepairServices;
+                            var khmerStatus = GetKhmerStatus(item.Status);
+                        }
+                        @khmerStatus
+                    </Template>
+                </GridColumn>              
+                <GridColumn HeaderText="@Loc[nameof(ResourceStrings.TextAction)]" IsFrozen="true" Freeze="FreezeDirection.Right" Width="200">
+                    <Template>
+                        @if ((context as RepairServices)?.ServiceDate != null)
+                        {
+                            <DxButton IconCssClass="fas fa-eye"
+                                      CssClass="icon-button info"
+                                      RenderStyle="ButtonRenderStyle.Info"
+                                      RenderStyleMode="ButtonRenderStyleMode.Text"
+                                      Text="@Loc[nameof(ResourceStrings.TextView)]"
+                                      Click="@(() => ShowRepairServiceDetails(context as RepairServices))" />
+                            <DxButton IconCssClass="fas fa-file-invoice"
+                                      CssClass="icon-button secondary"
+                                      RenderStyle="ButtonRenderStyle.Secondary"
+                                      RenderStyleMode="ButtonRenderStyleMode.Text"
+                                      Text="Preview"
+                                      Click="@(() => ShowReportPreview(context as RepairServices))" />
+                        }
+                    </Template>
+                </GridColumn>
+            </GridColumns>
+        </SfGrid>
+        <!-- Pagination Info and Controls -->
+        <div class="d-flex justify-content-between align-items-center mb-3">
+            <div>
+                <strong>Showing @((CurrentPage - 1) * PageSize + 1) to @Math.Min(CurrentPage * PageSize, TotalRecords) of @TotalRecords records</strong>
+            </div>
+            <div class="d-flex align-items-center gap-2">
+                <label class="me-2">Page Size:</label>
+                <select class="form-select form-select-sm" style="width: 80px;" @onchange="OnPageSizeChanged">
+                    <option value="10" selected="@(PageSize == 10)">10</option>
+                    <option value="25" selected="@(PageSize == 25)">25</option>
+                    <option value="50" selected="@(PageSize == 50)">50</option>
+                    <option value="100" selected="@(PageSize == 100)">100</option>
+                </select>
+
+                <div class="btn-group ms-3" role="group">
+                    <button class="btn btn-sm btn-outline-primary" @onclick="FirstPage" disabled="@(!HasPreviousPage || IsLoading)">
+                        <i class="fas fa-angle-double-left"></i> First
+                    </button>
+                    <button class="btn btn-sm btn-outline-primary" @onclick="PreviousPage" disabled="@(!HasPreviousPage || IsLoading)">
+                        <i class="fas fa-angle-left"></i> Previous
+                    </button>
+                    <button class="btn btn-sm btn-outline-secondary" disabled>
+                        Page @CurrentPage of @TotalPages
+                    </button>
+                    <button class="btn btn-sm btn-outline-primary" @onclick="NextPage" disabled="@(!HasNextPage || IsLoading)">
+                        Next <i class="fas fa-angle-right"></i>
+                    </button>
+                    <button class="btn btn-sm btn-outline-primary" @onclick="LastPage" disabled="@(!HasNextPage || IsLoading)">
+                        Last <i class="fas fa-angle-double-right"></i>
+                    </button>
+                </div>
+            </div>
+        </div>
+
+    }
+
+<!-- View Dialog -->
+<SfDialog @ref="DialogEdit" Target="#target" Width="600px" IsModal="true" ShowCloseIcon="true" @bind-Visible="@isViewDialogVisible">
+    <DialogEvents OnOverlayModalClick="@OverlayClick"></DialogEvents>
+    <DialogTemplates>
+        <Header>@Loc[nameof(ResourceStrings.TextViewInfo)]</Header>
+        <Content>
+            <div class="report-container">
+                <div class="report-header">
+                    <span>Repair Service Report</span>
+                </div>
+                <div class="report-body">
+                    <table class="report-table">
+                        <tr>
+                            <td class="report-label"><strong>@Loc[nameof(ResourceStrings.Textref)]:</strong></td>
+                            <td class="report-value">@_selectedRepairService?.reportNo</td>
+                        </tr>
+                        <tr>
+                            <td class="report-label"><strong>@Loc[nameof(ResourceStrings.TextReceiveDate)]:</strong></td>
+                            <td class="report-value">@_selectedRepairService?.ServiceDate.ToString("yyyy-MM-dd HH:mm tt")</td>
+                        </tr>
+                        <tr>
+                            <td class="report-label"><strong>@Loc[nameof(ResourceStrings.TextRepairDate)]:</strong></td>
+                            <td class="report-value">
+                                @(_selectedRepairService?.repairDate.HasValue == true
+                                                                ? _selectedRepairService.repairDate.Value.ToString("yyyy-MM-dd HH:mm tt")
+                                                                : "N/A")
+                            </td>
+                        </tr>
+                        <tr>
+                            <td class="report-label"><strong>@Loc[nameof(ResourceStrings.TextCompanyName)]:</strong></td>
+                            <td class="report-value">@_selectedRepairService?.CompanyName</td>
+                        </tr>
+                        <tr>
+                            <td class="report-label"><strong>@Loc[nameof(ResourceStrings.TextAddress)]:</strong></td>
+                            <td class="report-value">@_selectedRepairService?.Address</td>
+                        </tr>
+                        <tr>
+                            <td class="report-label"><strong>@Loc[nameof(ResourceStrings.TextContactName)]:</strong></td>
+                            <td class="report-value">@_selectedRepairService?.ContactName</td>
+                        </tr>
+                        <tr>
+                            <td class="report-label"><strong>@Loc[nameof(ResourceStrings.TextPhoneNumber)]:</strong></td>
+                            <td class="report-value">@_selectedRepairService?.PhoneNumber</td>
+                        </tr>
+                        <tr>
+                            <td class="report-label"><strong>@Loc[nameof(ResourceStrings.TextItemName)]:</strong></td>
+                            <td class="report-value">@_selectedRepairService?.itemName</td>
+                        </tr>
+                        <tr>
+                            <td class="report-label"><strong>@Loc[nameof(ResourceStrings.TextSerialNumber)]:</strong></td>
+                            <td class="report-value">@_selectedRepairService?.serialNumber</td>
+                        </tr>
+                        <tr>
+                            <td class="report-label"><strong>@Loc[nameof(ResourceStrings.TextCustomerReq)]:</strong></td>
+                            <td class="report-value">@_selectedRepairService?.CustomerRequest</td>
+                        </tr>
+                        <tr>
+                            <td class="report-label"><strong>@Loc[nameof(ResourceStrings.TextInspection)]:</strong></td>
+                            <td class="report-value">@_selectedRepairService?.Inspection</td>
+                        </tr>
+                        <tr>
+                            <td class="report-label"><strong>@Loc[nameof(ResourceStrings.Textsolution)]:</strong></td>
+                            <td class="report-value">@_selectedRepairService?.Solution</td>
+                        </tr>
+                        <tr>
+                            <td class="report-label"><strong>@Loc[nameof(ResourceStrings.TextServiceLocation)]:</strong></td>
+                            <td class="report-value">@_selectedRepairService?.ServiceLocation</td>
+                        </tr>
+                        <tr>
+                            <td class="report-label"><strong>@Loc[nameof(ResourceStrings.TextPriority)]:</strong></td>
+                            <td class="report-value">@_selectedRepairService?.ServicePriority</td>
+                        </tr>
+                        <tr>
+                            <td class="report-label"><strong>@Loc[nameof(ResourceStrings.TextStatus)]:</strong></td>
+                            <td class="report-value">@_selectedRepairService?.Status</td>
+                        </tr>
+                        <tr>
+                            <td class="report-label"><strong>@Loc[nameof(ResourceStrings.TextContract)]:</strong></td>
+                            <td class="report-value">@(_selectedRepairService?.hasContract == true ? "Yes" : "No")</td>
+                        </tr>
+                        <tr>
+                            <td class="report-label"><strong>@Loc[nameof(ResourceStrings.TextRepairBy)]:</strong></td>
+                            <td class="report-value">
+                                @{
+                                        var username = GetUserNameById(_selectedRepairService?.repairBy);
+                                    }
+                                    @username
+                                </td>
+                            </tr>
+                        </table>
+
+                        @if (_selectedRepairService?.SparePartItems != null && _selectedRepairService.SparePartItems.Count > 0)
+                        {
+                            <hr />
+                            <h4>SparePart Details</h4>
+                            <table class="report-table">
+                                <thead>
+                                    <tr>
+                                        <th>@Loc[nameof(ResourceStrings.TextItemName)]</th>
+                                        <th>@Loc[nameof(ResourceStrings.TextQty)]</th>
+                                        <th>@Loc[nameof(ResourceStrings.TextCondition)]</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    @foreach (var sparePart in _selectedRepairService.SparePartItems)
+                                    {
+                                        <tr>
+                                            <td>@(sparePart.ItemName ?? "Loading...")</td>
+                                            <td>@sparePart.Quantity</td>
+                                            <td>@sparePart.Condition</td>
+                                        </tr>
+                                    }
+                                </tbody>
+                            </table>
+                        }
+                    </div>
+                </div>
+            </Content>
+        </DialogTemplates>
+        <DialogButtons>
+            <DialogButton Content="Close" IsPrimary="true" OnClick="@CloseDialog" />
+        </DialogButtons>
+    </SfDialog>
+
+    <SfDialog @ref="DialogNoRecordSelected" IsModal="true" Width="250px" ShowCloseIcon="true" Visible="false">
+        <DialogTemplates>
+            <Header> Warning! </Header>
+            <Content> @Loc[nameof(ResourceStrings.TextSelectRecord)] </Content>
+        </DialogTemplates>
+        <DialogButtons>
+            <DialogButton Content="OK" IsPrimary="true" OnClick="CloseDialogNoRecordSelected" />
+        </DialogButtons>
+    </SfDialog>
+
+}
+
+
+
+@code {
+    
+    private int CurrentPage = 1;
+    private int PageSize = 10;
+    private int TotalRecords = 0;
+    private int TotalPages => TotalRecords > 0 ? (int)Math.Ceiling(TotalRecords / (double)PageSize) : 0;
+    private bool HasPreviousPage => CurrentPage > 1;
+    private bool HasNextPage => CurrentPage < TotalPages;
+    private IEnumerable<SparePartObject> _spareParts = Enumerable.Empty<SparePartObject>();
+    private Dictionary<string, string> _userCache = new();
+    private bool _usersLoaded = false;
+    private List<RepairServices> _allFilteredRecords = new(); // stores all records after exact filter
+    private bool ShowStatusValidationError = false;
+
+    private bool enableAdaptiveUIMode = false;
+
+    private RowDirection renderingMode = RowDirection.Vertical;
+    private int CompanyFilterType = 3;
+    private DateTime SelectedDate = DateTime.Today;
+    private DateTime StartDate = DateTime.Today.AddMonths(-1);
+    private DateTime EndDate = DateTime.Today;
+    private string SerialNumber = "";
+    private List<RepairServices> FilteredRepairServices = new();
+    private RepairServices _selectedRepairService;
+  
+    private Dictionary<Guid, SparePartObject> _sparePartsCache = new();
+    private HashSet<Guid> LoadedSparePartIds = new();
+    private bool isViewDialogVisible = false;
+    private SfDialog DialogEdit;
+    public string[] ToolbarItems = new string[] { "ColumnChooser", "Search" };
+    private SfGrid<RepairServices> MyGrid;
+    private string CurrentUserName;
+    private SfDialog DialogNoRecordSelected;
+    private string CompanyName = "";
+    private string[] SelectedStatuses { get; set; }
+    private string activeBreakpoint { get; set; }
+    private bool IsLoading = false;
+    private bool HasSearched = false;
+    ToastAnimationType Animation { get; set; } = ToastAnimationType.Slide;
+    private string searchTerm = string.Empty;
+    private bool IsDropdownVisible = false;
+    private bool IsFilterSectionVisible = true;
+    private IEnumerable<Customer> FilteredCustomers => _customers;
+    private bool IsLoadingCustomers = false;
+    private bool HasMoreCustomers = false;
+    private int CurrentCustomerPage = 1;
+    private int CustomerPageSize = 20;
+    private int TotalCustomers = 0;
+    private List<Customer> _customers = new List<Customer>();
+    private System.Threading.Timer _debounceTimer;
+    private Customer _selectedCompany;
+    private bool _useExactCompanyMatch = false;
+
+    // Store filter criteria for pagination
+    private string _lastSearchCompany = "";
+    private string _lastSearchSerial = "";
+    private string[] _lastSearchStatuses = null;
+    private DateTime? _lastFromDate = null;
+    private DateTime? _lastToDate = null;
+
+    private void ToggleFilterSection()
+    {
+        IsFilterSectionVisible = !IsFilterSectionVisible;
+    }
+
+    public class ServiceStatusViewModel
+    {
+        public string DisplayName { get; set; }
+        public string Value { get; set; }
+    }
+    private string GetKhmerStatus(string englishStatus)
+    {
+        if (string.IsNullOrEmpty(englishStatus))
+            return string.Empty;
+
+        var statusMap = new Dictionary<string, string>
+    {
+        { "Item Recieved", "ម៉ាស៊ីនចូល" },
+        { "Inspection", "កំពុងវិនិច្ឆ័យ" },
+        { "Awaiting Customer Confirm", "រង់ចាំយល់ព្រមពីភ្ញៀវ" },
+        { "Awaiting Sparepart", "រង់ចាំគ្រឿងបន្លាស់" },
+        { "Repairing", "កំពុងជួសជុល" },
+        { "Finished", "ជួសជុលរួចរាល់" },
+        { "Customer Rejected", "អតិថិជនមិនជួសជុល" },
+        { "Unrepairable", "ជួសជុលមិនបាន" },
+        { "Repair by Third-Party", "ជួសជុលដោយជាងខាងក្រៅ" }
+    };
+
+        if (englishStatus.Contains("(Historical)"))
+        {
+            var baseStatus = englishStatus.Replace(" (Historical)", "").Trim();
+            return statusMap.ContainsKey(baseStatus)
+                ? $"{statusMap[baseStatus]} (ប្រវត្តិ)"
+                : englishStatus;
+        }
+
+        return statusMap.ContainsKey(englishStatus)
+            ? statusMap[englishStatus]
+            : englishStatus;
+    }
+    private List<ServiceStatusViewModel> StatusList = new();
+
+    private Dictionary<string, string> StatusTranslations = new()
+    {
+        { "Item Recieved", "ម៉ាស៊ីនចូល" },
+        { "Finished", "ជួសជុលរួចរាល់" },
+        { "Inspection", "កំពុងវិនិច្ឆ័យ" },
+        { "Awaiting Customer Confirm", "រង់ចាំយល់ព្រមពីភ្ញៀវ" },
+        { "Awaiting Sparepart", "រង់ចាំគ្រឿងបន្លាស់" },
+        { "Repairing", "កំពុងជួសជុល" },
+        { "Customer Rejected", "អតិថិជនមិនជួសជុល" },
+        { "Unrepairable", "ជួសជុលមិនបាន" }
+    };
+    protected override async Task OnPermissionsLoadedAsync()
+    {
+        Console.WriteLine($"🔐 DailyReportPage - CanAccess: {CanAccess}");
+        Console.WriteLine($"🔐 DailyReportPage - PermissionsLoaded: {PermissionsLoaded}");
+
+        if (!CanAccess)
+        {
+            Console.WriteLine("❌ Access Denied - User does not have DailyReportPage.Access permission");
+            ShowError("You don't have permission to access this page");
+            return; // Stop initialization
+        }
+
+        // Only continue with initialization if user has access
+        await InitializePageData();
+    }
+
+    // ✅ STEP 3: Move your initialization logic here
+    private async Task InitializePageData()
+    {
+        try
+        {
+            var authenticationState = await AuthenticationStateProvider.GetAuthenticationStateAsync();
+            var user = authenticationState.User;
+
+            if (user.Identity.IsAuthenticated)
+            {
+                CurrentUserName = user.Identity.Name;
+            }
+
+            var statuses = await RepairService.GetServiceStatusesAsync();
+            StatusList = statuses.Select(s => new ServiceStatusViewModel
+            {
+                DisplayName = StatusTranslations.ContainsKey(s.Name)
+                              ? $"{s.Name} - {StatusTranslations[s.Name]}"
+                              : s.Name,
+                Value = s.Name
+            }).ToList();
+
+            await LoadAllUsersAsync();
+
+        }
+        catch (Exception ex)
+        {
+            Logger?.LogError(ex, "❌ Error in OnInitializedAsync");
+        }
+    }
+    private async Task LoadAllUsersAsync()
+    {
+        if (_usersLoaded)
+            return;
+
+        try
+        {
+            Console.WriteLine("📥 Loading all users from API...");
+            _userCache = await GlobalUserCache.GetUsersAsync();
+            _usersLoaded = true;
+            Console.WriteLine($"✅ Loaded {_userCache.Count} users into cache");
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"❌ Error loading users: {ex.Message}");
+            Logger?.LogError(ex, "❌ Failed to load users");
+            _userCache = new Dictionary<string, string>();
+        }
+    }
+  
+    // Pagination Methods
+    private async Task FirstPage()
+    {
+        CurrentPage = 1;
+        await LoadPageData();
+    }
+
+    private async Task PreviousPage()
+    {
+        if (HasPreviousPage)
+        {
+            CurrentPage--;
+            await LoadPageData();
+        }
+    }
+
+    private async Task NextPage()
+    {
+        if (HasNextPage)
+        {
+            CurrentPage++;
+            await LoadPageData();
+        }
+    }
+
+    private async Task LastPage()
+    {
+        CurrentPage = TotalPages;
+        await LoadPageData();
+    }
+
+    private async Task OnPageSizeChanged(ChangeEventArgs e)
+    {
+        if (int.TryParse(e.Value?.ToString(), out int newSize))
+        {
+            PageSize = newSize;
+            CurrentPage = 1;
+            await LoadPageData(); // will re-slice _allFilteredRecords
+        }
+    }
+
+    private async Task LoadPageData()
+    {
+        if (!HasSearched) return;
+
+        try
+        {
+            IsLoading = true;
+            LoadedSparePartIds.Clear();
+
+            // ✅ FIX: Paginate from in-memory list, no API call needed
+            FilteredRepairServices = _allFilteredRecords
+                .Skip((CurrentPage - 1) * PageSize)
+                .Take(PageSize)
+                .ToList();
+        }
+        catch (Exception ex)
+        {
+            Logger?.LogError(ex, "❌ Error loading page data");
+        }
+        finally
+        {
+            IsLoading = false;
+        }
+    }
+    private string HighlightMatch(string text, string search)
+    {
+        if (string.IsNullOrWhiteSpace(search) || string.IsNullOrWhiteSpace(text))
+            return System.Net.WebUtility.HtmlEncode(text ?? "");
+
+        var result = new System.Text.StringBuilder();
+        int lastIndex = 0;
+        int searchLen = search.Length;
+        string textLower = text.ToLower();
+        string searchLower = search.ToLower();
+
+        int idx;
+        while ((idx = textLower.IndexOf(searchLower, lastIndex, StringComparison.OrdinalIgnoreCase)) >= 0)
+        {
+            // Append text before match (HTML-encoded)
+            result.Append(System.Net.WebUtility.HtmlEncode(text.Substring(lastIndex, idx - lastIndex)));
+            // Append highlighted match
+            result.Append("<mark style=\"background-color: #FFD700; color: #000; padding: 0; font-weight: bold;\">");
+            result.Append(System.Net.WebUtility.HtmlEncode(text.Substring(idx, searchLen)));
+            result.Append("</mark>");
+            lastIndex = idx + searchLen;
+        }
+
+        // Append remaining text
+        result.Append(System.Net.WebUtility.HtmlEncode(text.Substring(lastIndex)));
+        return result.ToString();
+    }
+    private async Task FetchReport()
+    {
+        // ✅ Validate: at least one status must be selected
+        if (SelectedStatuses == null || SelectedStatuses.Length == 0)
+        {
+            ShowStatusValidationError = true;
+            return;
+        }
+
+        ShowStatusValidationError = false; // clear once valid
+        try
+        {
+            IsLoading = true;
+            HasSearched = true;
+            CurrentPage = 1;
+            FilteredRepairServices.Clear();
+            _allFilteredRecords.Clear();
+            LoadedSparePartIds.Clear();
+
+            string companySearchTerm = null;
+            string serialSearchTerm = null;
+
+            if (_selectedCompany != null && _useExactCompanyMatch)
+                companySearchTerm = _selectedCompany.CompanyName;
+            else if (!string.IsNullOrWhiteSpace(searchTerm))
+                companySearchTerm = searchTerm.Trim();
+
+            if (CompanyFilterType == 4 && !string.IsNullOrWhiteSpace(SerialNumber))
+                serialSearchTerm = SerialNumber.Trim();
+
+            _lastSearchCompany = companySearchTerm;
+            _lastSearchSerial = serialSearchTerm;
+            _lastSearchStatuses = SelectedStatuses;
+
+            if (CompanyFilterType == 1)
+            {
+                _lastFromDate = SelectedDate;
+                _lastToDate = SelectedDate;
+            }
+            else if (CompanyFilterType == 2)
+            {
+                _lastFromDate = StartDate;
+                _lastToDate = EndDate;
+            }
+            else
+            {
+                _lastFromDate = null;
+                _lastToDate = null;
+            }
+
+            // ✅ FIX: Fetch ALL records first, then apply exact filter, then paginate client-side
+            var result = await RepairService.SearchRepairServicesAsync(
+                pageNumber: 1,
+                pageSize: int.MaxValue,  // fetch all
+                searchTerm: _lastSearchCompany,
+                serialNumber: _lastSearchSerial,
+                status: _lastSearchStatuses != null && _lastSearchStatuses.Any()
+                    ? string.Join(",", _lastSearchStatuses) : null,
+                fromDate: _lastFromDate,
+                toDate: _lastToDate,
+                sortBy: "ServiceDate",
+                sortDescending: true
+            );
+
+            // ✅ Apply exact filter on ALL records
+            _allFilteredRecords = ApplyExactCompanyFilter(result.Items.ToList());
+            TotalRecords = _allFilteredRecords.Count;
+
+            // ✅ Paginate client-side
+            FilteredRepairServices = _allFilteredRecords
+                .Skip((CurrentPage - 1) * PageSize)
+                .Take(PageSize)
+                .ToList();
+
+            IsFilterSectionVisible = false;
+        }
+        catch (Exception ex)
+        {
+            Logger?.LogError(ex, "❌ Error fetching report");
+        }
+        finally
+        {
+            IsLoading = false;
+        }
+    }
+    private List<RepairServices> ApplyExactCompanyFilter(List<RepairServices> services)
+    {
+        // ✅ ALWAYS apply exact filter when company is selected from dropdown
+        if (!_useExactCompanyMatch || _selectedCompany == null)
+        {
+            Logger?.LogInformation($"ℹ️ No exact filter needed (_useExactCompanyMatch={_useExactCompanyMatch}, _selectedCompany={_selectedCompany != null})");
+            return services;
+        }
+
+        var beforeCount = services.Count;
+        var targetCompanyName = _selectedCompany.CompanyName;
+
+        Logger?.LogInformation($"🎯 Applying EXACT company filter for: '{targetCompanyName}'");
+
+        // ✅ Use exact string comparison (case-insensitive)
+        var filtered = services
+            .Where(r => !string.IsNullOrWhiteSpace(r.CompanyName) &&
+                       r.CompanyName.Trim().Equals(targetCompanyName.Trim(), StringComparison.OrdinalIgnoreCase))
+            .ToList();
+
+        Logger?.LogInformation($"📊 Exact company filter results: {beforeCount} → {filtered.Count} records");
+
+        if (filtered.Count == 0)
+        {
+            Logger?.LogWarning($"⚠️ No records found for exact company: '{targetCompanyName}'");
+            // Log some example company names from the results to help debug
+            var sampleNames = services.Take(5).Select(s => s.CompanyName).ToList();
+            Logger?.LogWarning($"Sample company names in results: {string.Join(", ", sampleNames)}");
+        }
+
+        // ✅ Update total records to match filtered count
+
+        return filtered;
+    }
+    // Customer dropdown methods
+    private async Task OnInputClick()
+    {
+        IsDropdownVisible = true;
+        if (!_customers.Any() && !IsLoadingCustomers)
+        {
+            await LoadCustomersAsync(reset: true);
+        }
+        StateHasChanged();
+    }
+
+    private async Task LoadCustomersAsync(bool reset = false)
+    {
+        if (IsLoadingCustomers) return;
+
+        try
+        {
+            IsLoadingCustomers = true;
+            if (reset)
+            {
+                CurrentCustomerPage = 1;
+                _customers.Clear();
+            }
+
+            var pagedResponse = await CustomerService.GetCustomersPaginatedAsync(
+                pageNumber: CurrentCustomerPage,
+                pageSize: CustomerPageSize,
+                searchTerm: string.IsNullOrWhiteSpace(searchTerm) ? null : searchTerm,
+                isActive: true
+            );
+
+            if (pagedResponse?.Data != null)
+            {
+                var newCustomers = pagedResponse.Data
+                    .Where(c => !string.IsNullOrWhiteSpace(c.CompanyName))
+                    .ToList();
+
+                if (reset)
+                {
+                    _customers = newCustomers;
+                }
+                else
+                {
+                    foreach (var customer in newCustomers)
+                    {
+                        if (!_customers.Any(c => c.CompanyName == customer.CompanyName))
+                        {
+                            _customers.Add(customer);
+                        }
+                    }
+                }
+
+                TotalCustomers = pagedResponse.TotalRecords;
+                HasMoreCustomers = pagedResponse.HasNext;
+            }
+        }
+        finally
+        {
+            IsLoadingCustomers = false;
+        }
+    }
+
+    private async Task LoadMoreCustomers()
+    {
+        CurrentCustomerPage++;
+        await LoadCustomersAsync(reset: false);
+    }
+
+    private void OnInputBlur()
+    {
+        Task.Delay(200).ContinueWith(_ =>
+        {
+            InvokeAsync(() =>
+            {
+                IsDropdownVisible = false;
+                StateHasChanged();
+            });
+        });
+    }
+
+    private void OnCompanySelect(Customer company)
+    {
+
+        searchTerm = company.CompanyName;
+        _selectedCompany = company;
+        CompanyName = company.CompanyName;
+
+        // ✅ Set flag for exact match
+        _useExactCompanyMatch = true;
+
+        IsDropdownVisible = false;
+        StateHasChanged();
+    }
+
+    private void CloseDropdown()
+    {
+        IsDropdownVisible = false;
+        StateHasChanged();
+    }
+
+    private void OnSearchTermInputDebounced(ChangeEventArgs e)
+    {
+        searchTerm = e.Value?.ToString() ?? string.Empty;
+
+        // ✅ Clear selected company when user types
+        _selectedCompany = null;
+        CompanyName = string.Empty;
+        _useExactCompanyMatch = false;
+
+        CurrentCustomerPage = 1;
+        _customers.Clear();
+
+        _debounceTimer?.Dispose();
+        _debounceTimer = new System.Threading.Timer(async _ =>
+        {
+            await InvokeAsync(async () =>
+            {
+                await LoadCustomersAsync(reset: true);
+                StateHasChanged();
+            });
+        }, null, 300, Timeout.Infinite);
+    }
+
+    private async Task LoadSparePartsForService(RepairServices service)
+    {
+        if (service?.SparePartItems == null || !service.SparePartItems.Any())
+            return;
+
+        try
+        {
+            foreach (var item in service.SparePartItems)
+            {
+                // Check if SparePartId has a value
+                if (!item.SparePartId.HasValue)
+                    continue;
+
+                var sparePartId = item.SparePartId.Value;
+
+                if (!_sparePartsCache.ContainsKey(sparePartId))
+                {
+                    var sparePart = await SparePartService.GetSparePartByIdAsync(sparePartId);
+                    if (sparePart != null)
+                    {
+                        _sparePartsCache[sparePartId] = sparePart;
+                        item.ItemName = sparePart.ItemName;
+                    }
+                }
+                else
+                {
+                    item.ItemName = _sparePartsCache[sparePartId].ItemName;
+                }
+            }
+
+            LoadedSparePartIds.Add(service.Id);
+            StateHasChanged();
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Error loading spare parts: {ex.Message}");
+        }
+    }
+
+    private void ShowRepairServiceDetails(RepairServices repairService)
+    {
+        _selectedRepairService = repairService;
+        isViewDialogVisible = true;
+        DialogEdit.ShowAsync();
+    }
+
+    private void RowSelectHandler(RowSelectEventArgs<RepairServices> args)
+    {
+        if (args.Data != null)
+        {
+            _selectedRepairService = args.Data;
+        }
+        else
+        {
+            DialogNoRecordSelected.ShowAsync();
+        }
+    }
+
+    private void RowDoubleClickHandler(RecordDoubleClickEventArgs<RepairServices> args)
+    {
+        _selectedRepairService = args.RowData;
+        if (_selectedRepairService != null)
+        {
+            isViewDialogVisible = true;
+            DialogEdit.ShowAsync();
+        }
+    }
+
+    private void CloseDialogNoRecordSelected()
+    {
+        DialogNoRecordSelected.HideAsync();
+    }
+
+    private void OverlayClick(OverlayModalClickEventArgs args)
+    {
+        this.isViewDialogVisible = false;
+    }
+
+    private void CloseDialog()
+    {
+        isViewDialogVisible = false;
+    }
+
+    public string GetUserNameById(Guid? userId)
+    {
+        if (!userId.HasValue || userId.Value == Guid.Empty)
+            return "None";
+
+        string userIdString = userId.Value.ToString();
+
+        if (!_usersLoaded)
+            return "Loading...";
+
+        if (_userCache.TryGetValue(userIdString, out string username))
+            return username;
+
+        Logger?.LogWarning($"⚠️ User name not found for {userId}");
+        return "Unknown User";
+    }
+
+
+    // Keep your existing export and print methods
+    public async Task ExportToExcel()
+    {
+        try
+        {
+            IsLoading = true;
+
+            // Fetch ALL records
+            var allRecordsResult = await RepairService.SearchRepairServicesAsync(
+                pageNumber: 1,
+                pageSize: int.MaxValue,
+                searchTerm: _lastSearchCompany,
+                serialNumber: _lastSearchSerial,
+                status: _lastSearchStatuses != null && _lastSearchStatuses.Any()
+                    ? string.Join(",", _lastSearchStatuses)
+                    : null,
+                fromDate: _lastFromDate,
+                toDate: _lastToDate,
+                sortBy: "ServiceDate",
+                sortDescending: true
+            );
+
+            // ✅ Apply exact company filter
+            var allServices = ApplyExactCompanyFilter(allRecordsResult.Items.ToList());
+
+            Logger?.LogInformation($"📤 Exporting {allServices.Count} records");
+
+            // Load spare parts
+            await LoadSparePartsForServicesOptimized(allServices);
+
+            // ✅ Process user names using GlobalUserCacheService
+            foreach (var service in allServices)
+            {
+                service.RepairByName = GetUserNameById(service.repairBy);
+                service.VerifiedByName = GetUserNameById(service.verifiedBy);
+            }
+
+            await MyGrid.ExportToExcelAsync(new ExcelExportProperties
+            {
+                IncludeHiddenColumn = true,
+                DataSource = allServices
+            });
+
+            Logger?.LogInformation($"✅ Excel export complete");
+        }
+        catch (Exception ex)
+        {
+            Logger?.LogError(ex, "❌ Error exporting to Excel");
+        }
+        finally
+        {
+            IsLoading = false;
+        }
+    }
+
+    private async Task ShowReportPreview()
+    {
+        try
+        {
+            IsLoading = true;
+
+            var allRecordsResult = await RepairService.SearchRepairServicesAsync(
+                pageNumber: 1,
+                pageSize: int.MaxValue,
+                searchTerm: _lastSearchCompany,
+                serialNumber: _lastSearchSerial,
+                status: _lastSearchStatuses != null && _lastSearchStatuses.Any()
+                    ? string.Join(",", _lastSearchStatuses)
+                    : null,
+                fromDate: _lastFromDate,
+                toDate: _lastToDate,
+                sortBy: "ServiceDate",
+                sortDescending: true
+            );
+
+            // ✅ Apply exact company filter
+            var allFilteredServices = ApplyExactCompanyFilter(allRecordsResult.Items.ToList());
+
+            await LoadSparePartsForServicesOptimized(allFilteredServices);
+
+            var report = new XtraReport1();
+            var repairByUsers = new List<string>();
+            var verifiedByUsers = new List<string>();
+
+            // ✅ Process user lookups using GlobalUserCacheService
+            foreach (var service in allFilteredServices)
+            {
+                var repairByName = GetUserNameById(service.repairBy);
+                var verifiedByName = GetUserNameById(service.verifiedBy);
+
+                repairByUsers.Add(repairByName);
+                verifiedByUsers.Add(verifiedByName);
+
+                service.RepairByName = repairByName;
+                service.VerifiedByName = verifiedByName;
+            }
+
+            if (CompanyFilterType == 1)
+            {
+                report.Parameters["FromDate"].Value = SelectedDate;
+                report.Parameters["ToDate"].Value = SelectedDate;
+            }
+            else if (CompanyFilterType == 2)
+            {
+                report.Parameters["FromDate"].Value = StartDate;
+                report.Parameters["ToDate"].Value = EndDate;
+            }
+
+            report.SetDataSource(allFilteredServices, repairByUsers, verifiedByUsers, CurrentUserName);
+
+            byte[] reportData;
+            using (var ms = new MemoryStream())
+            {
+                report.ExportToPdf(ms);
+                reportData = ms.ToArray();
+            }
+
+            string base64Report = Convert.ToBase64String(reportData);
+            await JSRuntime.InvokeVoidAsync("blazorReportsPrint.previewReportInNewTab", base64Report, "ServiceReport.pdf");
+
+            Logger?.LogInformation($"✅ Generated report with {allFilteredServices.Count} records");
+        }
+        catch (Exception ex)
+        {
+            Logger?.LogError(ex, "❌ Error generating report");
+        }
+        finally
+        {
+            IsLoading = false;
+        }
+    }
+
+    private async Task LoadSparePartsForServicesOptimized(List<RepairServices> services)
+    {
+        // Collect all unique spare part IDs
+        var sparePartIds = services
+            .SelectMany(s => s.SparePartItems ?? Enumerable.Empty<SparePartItem>())
+            .Where(item => item.SparePartId.HasValue)
+            .Select(item => item.SparePartId.Value)
+            .Distinct()
+            .ToList();
+
+        if (!sparePartIds.Any()) return;
+
+        // Load only spare parts that aren't already cached
+        foreach (var sparePartId in sparePartIds)
+        {
+            if (!_sparePartsCache.ContainsKey(sparePartId))
+            {
+                try
+                {
+                    var sparePart = await SparePartService.GetSparePartByIdAsync(sparePartId);
+                    if (sparePart != null)
+                    {
+                        _sparePartsCache[sparePartId] = sparePart;
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"Error loading spare part {sparePartId}: {ex.Message}");
+                }
+            }
+        }
+
+        // Populate spare part names from cache
+        foreach (var service in services)
+        {
+            foreach (var item in service.SparePartItems ?? Enumerable.Empty<SparePartItem>())
+            {
+                if (item.SparePartId.HasValue && _sparePartsCache.ContainsKey(item.SparePartId.Value))
+                {
+                    var sparePart = _sparePartsCache[item.SparePartId.Value];
+                    item.ItemName = sparePart.ItemName;
+                    item.SerialNumber = sparePart.SerialNumber;
+                    item.UseFor = sparePart.UseFor;
+                }
+            }
+        }
+    }
+    private async Task ShowReportPreview(RepairServices selectedRepairService)
+    {
+        if (selectedRepairService == null)
+        {
+            await DialogNoRecordSelected.ShowAsync();
+            return;
+        }
+
+        try
+        {
+            _selectedRepairService = selectedRepairService;
+            var report = new Report2();
+
+            // ✅ Use GlobalUserCacheService
+            string repairByUser = GetUserNameById(selectedRepairService.repairBy);
+            string verifiedByUser = GetUserNameById(selectedRepairService.verifiedBy);
+
+            // ✅ Use async method for phone numbers
+            string repairByPhone = await GetUserPhoneNumberById(selectedRepairService.repairBy);
+            string verifiedByPhone = await GetUserPhoneNumberById(selectedRepairService.verifiedBy);
+
+            // Load spare part details
+            foreach (var item in _selectedRepairService.SparePartItems)
+            {
+                if (item.SparePartId.HasValue && _sparePartsCache.ContainsKey(item.SparePartId.Value))
+                {
+                    var sparePart = _sparePartsCache[item.SparePartId.Value];
+                    item.ItemName = sparePart.ItemName;
+                    item.SerialNumber = sparePart.SerialNumber;
+                    item.UseFor = sparePart.UseFor;
+                }
+                else if (item.SparePartId.HasValue)
+                {
+                    var sparePart = await SparePartService.GetSparePartByIdAsync(item.SparePartId.Value);
+                    if (sparePart != null)
+                    {
+                        _sparePartsCache[item.SparePartId.Value] = sparePart;
+                        item.ItemName = sparePart.ItemName;
+                        item.SerialNumber = sparePart.SerialNumber;
+                        item.UseFor = sparePart.UseFor;
+                    }
+                }
+            }
+
+            report.SetParameters(
+                _selectedRepairService,
+                _selectedRepairService.ServiceLocation,
+                _selectedRepairService.SparePartItems,
+                _selectedRepairService.hasContract,
+                repairByUser,
+                verifiedByUser,
+                repairByPhone,
+                verifiedByPhone
+            );
+
+            // Hide parameters
+            report.Parameters["Id"].Visible = false;
+            report.Parameters["ReportNumber"].Visible = false;
+            report.Parameters["CompanyName"].Visible = false;
+            report.Parameters["ContactName"].Visible = false;
+            report.Parameters["PhoneNumber"].Visible = false;
+            report.Parameters["Address"].Visible = false;
+            report.Parameters["ItemName"].Visible = false;
+            report.Parameters["SerialNumber"].Visible = false;
+            report.Parameters["CustomerRequest"].Visible = false;
+            report.Parameters["inspection"].Visible = false;
+            report.Parameters["Solution"].Visible = false;
+            report.Parameters["CompanyServiceChecked"].Visible = false;
+            report.Parameters["OnSiteChecked"].Visible = false;
+            report.Parameters["HasContract"].Visible = false;
+            report.Parameters["Datestart"].Visible = false;
+            report.Parameters["Datefinish"].Visible = false;
+            report.Parameters["RepairBy"].Visible = false;
+            report.Parameters["VerifiedBy"].Visible = false;
+            report.Parameters["RepairByPhone"].Visible = false;
+            report.Parameters["VerifiedByPhone"].Visible = false;
+
+            byte[] reportData;
+            using (var ms = new MemoryStream())
+            {
+                report.ExportToPdf(ms);
+                reportData = ms.ToArray();
+            }
+
+            await JSRuntime.InvokeVoidAsync("previewReportInNewTab", reportData);
+        }
+        catch (Exception ex)
+        {
+            Logger?.LogError(ex, "❌ Error generating report");
+        }
+    }
+
+    private async Task<string> GetUserPhoneNumberById(Guid? userId)
+    {
+        if (!userId.HasValue || userId.Value == Guid.Empty)
+        {
+            return "N/A";
+        }
+
+        try
+        {
+            // ✅ Use GlobalUserCacheService with auto-load
+            return await GlobalUserCache.GetUserPhoneNumberByIdAsync(userId, autoLoad: true);
+        }
+        catch (Exception ex)
+        {
+            Logger?.LogError(ex, $"❌ Error getting phone number for {userId}");
+            return "N/A";
+        }
+    }
+
+    private async Task ShowReportPreview2()
+    {
+        try
+        {
+            IsLoading = true;
+
+            var allRecordsResult = await RepairService.SearchRepairServicesAsync(
+                pageNumber: 1,
+                pageSize: int.MaxValue,
+                searchTerm: _lastSearchCompany,
+                serialNumber: _lastSearchSerial,
+                status: _lastSearchStatuses != null && _lastSearchStatuses.Any()
+                    ? string.Join(",", _lastSearchStatuses)
+                    : null,
+                fromDate: _lastFromDate,
+                toDate: _lastToDate,
+                sortBy: "ServiceDate",
+                sortDescending: true
+            );
+
+            // ✅ Apply exact company filter
+            var allFilteredServices = ApplyExactCompanyFilter(allRecordsResult.Items.ToList());
+
+            await LoadSparePartsForServicesOptimized(allFilteredServices);
+
+            var report = new DailyReport();
+            var repairByUsers = new List<string>();
+            var verifiedByUsers = new List<string>();
+
+            // ✅ Process user lookups using GlobalUserCacheService
+            foreach (var service in allFilteredServices)
+            {
+                var repairByName = GetUserNameById(service.repairBy);
+                var verifiedByName = GetUserNameById(service.verifiedBy);
+
+                repairByUsers.Add(repairByName);
+                verifiedByUsers.Add(verifiedByName);
+
+                service.RepairByName = repairByName;
+                service.VerifiedByName = verifiedByName;
+            }
+
+            if (CompanyFilterType == 1)
+            {
+                report.Parameters["FromDate"].Value = SelectedDate;
+                report.Parameters["ToDate"].Value = SelectedDate;
+            }
+            else if (CompanyFilterType == 2)
+            {
+                report.Parameters["FromDate"].Value = StartDate;
+                report.Parameters["ToDate"].Value = EndDate;
+            }
+
+            report.SetDataSource(allFilteredServices, repairByUsers, verifiedByUsers, CurrentUserName);
+
+            byte[] reportData;
+            using (var ms = new MemoryStream())
+            {
+                report.ExportToPdf(ms);
+                reportData = ms.ToArray();
+            }
+
+            string base64Report = Convert.ToBase64String(reportData);
+            await JSRuntime.InvokeVoidAsync("blazorReportsPrint.previewReportInNewTab", base64Report, "ServiceReport.pdf");
+
+            Logger?.LogInformation($"✅ Generated daily report with {allFilteredServices.Count} records");
+        }
+        catch (Exception ex)
+        {
+            Logger?.LogError(ex, "❌ Error generating report");
+        }
+        finally
+        {
+            IsLoading = false;
+        }
+    }
+    public void Dispose()
+    {
+        _debounceTimer?.Dispose();
+    }
+}

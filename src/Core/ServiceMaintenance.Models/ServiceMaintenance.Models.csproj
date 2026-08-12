@@ -1,0 +1,18 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <NoWarn>$(NoWarn);CS0108;CS0436;BL0005;CS8632;CS8669;CS1998;CS0169;CS0649;CS8602;CS0414;CS8618;CS8625;CS8600;CS8620;CS8629;CS8604;CS0168;CS8601;CS8603;CS8765</NoWarn>
+    <Nullable>disable</Nullable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Compile Remove="Customer2.cs" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="DevExpress.Xpo" Version="24.2.7" />
+  </ItemGroup>
+
+</Project>

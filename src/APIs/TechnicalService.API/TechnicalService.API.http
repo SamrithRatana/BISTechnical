@@ -1,0 +1,18 @@
+###
+@RepairUrl=http://localhost:5057
+
+GET {{RepairUrl}}/api/items
+# Accept: application/json
+
+###
+
+POST {{RepairUrl}}/api/items?api-version=1.0
+Content-Type: application/json
+
+{
+    "itemName": "HP LaserJet M602",
+    "serialNumber": "234-123",
+    "itemType": "Printer"
+}
+
+###

@@ -1,0 +1,109 @@
+@*
+    ReportGroupedDocument.razor
+
+    Generic "document style" grouped table extracted from the monthly
+    report page: Title/subheader → per-group header row → item rows →
+    per-group total row → grand total + breakdown footer. Any page
+    supplies its own Columns, Groups, and (optionally) summary stats
+    and gets the identical layout/styling.
+
+    Usage (daily report grouped by Service Location, for example):
+
+    <ReportGroupedDocument TItem="RepairServices"
+                            Title="Daily Repair Report"
+                            SubHeader="@($"From {from:dd/MM/yyyy} To {to:dd/MM/yyyy}")"
+                            Columns="@_columns"
+                            Groups="@_groups"
+                            SummaryStats="@_summaryStats"
+                            GrandTotalLabel="Grand Total —" />
+*@
+@using ServiceMaintenance.Components
+@typeparam TItem
+
+<div class="report-document">
+    <div class="report-document-header report-shrink">
+        <h4>@Title</h4>
+        @if (!string.IsNullOrWhiteSpace(SubHeader))
+        {
+            <div class="report-document-subheader">@SubHeader</div>
+        }
+    </div>
+
+    <div class="report-scroll-frame">
+        <table class="report-document-table">
+            <thead>
+                <tr>
+                    @foreach (var col in Columns)
+                    {
+                        <th style="@(col.Width is null ? null : $"width:{col.Width}"); text-align:@col.Align;">
+                            @col.Header
+                        </th>
+                    }
+                </tr>
+            </thead>
+            <tbody>
+                @{ int groupIndex = 0; }
+                @foreach (var group in Groups)
+                {
+                    groupIndex++;
+                    <tr class="report-group-row">
+                        <td colspan="@Columns.Count"><strong>@groupIndex. @group.GroupName</strong></td>
+                    </tr>
+
+                    @foreach (var item in group.Items)
+                    {
+                        <tr class="report-item-row">
+                            @foreach (var col in Columns)
+                            {
+                                <td style="text-align:@col.Align;">
+                                    @col.CellTemplate(item)
+                                    @if (col.SubTextTemplate is not null)
+                                    {
+                                        @col.SubTextTemplate(item)
+                                    }
+                                </td>
+                            }
+                        </tr>
+                    }
+
+                    <tr class="report-group-total-row">
+                        <td colspan="@(Columns.Count - 1)"></td>
+                        <td><strong>Total: @group.Items.Count</strong></td>
+                    </tr>
+                    <tr class="report-group-spacer"><td colspan="@Columns.Count"></td></tr>
+                }
+            </tbody>
+            <tfoot>
+                <tr class="report-grand-total-row">
+                    <td colspan="@(Columns.Count - 1)" class="text-end"><strong>@GrandTotalLabel</strong></td>
+                    <td><strong>@Groups.Sum(g => g.Items.Count)</strong></td>
+                </tr>
+                @if (SummaryStats is { Count: > 0 })
+                {
+                    <tr class="report-grand-total-breakdown">
+                        <td colspan="@Columns.Count">
+                            @for (int i = 0; i < SummaryStats.Count; i++)
+                            {
+                                var stat = SummaryStats[i];
+                                <text>@stat.Label: <strong>@stat.Value</strong></text>
+                                if (i < SummaryStats.Count - 1)
+                                {
+                                    <text>&nbsp;&nbsp;</text>
+                                }
+                            }
+                        </td>
+                    </tr>
+                }
+            </tfoot>
+        </table>
+    </div>
+</div>
+
+@code {
+    [Parameter, EditorRequired] public string Title { get; set; } = string.Empty;
+    [Parameter] public string? SubHeader { get; set; }
+    [Parameter, EditorRequired] public List<ReportColumn<TItem>> Columns { get; set; } = new();
+    [Parameter, EditorRequired] public List<ReportGroup<TItem>> Groups { get; set; } = new();
+    [Parameter] public List<ReportSummaryStat>? SummaryStats { get; set; }
+    [Parameter] public string GrandTotalLabel { get; set; } = "Grand Total —";
+}

@@ -1,0 +1,1002 @@
+@* Pages/Leave/LeaveDashboard.razor *@
+@page "/leave"
+@using Microsoft.AspNetCore.Authorization
+@using Microsoft.AspNetCore.Components.Authorization
+@using Microsoft.AspNetCore.Identity
+@using Microsoft.EntityFrameworkCore
+@using UserManagementAPI.Data
+@using UserManagementAPI.Models
+@using UserManagementAPI.Models.Leave
+@inject UserManagementContext Db
+@inject UserManager<UserManagementAPI.Models.ApplicationUser> UserManager
+@inject AuthenticationStateProvider Auth
+@inject IJSRuntime JS
+@attribute [Authorize]
+
+<PageTitle>Leave Management</PageTitle>
+
+<div class="container" style="max-width:960px; margin:0 auto; padding: 0 1rem;">
+
+    @* -- TAB BAR -- *@
+    <div class="leave-tab-bar">
+        <button class="leave-tab @(_activeTab == Tab.MyLeave ? "active" : "")"
+                @onclick='() => SetTab(Tab.MyLeave)'>
+            ?? My Leave
+        </button>
+        <button class="leave-tab @(_activeTab == Tab.Request ? "active" : "")"
+                @onclick='() => SetTab(Tab.Request)'>
+            ?? New Request
+        </button>
+        @if (_canApprove)
+        {
+            <button class="leave-tab @(_activeTab == Tab.Approval ? "active" : "")"
+                    @onclick='() => SetTab(Tab.Approval)'>
+                ? Approvals
+                @if (_pendingCount > 0)
+                {
+                    <span class="tab-badge">@_pendingCount</span>
+                }
+            </button>
+        }
+    </div>
+
+    @* ------------------------------------------
+       TAB 1 — MY LEAVE
+    ------------------------------------------ *@
+    @if (_activeTab == Tab.MyLeave)
+    {
+        <div>
+            <div class="d-flex justify-content-between align-items-center mb-4">
+                <div>
+                    <h4 class="mb-0">My Leave</h4>
+                    <small class="text-muted">Annual leave balance — @DateTime.Today.Year</small>
+                </div>
+                <button class="btn btn-primary px-4" @onclick='() => SetTab(Tab.Request)'>+ New Request</button>
+            </div>
+
+            @if (_myLoading)
+            {
+                <div class="text-muted py-3">Loading your leave balance...</div>
+            }
+            else if (!_myBalances.Any())
+            {
+                <div class="alert alert-warning mb-4">
+                    <strong>No leave balance set up for @DateTime.Today.Year.</strong>
+                    Please ask HR / Admin to set up your annual leave balance.
+                </div>
+            }
+            else
+            {
+                <div class="row g-3 mb-4">
+                    @foreach (var b in _myBalances)
+                    {
+                        var remaining = b.TotalHours - b.UsedHours;
+                        var isOver = remaining < 0;
+                        var overHours = isOver ? Math.Abs(remaining) : 0;
+                        var overDays = overHours / 8;
+                        var pct = b.TotalHours > 0 ? Math.Min((double)b.UsedHours / (double)b.TotalHours * 100, 100) : 0;
+                        var barColor = isOver ? "#dc2626" : pct >= 80 ? "#f59e0b" : "#22c55e";
+                        <div class="col-md-4 col-sm-6">
+                            <div class="bal-card @(isOver ? "over-limit" : "")">
+                                <div class="bal-label">@b.LeaveType?.Name</div>
+                                @if (isOver)
+                                {
+                                    <div class="bal-remaining negative">-@overHours <span>h</span></div>
+                                    <div class="bal-days negative">= -@(overDays.ToString("F1")) days over limit</div>
+                                    <div class="over-badge">? Over by @overHours h / @(overDays.ToString("F1")) days</div>
+                                }
+                                else
+                                {
+                                    <div class="bal-remaining positive">@remaining <span>h left</span></div>
+                                    <div class="bal-days">= @((remaining / 8).ToString("F1")) days remaining</div>
+                                }
+                                <div class="bal-meta mt-2">
+                                    Used: <strong>@b.UsedHours h</strong> (@((b.UsedHours / 8).ToString("F1")) days)
+                                    &nbsp;/&nbsp;
+                                    Total: <strong>@b.TotalHours h</strong> (@((b.TotalHours / 8).ToString("F0")) days/year)
+                                </div>
+                                <div class="bal-bar">
+                                    <div class="bal-bar-fill" style="width:@(pct.ToString("F0"))%; background:@barColor;"></div>
+                                </div>
+                                <div class="d-flex justify-content-between mt-1" style="font-size:10px; color:#cbd5e1;">
+                                    <span>0h</span>
+                                    @if (isOver)
+                                    {
+                                        <span style="color:#dc2626; font-weight:700;">100% + @overHours h over</span>
+                                    }
+                                    else
+                                    {
+                                        <span>@((int)pct)% used</span>
+                                    }
+                                    <span>@b.TotalHours h</span>
+                                </div>
+                            </div>
+                        </div>
+                    }
+                </div>
+
+                <div class="mb-4 p-3 rounded" style="background:#f8fafc; font-size:13px;">
+                    <strong>Balance rule:</strong> 1 day = 8 hours &nbsp;|&nbsp;
+                    Annual Leave = 2 days/month × 12 months = 192h/year &nbsp;|&nbsp;
+                    If balance goes <span style="color:#dc2626; font-weight:700;">negative (-)</span>
+                    = you have taken more leave than your annual allowance.
+                </div>
+            }
+
+            <h5 class="mb-3">Request History</h5>
+            @if (!_myRequests.Any())
+            {
+                <div class="text-muted py-3">
+                    No requests yet.
+                    <button class="btn btn-link p-0" @onclick='() => SetTab(Tab.Request)'>Submit your first request ?</button>
+                </div>
+            }
+            else
+            {
+                <div class="card shadow-sm border-0">
+                    <div class="table-responsive">
+                        <table class="table table-hover align-middle mb-0" style="font-size:14px;">
+                            <thead style="background:#f8fafc; font-size:12px; color:#64748b; font-weight:600;">
+                                <tr>
+                                    <th class="px-3">#</th>
+                                    <th>Type</th>
+                                    <th>From</th>
+                                    <th>To</th>
+                                    <th>Hours</th>
+                                    <th>Days</th>
+                                    <th>Status</th>
+                                    <th>Submitted</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                @foreach (var r in _myRequests)
+                                {
+                                    var (pillCss, pillLabel) = r.Status switch
+                                    {
+                                        "Pending" => ("s-pill s-pending", "? Pending"),
+                                        "ApprovedByM1" => ("s-pill s-step1", "? Step 1 Done"),
+                                        "Approved" => ("s-pill s-approved", "? Approved"),
+                                        "Rejected" => ("s-pill s-rejected", "? Rejected"),
+                                        _ => ("s-pill s-default", r.Status)
+                                    };
+                                    <tr>
+                                        <td class="px-3 text-muted">@r.Id</td>
+                                        <td><strong>@(r.LeaveType?.Name ?? "—")</strong></td>
+                                        <td>@r.FromDate.ToString("dd MMM yy")</td>
+                                        <td>@r.ToDate.ToString("dd MMM yy")</td>
+                                        <td>@r.TotalHours h</td>
+                                        <td class="text-muted">@((r.TotalHours / 8).ToString("F1")) days</td>
+                                        <td><span class="@pillCss">@pillLabel</span></td>
+                                        <td class="text-muted">@r.CreatedAt.ToString("dd MMM yy")</td>
+                                    </tr>
+                                    @if (!string.IsNullOrEmpty(r.Reason))
+                                    {
+                                        <tr style="background:#fafafa;">
+                                            <td class="px-3"></td>
+                                            <td colspan="7" style="font-size:12px; color:#94a3b8; padding-top:2px;">
+                                                Reason: @r.Reason
+                                            </td>
+                                        </tr>
+                                    }
+                                }
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+                <div class="mt-3 d-flex gap-4" style="font-size:12px; color:#64748b;">
+                    <span>Total: <strong>@_myRequests.Count</strong></span>
+                    <span style="color:#166534;">Approved: <strong>@_myRequests.Count(r => r.Status == "Approved")</strong></span>
+                    <span style="color:#854d0e;">Pending: <strong>@_myRequests.Count(r => r.Status == "Pending" || r.Status == "ApprovedByM1")</strong></span>
+                    <span style="color:#991b1b;">Rejected: <strong>@_myRequests.Count(r => r.Status == "Rejected")</strong></span>
+                </div>
+            }
+        </div>
+    }
+
+    @* ------------------------------------------
+       TAB 2 — NEW REQUEST
+    ------------------------------------------ *@
+    @if (_activeTab == Tab.Request)
+    {
+        <div style="max-width:640px; margin:0 auto;">
+            <h4 class="mb-3">Leave Request Form</h4>
+
+            @if (!string.IsNullOrEmpty(_reqMessage))
+            {
+                <div class="alert @(_reqSuccess ? "alert-success" : "alert-danger") d-flex justify-content-between align-items-center">
+                    <span>@_reqMessage</span>
+                    @if (_reqSuccess && _lastRequestId > 0)
+                    {
+                        <button class="btn btn-outline-success btn-sm ms-3" @onclick="PrintForm">?? Print</button>
+                    }
+                </div>
+            }
+
+            <div class="card p-4">
+
+                @* Employee *@
+                <div class="mb-3">
+                    <label class="form-label">Employee Name</label>
+                    <select class="form-select" @bind="_selUserId" @bind:after="OnEmployeeChanged">
+                        <option value="">-- Select Employee --</option>
+                        @foreach (var u in _allUsers)
+                        {
+                            <option value="@u.Id">@u.UserName</option>
+                        }
+                    </select>
+                </div>
+
+                @* Department *@
+                <div class="mb-3">
+                    <label class="form-label">Department</label>
+                    <select class="form-select" @bind="_department">
+                        <option value="">-- Select Department --</option>
+                        @foreach (var dept in _departments)
+                        {
+                            <option value="@dept">@dept</option>
+                        }
+                    </select>
+                </div>
+
+                @* Leave Type *@
+                <div class="mb-3">
+                    <label class="form-label">Leave Type</label>
+                    <select class="form-select" @bind="_leaveTypeId" @bind:after="OnLeaveTypeChanged">
+                        <option value="0">-- Select --</option>
+                        @foreach (var lt in _leaveTypes)
+                        {
+                            <option value="@lt.Id">
+                                @lt.Name @(lt.TotalHoursYear.HasValue ? $"({lt.TotalHoursYear}h/year)" : "(on-time)")
+                            </option>
+                        }
+                    </select>
+                </div>
+
+                @* Balance *@
+                @if (_selBalance != null && !_selBalance.IsOnTime)
+                {
+                    <div class="alert alert-info py-2 mb-3">
+                        Balance: <strong>@_selBalance.RemainingHours h remaining</strong>
+                        of @_selBalance.TotalHours h
+                        (@((_selBalance.RemainingHours / 8m).ToString("F1")) days left)
+                    </div>
+                }
+
+                @* Date / Time *@
+                @if (_leaveTypeId != 0)
+                {
+                    <div class="dt-section-label">?? FROM</div>
+                    <div class="dt-grid">
+                        <div>
+                            <label class="form-label">Date</label>
+                            <input type="date" class="form-control" @bind="_fromDate" @bind:after="OnFromDateChanged" />
+                        </div>
+                        <div>
+                            <label class="form-label">Time</label>
+                            <input type="time" class="form-control" value="@_fromTime" @onchange="OnFromTimeChanged" />
+                        </div>
+                    </div>
+
+                    <div class="dt-section-label">?? TO</div>
+                    <div class="dt-grid">
+                        <div>
+                            <label class="form-label">Date</label>
+                            <input type="date" class="form-control" @bind="_toDate" @bind:after="OnToDateChanged" />
+                        </div>
+                        <div>
+                            <label class="form-label">Time</label>
+                            <input type="time" class="form-control" value="@_toTime" @onchange="OnToTimeChanged" />
+                        </div>
+                    </div>
+
+                    @if (_dateError != "")
+                    {
+                        <div class="text-danger-sm">? @_dateError</div>
+                    }
+
+                    @* Booking *@
+                    <div class="booking-section">
+                        <div class="booking-section-title">?? Booking (Days to deadline the request leave will be rejected)</div>
+                        <div class="booking-options">
+                            @foreach (var opt in _presetOptions)
+                            {
+                                <button class="booking-btn @(_selBooking == opt.Key ? "active" : "")"
+                                        @onclick="() => SelectPreset(opt.Key)">
+                                    @opt.Label
+                                </button>
+                            }
+                            <button class="booking-btn custom-btn @(_selBooking == "custom" ? "active" : "")"
+                                    @onclick="ToggleCustom">
+                                ?? Custom
+                            </button>
+                        </div>
+
+                        @if (_selBooking == "custom")
+                        {
+                            <div class="custom-date-panel">
+                                <label>Select end date:</label>
+                                <input type="date"
+                                       value="@_customEndDate.ToString("yyyy-MM-dd")"
+                                       min="@_fromDate.ToString("yyyy-MM-dd")"
+                                       @onchange="OnCustomEndDateChanged" />
+                                @if (_customWorkingDays > 0)
+                                {
+                                    <span class="custom-date-result">
+                                        @_customWorkingDays Day@(_customWorkingDays != 1 ? "s" : "")
+                                        · @(_customWorkingDays * 8) h
+                                    </span>
+                                }
+                                else
+                                {
+                                    <span style="font-size:11px; color:#a78bfa;">Pick a date to calculate</span>
+                                }
+                            </div>
+                        }
+
+                        @if (string.IsNullOrEmpty(_selBooking))
+                        {
+                            <div class="hint-text">Select a booking unit above</div>
+                        }
+                    </div>
+
+                    @* Summary *@
+                    @if (ReqTotalHours > 0 && _dateError == "")
+                    {
+                        <div class="summary-card">
+                            <div class="summary-row">
+                                <span class="summary-label">From</span>
+                                <span class="summary-value">@ReqFromDisplay</span>
+                            </div>
+                            <div class="summary-row">
+                                <span class="summary-label">To</span>
+                                <span class="summary-value">@ReqToDisplay</span>
+                            </div>
+                            <hr class="summary-divider" />
+                            <div class="summary-row">
+                                <span class="summary-label" style="font-weight:600;">Total Time</span>
+                                <span class="total-hours-value">@ReqTotalHours h</span>
+                            </div>
+                            <div class="summary-row" style="margin-top:4px;">
+                                <span class="summary-label">Booking</span>
+                                <span class="booking-pill">@ReqBookingLabel</span>
+                            </div>
+                        </div>
+                    }
+                }
+
+                <div class="mb-3">
+                    <label class="form-label">Reason (optional)</label>
+                    <textarea class="form-control" rows="3" @bind="_reason"></textarea>
+                </div>
+
+                <button class="btn btn-primary w-100" @onclick="SubmitRequest" disabled="@_submitting">
+                    @(_submitting ? "Submitting..." : "Submit Request")
+                </button>
+            </div>
+        </div>
+    }
+
+    @* ------------------------------------------
+       TAB 3 — APPROVALS
+    ------------------------------------------ *@
+    @if (_activeTab == Tab.Approval && _canApprove)
+    {
+        <div>
+            <div class="d-flex justify-content-between align-items-center mb-4">
+                <h4 class="mb-0">Leave Approvals</h4>
+                <div>
+                    <span class="badge @(_myStep == 1 ? "bg-primary" : "bg-success") me-2" style="font-size:13px;">
+                        @(_myStep == 1 ? "Step 1 — Admin First Approval" : "Step 2 — Manager Final Approval")
+                    </span>
+                    <span class="text-muted" style="font-size:13px;">@_managerName</span>
+                </div>
+            </div>
+
+            @if (_approvalLoading)
+            {
+                <div class="text-center py-5 text-muted">Loading...</div>
+            }
+            else if (!_approvalItems.Any())
+            {
+                <div class="alert alert-secondary">
+                    <strong>No pending requests for Step @_myStep.</strong>
+                    @if (_myStep == 1)
+                    {
+                        <span> New employee requests appear here for first approval.</span>
+                    }
+                    else
+                    {
+                        <span> Requests approved by Admin (Step 1) appear here for final approval.</span>
+                    }
+                </div>
+            }
+            else
+            {
+                <p class="text-muted mb-3" style="font-size:13px;">
+                    @_approvalItems.Count request(s) waiting —
+                    @(_myStep == 1
+                                ? "Approve ? forwards to Manager for final decision"
+                                : "Approve ? completes process and deducts leave balance. Reject ? no balance deducted.")
+        </p>
+                }
+
+            @foreach (var item in _approvalItems)
+            {
+                <div class="card mb-3 shadow-sm">
+                    <div class="card-body p-3">
+                        <div class="d-flex justify-content-between align-items-start mb-2">
+                            <div>
+                                <strong style="font-size:15px;">@item.EmployeeName</strong>
+                                <span class="badge bg-secondary ms-2">@item.LeaveTypeName</span>
+                                <span class="badge @AppStatusBadge(item.Status) ms-1">@item.Status</span>
+                            </div>
+                            <small class="text-muted">@item.CreatedAt.ToString("dd MMM yyyy HH:mm")</small>
+                        </div>
+
+                        <div class="row g-3 mb-2" style="font-size:13px;">
+                            <div class="col-auto">
+                                <span class="text-muted">From:</span>
+                                <strong class="ms-1">@item.FromDate.ToString("dd MMM yyyy")</strong>
+                            </div>
+                            <div class="col-auto">
+                                <span class="text-muted">To:</span>
+                                <strong class="ms-1">@item.ToDate.ToString("dd MMM yyyy")</strong>
+                            </div>
+                            <div class="col-auto">
+                                <span class="text-muted">Duration:</span>
+                                <strong class="ms-1">@item.TotalHours h = @(item.TotalHours / 8) day(s)</strong>
+                            </div>
+                        </div>
+
+                        @if (!string.IsNullOrEmpty(item.Reason))
+                        {
+                            <div class="mb-2 p-2 bg-light rounded" style="font-size:13px;">
+                                <span class="text-muted">Employee reason: </span>@item.Reason
+                            </div>
+                        }
+
+                        @if (_myStep == 2)
+                        {
+                            <div class="mb-2 p-2 rounded" style="font-size:12px; background:#e8f4fd; border-left:3px solid #0d6efd;">
+                                <span class="text-muted">Admin approved (Step 1) on </span>
+                                <strong>@item.M1DecidedAt?.ToString("dd MMM yyyy HH:mm")</strong>
+                                @if (!string.IsNullOrEmpty(item.M1Reason))
+                                {
+                                    <span class="text-muted ms-2">— "@item.M1Reason"</span>
+                                }
+                            </div>
+                        }
+
+                        @if (item.ActionTaken)
+                        {
+                            <div class="alert @(item.WasApproved ? "alert-success" : "alert-danger") py-2 mb-0 mt-2"
+                                 style="font-size:13px;">
+                                @if (item.WasApproved && _myStep == 1)
+                                {
+                                    <span>? Approved — forwarded to Manager for final approval.</span>
+                                }
+                                else if (item.WasApproved && _myStep == 2)
+                                {
+                                    <span>? Final approval complete. @item.TotalHours h deducted from leave balance.</span>
+                                }
+                                else
+                                {
+                                    <span>? Rejected — leave balance NOT deducted.</span>
+                                }
+                            </div>
+                        }
+                        else
+                        {
+                            <div class="d-flex gap-2 align-items-end mt-3">
+                                <div class="flex-grow-1">
+                                    <label class="form-label form-label-sm mb-1" style="font-size:12px;">Your note (optional)</label>
+                                    <input class="form-control form-control-sm" @bind="item.ManagerReason" placeholder="Add a note..." />
+                                </div>
+                                <button class="btn btn-success btn-sm px-3"
+                                        @onclick="() => Decide(item, true)"
+                                        disabled="@item.Deciding">
+                                    @(item.Deciding ? "Saving..." : _myStep == 1 ? "Approve ? Send to Manager" : "Final Approve ?")
+                                </button>
+                                <button class="btn btn-danger btn-sm px-3"
+                                        @onclick="() => Decide(item, false)"
+                                        disabled="@item.Deciding">
+                                    Reject ?
+                                </button>
+                            </div>
+                            @if (_myStep == 2)
+                            {
+                                <div class="mt-1" style="font-size:11px; color:#94a3b8;">
+                                    Approve = deducts @item.TotalHours h from balance &nbsp;|&nbsp;
+                                    Reject = balance unchanged, hours returned
+                                </div>
+                            }
+                        }
+                    </div>
+                </div>
+            }
+        </div>
+    }
+</div>
+
+@* -- PRINT AREA -- *@
+<div id="print-area">
+    <div class="pf-title">LEAVE REQUEST FORM</div>
+    <div class="pf-subtitle">Repair and Maintenance Management — @DateTime.Today.Year</div>
+    <div class="pf-row">
+        <div class="pf-field"><span class="pf-label">Employee Name</span><span class="pf-value">@_selUserName</span></div>
+        <div class="pf-field"><span class="pf-label">Department</span><span class="pf-value">@(string.IsNullOrEmpty(_department) ? "—" : _department)</span></div>
+        <div class="pf-field"><span class="pf-label">Request #</span><span class="pf-value">@_lastRequestId</span></div>
+    </div>
+    <table class="pf-table">
+        <thead>
+            <tr><th>#</th><th>Leave Type</th><th>Select</th><th>Booking</th><th>Balance (h)</th></tr>
+        </thead>
+        <tbody>
+            @{
+                int prow = 0;
+            }
+            @foreach (var lt in _leaveTypes)
+            {
+                prow++;
+                bool isSel = lt.Id == _leaveTypeId;
+                var pbal = _selAllBalances.FirstOrDefault(b => b.LeaveTypeId == lt.Id);
+                var prem = pbal != null ? (pbal.TotalHours - pbal.UsedHours).ToString("F0") + " h" : "—";
+                string pbk = (lt.TotalHoursYear.HasValue && lt.TotalHoursYear > 0)
+                ? Math.Round(lt.TotalHoursYear.Value / 8m / 12m, 0) + " Days/mo" : "On Time";
+                <tr class="@(isSel ? "checked-row" : "")">
+                    <td>@prow</td>
+                    <td>@lt.Name</td>
+                    <td style="text-align:center;"><span class="pf-box">@(isSel ? "?" : "")</span></td>
+                    <td>@pbk</td>
+                    <td>@prem</td>
+                </tr>
+            }
+        </tbody>
+    </table>
+    <div class="pf-row">
+        <div class="pf-field"><span class="pf-label">From</span><span class="pf-value">@ReqFromDisplay</span></div>
+        <div class="pf-field"><span class="pf-label">To</span><span class="pf-value">@ReqToDisplay</span></div>
+    </div>
+    <div class="pf-row">
+        <div class="pf-field"><span class="pf-label">Total Time</span><span class="pf-value">@ReqTotalHours h</span></div>
+        <div class="pf-field"><span class="pf-label">Booking</span><span class="pf-value">@ReqBookingLabel</span></div>
+    </div>
+    @if (!string.IsNullOrEmpty(_reason))
+    {
+        <div class="pf-row">
+            <div class="pf-field" style="flex:1;"><span class="pf-label">Reason</span><span class="pf-value">@_reason</span></div>
+        </div>
+    }
+    <div class="pf-approval">
+        <div class="pf-approve-box">
+            <h4>1. Manager Approval (Admin)</h4>
+            <div class="pf-checkbox-row"><span class="pf-box"></span> Approved</div>
+            <div class="pf-checkbox-row"><span class="pf-box"></span> Rejected</div>
+            <div style="margin-top:8px; font-size:12px;">Reason: ___________________________</div>
+            <div class="pf-sig-line">Signature / Date</div>
+        </div>
+        <div class="pf-approve-box">
+            <h4>2. Manager Approval (Final)</h4>
+            <div class="pf-checkbox-row"><span class="pf-box"></span> Approved</div>
+            <div class="pf-checkbox-row"><span class="pf-box"></span> Rejected</div>
+            <div style="margin-top:8px; font-size:12px;">Reason: ___________________________</div>
+            <div class="pf-sig-line">Signature / Date</div>
+        </div>
+    </div>
+    <div class="pf-note">
+        Balance rule: 1 day = 8 hours | Annual Leave = 2 days/month × 12 months = 192h/year |
+        Submitted: @DateTime.Now.ToString("dd MMM yyyy HH:mm")
+    </div>
+</div>
+
+@code {
+    // -- Tab enum ----------------------------------------------------------
+    enum Tab { MyLeave, Request, Approval }
+    Tab _activeTab = Tab.MyLeave;
+    bool _canApprove;
+    int _pendingCount;
+    string _currentUserId = "";
+
+    void SetTab(Tab t) => _activeTab = t;
+
+    // -- Shared ------------------------------------------------------------
+    List<LeaveType> _leaveTypes = new();
+    List<UserManagementAPI.Models.ApplicationUser> _allUsers = new();
+
+    static readonly string[] _departments = new[]
+    {
+        "Technical", "Accounting & Cashier", "Admin & Stock", "Delivery", "Marketing", "IT"
+    };
+
+    record BookingOption(string Key, string Label, decimal Hours);
+    static readonly List<BookingOption> _presetOptions = new()
+    {
+        new("half", "½ Day",  4m),
+        new("1",    "1 Day",  8m),
+        new("2",    "2 Days", 16m),
+        new("3",    "3 Days", 24m),
+        new("4",    "4 Days", 32m),
+        new("5",    "5 Days", 40m),
+        new("6",    "6 Days", 48m),
+        new("7",    "7 Days", 56m),
+    };
+
+    // -- My Leave state ----------------------------------------------------
+    List<LeaveBalance> _myBalances = new();
+    List<LeaveRequest> _myRequests = new();
+    bool _myLoading = true;
+
+    // -- Request form state ------------------------------------------------
+    string _selUserId = "";
+    string _selUserName = "";
+    string _department = "";
+    int _leaveTypeId;
+    string _reason = "";
+    bool _submitting, _reqSuccess;
+    string _reqMessage = "";
+    int _lastRequestId;
+
+    List<LeaveBalance> _selAllBalances = new();
+    BalanceView? _selBalance;
+
+    DateTime _fromDate = DateTime.Today;
+    DateTime _toDate = DateTime.Today;
+    string _fromTime = "08:00";
+    string _toTime = "17:00";
+    string _dateError = "";
+
+    string _selBooking = "";
+    DateTime _customEndDate = DateTime.Today;
+    int _customWorkingDays;
+
+    // Computed
+    DateTime ReqFrom => _fromDate.Date + ParseTime(_fromTime);
+    DateTime ReqTo => _toDate.Date + ParseTime(_toTime);
+    string ReqFromDisplay => ReqFrom.ToString("dd MMM yyyy  hh:mm tt");
+    string ReqToDisplay => ReqTo.ToString("dd MMM yyyy  hh:mm tt");
+
+    // Total hours is always derived from the selected date range, never from booking
+    decimal ReqTotalHours => CountWorkingDaysFromRange(_fromDate, _toDate) * 8m;
+
+    string ReqBookingLabel =>
+        _selBooking == "custom"
+            ? (_customWorkingDays > 0
+                ? $"{_customWorkingDays} Day{(_customWorkingDays != 1 ? "s" : "")} ({_customEndDate:dd MMM yyyy})"
+                : "Custom (no date)")
+            : _presetOptions.FirstOrDefault(o => o.Key == _selBooking)?.Label ?? "—";
+
+    // -- Approval state ----------------------------------------------------
+    List<ApprovalItem> _approvalItems = new();
+    string _managerId = "";
+    string _managerName = "";
+    int _myStep = 1;
+    bool _approvalLoading = true;
+
+    // -- Init --------------------------------------------------------------
+    protected override async Task OnInitializedAsync()
+    {
+        var state = await Auth.GetAuthenticationStateAsync();
+        var currentUser = await UserManager.GetUserAsync(state.User);
+        _currentUserId = currentUser?.Id ?? "";
+        _managerId = _currentUserId;
+        _managerName = currentUser?.UserName ?? "";
+
+        // Role check
+        bool isManager = state.User.IsInRole("Manager");
+        bool isAdmin = state.User.IsInRole("Admin") || state.User.IsInRole("SuperAdmin");
+        _canApprove = isManager || isAdmin;
+        _myStep = (isManager && !isAdmin) ? 2 : 1;
+
+        // Load shared data
+        _allUsers = await UserManager.Users.OrderBy(u => u.UserName).ToListAsync();
+        _leaveTypes = await Db.LeaveTypes.Where(x => x.IsActive).ToListAsync();
+
+        // Load My Leave
+        var year = DateTime.Today.Year;
+        _myBalances = await Db.LeaveBalances
+            .Include(b => b.LeaveType)
+            .Where(b => b.UserId == _currentUserId && b.Year == year)
+            .ToListAsync();
+
+        _myRequests = await Db.LeaveRequests
+            .Include(r => r.LeaveType)
+            .Where(r => r.UserId == _currentUserId)
+            .OrderByDescending(r => r.CreatedAt)
+            .ToListAsync();
+
+        _myLoading = false;
+
+        // Load Approvals
+        if (_canApprove) await LoadApprovals();
+    }
+
+    // -- My Leave ----------------------------------------------------------
+    async Task RefreshMyLeave()
+    {
+        var year = DateTime.Today.Year;
+        _myBalances = await Db.LeaveBalances
+            .Include(b => b.LeaveType)
+            .Where(b => b.UserId == _currentUserId && b.Year == year)
+            .ToListAsync();
+
+        _myRequests = await Db.LeaveRequests
+            .Include(r => r.LeaveType)
+            .Where(r => r.UserId == _currentUserId)
+            .OrderByDescending(r => r.CreatedAt)
+            .ToListAsync();
+    }
+
+    // -- Request Form ------------------------------------------------------
+    async Task OnEmployeeChanged()
+    {
+        _leaveTypeId = 0; _selBalance = null; _selAllBalances = new();
+        ResetBooking(); ResetDates();
+        if (string.IsNullOrEmpty(_selUserId)) { _selUserName = ""; return; }
+        var emp = _allUsers.FirstOrDefault(u => u.Id == _selUserId);
+        _selUserName = emp?.UserName ?? "";
+        _selAllBalances = await Db.LeaveBalances
+            .Where(b => b.UserId == _selUserId && b.Year == DateTime.Today.Year)
+            .ToListAsync();
+    }
+
+    async Task OnLeaveTypeChanged()
+    {
+        _selBalance = null; ResetBooking(); ResetDates();
+        if (_leaveTypeId == 0 || string.IsNullOrEmpty(_selUserId)) return;
+        var bal = _selAllBalances.FirstOrDefault(b => b.LeaveTypeId == _leaveTypeId);
+        if (bal != null) _selBalance = new BalanceView(bal.TotalHours, bal.UsedHours);
+        await Task.CompletedTask;
+    }
+
+    void OnFromDateChanged()
+    {
+        if (_selBooking == "custom" && _customEndDate < _fromDate)
+        {
+            _customEndDate = _fromDate; _customWorkingDays = 0;
+        }
+        else if (_selBooking == "custom" && _customEndDate >= _fromDate)
+        {
+            _customWorkingDays = CountWorkingDays(_fromDate, _customEndDate);
+        }
+        ValidateDates();
+    }
+
+    void OnToDateChanged() => ValidateDates();
+    void OnFromTimeChanged(ChangeEventArgs e) { _fromTime = e.Value?.ToString() ?? "08:00"; ValidateDates(); }
+    void OnToTimeChanged(ChangeEventArgs e) { _toTime = e.Value?.ToString() ?? "17:00"; ValidateDates(); }
+
+    void ValidateDates()
+    {
+        _dateError = "";
+        if (ReqTo <= ReqFrom) _dateError = "End date/time must be after start date/time.";
+    }
+
+    void SelectPreset(string key)
+    {
+        _selBooking = (_selBooking == key) ? "" : key;
+        _customWorkingDays = 0; _customEndDate = _fromDate;
+    }
+
+    void ToggleCustom()
+    {
+        if (_selBooking == "custom") { _selBooking = ""; _customWorkingDays = 0; _customEndDate = _fromDate; }
+        else { _selBooking = "custom"; _customWorkingDays = 0; _customEndDate = _fromDate; }
+    }
+
+    void OnCustomEndDateChanged(ChangeEventArgs e)
+    {
+        if (DateTime.TryParse(e.Value?.ToString(), out var picked) && picked.Date >= _fromDate.Date)
+        {
+            _customEndDate = picked.Date;
+            _customWorkingDays = CountWorkingDays(_fromDate.Date, _customEndDate);
+        }
+        else { _customWorkingDays = 0; }
+    }
+
+    // Working days for TOTAL HOURS: fromDate inclusive ? toDate inclusive
+    // Same day = 1 working day; weekend days are skipped
+    int CountWorkingDaysFromRange(DateTime from, DateTime to)
+    {
+        int count = 0;
+        for (var d = from.Date; d <= to.Date; d = d.AddDays(1))
+            if (d.DayOfWeek != DayOfWeek.Saturday && d.DayOfWeek != DayOfWeek.Sunday)
+                count++;
+        return Math.Max(count, 0);
+    }
+
+    // Working days for CUSTOM BOOKING label only (from inclusive, to exclusive)
+    int CountWorkingDays(DateTime from, DateTime to)
+    {
+        int count = 0;
+        for (var d = from.Date; d < to.Date; d = d.AddDays(1))
+            if (d.DayOfWeek != DayOfWeek.Saturday && d.DayOfWeek != DayOfWeek.Sunday) count++;
+        return to.Date > from.Date ? Math.Max(count, 1) : 0;
+    }
+
+    void ResetDates()
+    {
+        _fromDate = _toDate = DateTime.Today;
+        _fromTime = "08:00"; _toTime = "17:00"; _dateError = "";
+    }
+
+    void ResetBooking() { _selBooking = ""; _customWorkingDays = 0; _customEndDate = DateTime.Today; }
+
+    static TimeSpan ParseTime(string hhmm) =>
+        TimeSpan.TryParse(hhmm, out var ts) ? ts : TimeSpan.Zero;
+
+    async Task SubmitRequest()
+    {
+        _reqMessage = ""; _reqSuccess = false;
+        if (string.IsNullOrEmpty(_selUserId)) { _reqMessage = "Please select an employee."; return; }
+        if (string.IsNullOrEmpty(_department)) { _reqMessage = "Please select a department."; return; }
+        if (_leaveTypeId == 0) { _reqMessage = "Please select a leave type."; return; }
+        if (_dateError != "") { _reqMessage = _dateError; return; }
+        if (string.IsNullOrEmpty(_selBooking)) { _reqMessage = "Please select a booking unit."; return; }
+
+        if (_selBalance != null && !_selBalance.IsOnTime && ReqTotalHours > _selBalance.RemainingHours)
+        {
+            _reqMessage = $"Not enough balance. The employee has {_selBalance.RemainingHours}h remaining.";
+            return;
+        }
+
+        _submitting = true;
+
+        var req = new LeaveRequest
+        {
+            UserId = _selUserId,
+            LeaveTypeId = _leaveTypeId,
+            FromDate = DateOnly.FromDateTime(_fromDate),
+            ToDate = DateOnly.FromDateTime(_toDate),
+            TotalHours = ReqTotalHours,
+            Reason = _reason,
+            Status = "Pending",
+            CreatedAt = DateTime.UtcNow
+        };
+
+        Db.LeaveRequests.Add(req);
+        await Db.SaveChangesAsync();
+
+        _lastRequestId = req.Id;
+        _submitting = false;
+        _reqSuccess = true;
+        _reqMessage = $"Request submitted! #{req.Id} — awaiting Manager 1 approval.";
+
+        // Refresh pending count badge
+        if (_canApprove) await LoadApprovals();
+
+        // If the request is for the current user, refresh My Leave
+        if (_selUserId == _currentUserId) await RefreshMyLeave();
+    }
+
+    async Task PrintForm() => await JS.InvokeVoidAsync("window.print");
+
+    record BalanceView(decimal TotalHours, decimal UsedHours)
+    {
+        public decimal RemainingHours => TotalHours - UsedHours;
+        public bool IsOnTime => TotalHours == 0;
+    }
+
+    // -- Approvals ---------------------------------------------------------
+    async Task LoadApprovals()
+    {
+        _approvalLoading = true;
+        StateHasChanged();
+
+        var targetStatus = _myStep == 1 ? "Pending" : "ApprovedByM1";
+        var requests = await Db.LeaveRequests
+            .Include(r => r.LeaveType)
+            .Include(r => r.Approvals)
+            .Where(r => r.Status == targetStatus)
+            .OrderByDescending(r => r.CreatedAt)
+            .ToListAsync();
+
+        var items = new List<ApprovalItem>();
+        foreach (var r in requests)
+        {
+            var emp = await UserManager.FindByIdAsync(r.UserId);
+            var s1 = r.Approvals.FirstOrDefault(a => a.ApprovalStep == 1);
+            items.Add(new ApprovalItem
+            {
+                RequestId = r.Id,
+                EmployeeName = emp?.UserName ?? r.UserId,
+                LeaveTypeName = r.LeaveType?.Name ?? "",
+                FromDate = r.FromDate.ToDateTime(TimeOnly.MinValue),
+                ToDate = r.ToDate.ToDateTime(TimeOnly.MinValue),
+                TotalHours = r.TotalHours,
+                Reason = r.Reason ?? "",
+                Status = r.Status,
+                CreatedAt = r.CreatedAt,
+                M1Reason = s1?.Reason ?? "",
+                M1DecidedAt = s1?.DecidedAt
+            });
+        }
+
+        _approvalItems = items;
+        _pendingCount = items.Count;
+        _approvalLoading = false;
+    }
+
+    async Task Decide(ApprovalItem item, bool approve)
+    {
+        item.Deciding = true;
+        StateHasChanged();
+
+        var req = await Db.LeaveRequests.FindAsync(item.RequestId);
+        if (req == null) { item.Deciding = false; return; }
+
+        Db.LeaveApprovals.Add(new LeaveApproval
+        {
+            LeaveRequestId = item.RequestId,
+            ManagerId = _managerId,
+            ApprovalStep = _myStep,
+            Decision = approve ? "Approved" : "Rejected",
+            Reason = item.ManagerReason,
+            DecidedAt = DateTime.UtcNow
+        });
+
+        if (!approve)
+        {
+            req.Status = "Rejected";
+            req.UpdatedAt = DateTime.UtcNow;
+        }
+        else if (_myStep == 1)
+        {
+            req.Status = "ApprovedByM1";
+            req.UpdatedAt = DateTime.UtcNow;
+        }
+        else
+        {
+            req.Status = "Approved";
+            req.UpdatedAt = DateTime.UtcNow;
+
+            var bal = await Db.LeaveBalances.FirstOrDefaultAsync(b =>
+                b.UserId == req.UserId &&
+                b.LeaveTypeId == req.LeaveTypeId &&
+                b.Year == DateTime.Today.Year);
+
+            if (bal != null) bal.UsedHours += req.TotalHours;
+        }
+
+        await Db.SaveChangesAsync();
+
+        item.WasApproved = approve;
+        item.ActionTaken = true;
+        item.Deciding = false;
+
+        // Update badge count
+        _pendingCount = _approvalItems.Count(i => !i.ActionTaken);
+
+        // If the approved request belongs to current user, refresh balance
+        if (req.UserId == _currentUserId) await RefreshMyLeave();
+
+        StateHasChanged();
+    }
+
+    string AppStatusBadge(string s) => s switch
+    {
+        "Pending" => "bg-warning text-dark",
+        "ApprovedByM1" => "bg-info text-dark",
+        "Approved" => "bg-success",
+        "Rejected" => "bg-danger",
+        _ => "bg-secondary"
+    };
+
+    class ApprovalItem
+    {
+        public int RequestId { get; set; }
+        public string EmployeeName { get; set; } = "";
+        public string LeaveTypeName { get; set; } = "";
+        public DateTime FromDate { get; set; }
+        public DateTime ToDate { get; set; }
+        public decimal TotalHours { get; set; }
+        public string Reason { get; set; } = "";
+        public string Status { get; set; } = "";
+        public DateTime CreatedAt { get; set; }
+        public string ManagerReason { get; set; } = "";
+        public string M1Reason { get; set; } = "";
+        public DateTime? M1DecidedAt { get; set; }
+        public bool ActionTaken { get; set; }
+        public bool WasApproved { get; set; }
+        public bool Deciding { get; set; }
+    }
+}

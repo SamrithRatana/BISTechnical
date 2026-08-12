@@ -1,0 +1,394 @@
+@* Pages/Leave/PrintLeaveForm.razor *@
+@page "/leave/print"
+@using Microsoft.AspNetCore.Authorization
+@using Microsoft.AspNetCore.Components.Authorization
+@using Microsoft.AspNetCore.Identity
+@using Microsoft.EntityFrameworkCore
+@using UserManagementAPI.Data
+@using UserManagementAPI.Models
+@using UserManagementAPI.Models.Leave
+@inject UserManagementContext Db
+@inject UserManager<UserManagementAPI.Models.ApplicationUser> UserManager
+@inject AuthenticationStateProvider Auth
+@inject IJSRuntime JS
+@attribute [Authorize(Roles = "Admin,SuperAdmin,Manager")]
+
+<PageTitle>Print Leave Form</PageTitle>
+
+<div class="plf-wrap">
+
+    <div class="d-flex justify-content-between align-items-center mb-4">
+        <div>
+            <h3 class="mb-0">Print Leave Request Form</h3>
+            <small class="text-muted">Select an employee and their leave request to print</small>
+        </div>
+        <span class="badge bg-primary px-3 py-2" style="font-size:12px;">Admin / Manager Only</span>
+    </div>
+
+    @* ── Step 1: Pick employee ── *@
+    <div class="plf-card">
+        <h6 class="mb-3 fw-bold text-uppercase" style="font-size:11px; letter-spacing:.8px; color:#64748b;">
+            Step 1 — Select Employee
+        </h6>
+        <select class="form-select" @bind="_selectedUserId" @bind:after="OnUserChanged">
+            <option value="">-- Select Employee --</option>
+            @foreach (var u in _allUsers)
+            {
+                <option value="@u.Id">@u.UserName</option>
+            }
+        </select>
+    </div>
+
+    @* ── Step 2: Pick leave request ── *@
+    @if (!string.IsNullOrEmpty(_selectedUserId))
+    {
+        <div class="plf-card">
+            <h6 class="mb-3 fw-bold text-uppercase" style="font-size:11px; letter-spacing:.8px; color:#64748b;">
+                Step 2 — Select Leave Request
+            </h6>
+
+            @if (_loadingRequests)
+            {
+                <div class="text-muted py-2">Loading requests...</div>
+            }
+            else if (!_userRequests.Any())
+            {
+                <div class="alert alert-warning mb-0">No leave requests found for this employee.</div>
+            }
+            else
+            {
+                <div class="list-group list-group-flush">
+                    @foreach (var r in _userRequests)
+                    {
+                        var isSelected = _selectedRequestId == r.Id;
+                        var badgeClass = r.Status switch
+                        {
+                            "Pending" => "badge-pending",
+                            "ApprovedByM1" => "badge-step1",
+                            "Approved" => "badge-approved",
+                            "Rejected" => "badge-rejected",
+                            _ => "badge-default"
+                        };
+                        var badgeLabel = r.Status switch
+                        {
+                            "Pending" => "⏳ Pending",
+                            "ApprovedByM1" => "✓ Step 1",
+                            "Approved" => "✓ Approved",
+                            "Rejected" => "✗ Rejected",
+                            _ => r.Status
+                        };
+                        <div class="list-group-item list-group-item-action py-2 px-3 @(isSelected ? "active" : "")"
+                             style="cursor:pointer; border-radius:8px; margin-bottom:4px;"
+                             @onclick="() => SelectRequest(r)">
+                            <div class="d-flex justify-content-between align-items-center">
+                                <div>
+                                    <strong>#@r.Id</strong>
+                                    <span class="ms-2">@(r.LeaveType?.Name ?? "—")</span>
+                                    <span class="ms-2 text-muted" style="font-size:12px;">
+                                        @r.FromDate.ToString("dd MMM yy") → @r.ToDate.ToString("dd MMM yy")
+                                    </span>
+                                    <span class="ms-2 text-muted" style="font-size:12px;">@r.TotalHours h</span>
+                                </div>
+                                <span class="req-badge @badgeClass">@badgeLabel</span>
+                            </div>
+                        </div>
+                    }
+                </div>
+            }
+        </div>
+    }
+
+    @* ── Step 3: Preview + Print ── *@
+    @if (_selectedRequest != null)
+    {
+        <div class="plf-card">
+            <h6 class="mb-3 fw-bold text-uppercase" style="font-size:11px; letter-spacing:.8px; color:#64748b;">
+                Step 3 — Preview & Print
+            </h6>
+
+            <div class="d-flex align-items-center gap-3 mb-3 p-3 rounded" style="background:#f8fafc;">
+                <div class="emp-avatar">
+                    @(_selectedUserName.Length > 0 ? char.ToUpper(_selectedUserName[0]).ToString() : "?")
+                </div>
+                <div>
+                    <div class="fw-bold">@_selectedUserName</div>
+                    <div class="text-muted" style="font-size:12px;">
+                        @(_selectedRequest.LeaveType?.Name) &nbsp;|&nbsp;
+                        @_selectedRequest.FromDate.ToString("dd MMM yyyy")
+                        @if (!string.IsNullOrEmpty(_fromTimeStr))
+                        {
+                            <span>&nbsp;@_fromTimeStr</span>
+                        }
+                        → @_selectedRequest.ToDate.ToString("dd MMM yyyy")
+                        @if (!string.IsNullOrEmpty(_toTimeStr))
+                        {
+                            <span>&nbsp;@_toTimeStr</span>
+                        }
+                        &nbsp;|&nbsp; @_selectedRequest.TotalHours h
+                    </div>
+                </div>
+            </div>
+
+            <button class="btn btn-primary px-4" @onclick="PrintForm">
+                🖨 Print Leave Request Form
+            </button>
+            <small class="text-muted ms-3">Opens the print dialog with the formatted form</small>
+        </div>
+    }
+
+</div>
+
+@* ── Hidden Printable Area ── *@
+<div id="pf-printable">
+    @if (_selectedRequest != null)
+    {
+        <div class="pf-title">LEAVE REQUEST FORM</div>
+        <div class="pf-subtitle">Repair and Maintenance Management — @DateTime.Today.Year</div>
+
+        <div class="pf-row">
+            <div class="pf-field">
+                <span class="pf-label">Employee Name</span>
+                <span class="pf-value">@_selectedUserName</span>
+            </div>
+            <div class="pf-field">
+                <span class="pf-label">Department</span>
+                <span class="pf-value">—</span>
+            </div>
+            <div class="pf-field">
+                <span class="pf-label">Request #</span>
+                <span class="pf-value">@_selectedRequest.Id</span>
+            </div>
+        </div>
+
+        <table class="pf-table">
+            <thead>
+                <tr>
+                    <th>#</th>
+                    <th>Reason for Request Leave</th>
+                    <th>Select</th>
+                    <th>Booking</th>
+                    <th>Balance (h)</th>
+                </tr>
+            </thead>
+            <tbody>
+                @for (int i = 0; i < _leaveTypes.Count; i++)
+                {
+                    var lt = _leaveTypes[i];
+                    var isSel = lt.Id == _selectedRequest.LeaveTypeId;
+                    var bal = _empBalances.FirstOrDefault(b => b.LeaveTypeId == lt.Id);
+                    var remaining = bal != null
+                    ? (bal.TotalHours - bal.UsedHours).ToString("F0") + " h"
+                    : "—";
+                    string booking;
+                    if (lt.TotalHoursYear.HasValue && lt.TotalHoursYear > 0)
+                        booking = Math.Round(lt.TotalHoursYear.Value / 8m / 12m, 0) + " Days/mo";
+                    else
+                        booking = "On Time";
+
+                    <tr class="@(isSel ? "checked-row" : "")">
+                        <td>@(i + 1)</td>
+                        <td>@lt.Name</td>
+                        <td style="text-align:center;">
+                            <span class="pf-box">@(isSel ? "✓" : "")</span>
+                        </td>
+                        <td>@booking</td>
+                        <td>@remaining</td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+
+        <div class="pf-row">
+            <div class="pf-field">
+                <span class="pf-label">Date Request — From</span>
+                <span class="pf-value">
+                    @_selectedRequest.FromDate.ToString("dd MMM yyyy")
+                    @if (!string.IsNullOrEmpty(_fromTimeStr))
+                    {
+                        <span>&nbsp;@_fromTimeStr</span>
+                    }
+                </span>
+            </div>
+            <div class="pf-field">
+                <span class="pf-label">To</span>
+                <span class="pf-value">
+                    @_selectedRequest.ToDate.ToString("dd MMM yyyy")
+                    @if (!string.IsNullOrEmpty(_toTimeStr))
+                    {
+                        <span>&nbsp;@_toTimeStr</span>
+                    }
+                </span>
+            </div>
+            <div class="pf-field">
+                <span class="pf-label">Total Time</span>
+                <span class="pf-value">@_selectedRequest.TotalHours h</span>
+            </div>
+        </div>
+
+        @if (!string.IsNullOrEmpty(_selectedRequest.Reason))
+        {
+            <div class="pf-row">
+                <div class="pf-field" style="flex:1;">
+                    <span class="pf-label">Reason</span>
+                    <span class="pf-value">@_selectedRequest.Reason</span>
+                </div>
+            </div>
+        }
+
+        @* ── Approval boxes — variables declared in @code, referenced here ── *@
+        <div class="pf-approval">
+            <div class="pf-approve-box">
+                <h4>1. Manager Approval (Admin)</h4>
+                @if (_step1 != null)
+                {
+                    <div class="pf-checkbox-row">
+                        <span class="pf-box">@(_step1.Decision == "Approved" ? "✓" : "")</span> Approved
+                    </div>
+                    <div class="pf-checkbox-row">
+                        <span class="pf-box">@(_step1.Decision == "Rejected" ? "✗" : "")</span> Rejected
+                    </div>
+                    <div style="margin-top:6px; font-size:12px;">
+                        Reason: @(_step1.Reason ?? "—")
+                    </div>
+                    <div style="margin-top:6px; font-size:11px; color:#555;">
+                        Decided: @(_step1.DecidedAt.HasValue? _step1.DecidedAt.Value.ToString("dd MMM yyyy HH:mm") : "—")
+                    </div>
+                }
+                else
+                {
+                    <div class="pf-checkbox-row"><span class="pf-box"></span> Approved</div>
+                    <div class="pf-checkbox-row"><span class="pf-box"></span> Rejected</div>
+                    <div style="margin-top:8px; font-size:12px;">Reason: ___________________________</div>
+                }
+                <div class="pf-sig-line">Signature / Date</div>
+            </div>
+
+            <div class="pf-approve-box">
+                <h4>2. Manager Approval (Final)</h4>
+                @if (_step2 != null)
+                {
+                    <div class="pf-checkbox-row">
+                        <span class="pf-box">@(_step2.Decision == "Approved" ? "✓" : "")</span> Approved
+                    </div>
+                    <div class="pf-checkbox-row">
+                        <span class="pf-box">@(_step2.Decision == "Rejected" ? "✗" : "")</span> Rejected
+                    </div>
+                    <div style="margin-top:6px; font-size:12px;">
+                        Reason: @(_step2.Reason ?? "—")
+                    </div>
+                    <div style="margin-top:6px; font-size:11px; color:#555;">
+                        Decided: @(_step2.DecidedAt.HasValue? _step2.DecidedAt.Value.ToString("dd MMM yyyy HH:mm") : "—")
+                    </div>
+                }
+                else
+                {
+                    <div class="pf-checkbox-row"><span class="pf-box"></span> Approved</div>
+                    <div class="pf-checkbox-row"><span class="pf-box"></span> Rejected</div>
+                    <div style="margin-top:8px; font-size:12px;">Reason: ___________________________</div>
+                }
+                <div class="pf-sig-line">Signature / Date</div>
+            </div>
+        </div>
+
+        <div class="pf-note">
+            Balance rule: 1 day = 8 hours | Annual Leave = 2 days/month × 12 months = 192h/year |
+            If balance goes negative (−) = employee has taken more leave than their annual allowance.
+            &nbsp; Printed by: @_currentManagerName &nbsp;|&nbsp;
+            Printed: @DateTime.Now.ToString("dd MMM yyyy HH:mm")
+        </div>
+    }
+</div>
+
+@code {
+    List<UserManagementAPI.Models.ApplicationUser> _allUsers = new();
+    string _selectedUserId = "";
+    string _selectedUserName = "";
+    string _currentManagerName = "";
+
+    List<LeaveRequest> _userRequests = new();
+    bool _loadingRequests;
+
+    LeaveRequest? _selectedRequest;
+    int _selectedRequestId;
+
+    // Approval steps — set as fields so the template can reference them without @{}
+    LeaveApproval? _step1;
+    LeaveApproval? _step2;
+
+    List<LeaveBalance> _empBalances = new();
+    List<LeaveType> _leaveTypes = new();
+
+    string _fromTimeStr = "";
+    string _toTimeStr = "";
+
+    protected override async Task OnInitializedAsync()
+    {
+        var state = await Auth.GetAuthenticationStateAsync();
+        var mgr = await UserManager.GetUserAsync(state.User);
+        _currentManagerName = mgr?.UserName ?? "";
+
+        _leaveTypes = await Db.LeaveTypes.Where(x => x.IsActive).ToListAsync();
+        _allUsers = UserManager.Users.OrderBy(u => u.UserName).ToList();
+    }
+
+    async Task OnUserChanged()
+    {
+        _selectedRequest = null;
+        _selectedRequestId = 0;
+        _userRequests = new();
+        _empBalances = new();
+        _selectedUserName = "";
+        _fromTimeStr = "";
+        _toTimeStr = "";
+        _step1 = null;
+        _step2 = null;
+
+        if (string.IsNullOrEmpty(_selectedUserId)) return;
+
+        var user = await UserManager.FindByIdAsync(_selectedUserId);
+        _selectedUserName = user?.UserName ?? _selectedUserId;
+
+        _loadingRequests = true;
+        StateHasChanged();
+
+        _userRequests = await Db.LeaveRequests
+            .Include(r => r.LeaveType)
+            .Include(r => r.Approvals)
+            .Where(r => r.UserId == _selectedUserId)
+            .OrderByDescending(r => r.CreatedAt)
+            .ToListAsync();
+
+        _empBalances = await Db.LeaveBalances
+            .Where(b => b.UserId == _selectedUserId && b.Year == DateTime.Today.Year)
+            .ToListAsync();
+
+        _loadingRequests = false;
+    }
+
+    void SelectRequest(LeaveRequest r)
+    {
+        _selectedRequest = r;
+        _selectedRequestId = r.Id;
+
+        // Resolve approval steps as fields — avoids @{} inside template
+        _step1 = r.Approvals?.FirstOrDefault(a => a.ApprovalStep == 1);
+        _step2 = r.Approvals?.FirstOrDefault(a => a.ApprovalStep == 2);
+
+        // Time display strings
+        if (r.FromDate == r.ToDate && r.TotalHours < 8)
+        {
+            _fromTimeStr = "(see notes)";
+            _toTimeStr = "";
+        }
+        else
+        {
+            _fromTimeStr = "08:00 AM";
+            _toTimeStr = "05:00 PM";
+        }
+    }
+
+    async Task PrintForm()
+    {
+        await JS.InvokeVoidAsync("window.print");
+    }
+}

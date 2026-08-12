@@ -1,0 +1,1861 @@
+@page "/reapairItem"
+@page "/reapairItem/{ReportNo}"
+@implements IAsyncDisposable
+
+@using ServiceMaintenance.Models
+@using Microsoft.AspNetCore.SignalR.Client
+@using Microsoft.AspNetCore.Components.Authorization
+@using System.Timers
+@using ServiceMaintenance.Pages.Reports
+@using ServiceMaintenance.Services
+@using Syncfusion.Blazor.Cards
+@inject RepairItemService RepairItemService
+@inject CustomerService CustomerService
+@inject NavigationManager NavigationManager
+@inject StateManagementAction StateManagementAction
+@inject RepairService RepairService
+@inject ServiceSparePart SparePartService
+@inject JwtSessionService JwtSessionService
+@inject GlobalUserService GlobalUserCache
+@inject SentSparepartsService SentSparepartsService
+@inject IJSRuntime JSRuntime
+@inject CacheHelper Cache
+@inject InspectItemService InspectItemService
+@using ServiceMaintenance.Infrastructure.Shared.Caching
+@using ServiceMaintenance.Services.Notifications
+@inject TelegramNotificationQueue TelegramQueue
+<DxToastProvider Name="Customization"
+                 MaxToastCount="10"
+                 HorizontalAlignment="HorizontalAlignment.Right"
+                 VerticalAlignment="VerticalEdge.Top"
+                 AnimationType="@Animation" />
+                 
+<DxToastProvider Name="Error"
+                 MaxToastCount="5"
+                 HorizontalAlignment="HorizontalAlignment.Right"
+                 VerticalAlignment="VerticalEdge.Top"
+                 AnimationType="@Animation"
+                 ShowCloseButton="true"
+                 DisplayTime="TimeSpan.Zero" />
+              
+<ActionToolbox CanCreate="CanCreate"
+               CanEdit="CanEdit"
+               CanDelete="CanDelete"
+               CanExport="CanExport"
+               IsCreateEnabled="false"
+               IsEditEnabled="false"
+               IsDeleteEnabled="false"
+               OnCreate="NewRepairService_Click"
+               OnEdit="EditRepairService_Click"
+               OnExportExcel="ExportToExcel"
+               OnExportPdf="ExportToPdf">
+    <CustomActions>
+        @if (CanPrint)
+        {
+            <button class="btn btn-sm btn-outline-secondary compact-btn" @onclick="() => ShowReportPreview(_selectedRepairService)" disabled="@(!isRow)">
+                <i class="fas fa-print me-1"></i> Print Report
+            </button>
+        }
+    </CustomActions>
+</ActionToolbox>
+<br />
+<SfMediaQuery @bind-ActiveBreakPoint="activeBreakpoint"></SfMediaQuery>
+@{
+    bool enableAdaptiveUIMode = false;
+    RowDirection renderingMode = RowDirection.Vertical;
+
+    if (activeBreakpoint == "Small")
+    {
+        enableAdaptiveUIMode = true;
+        renderingMode = RowDirection.Vertical;
+    }
+    else if (activeBreakpoint == "Medium")
+    {
+        enableAdaptiveUIMode = true;
+        renderingMode = RowDirection.Horizontal;
+    }
+    else
+    {
+        enableAdaptiveUIMode = false;
+    }
+}
+@if (CanAccess)
+{
+    @if (CanView)
+    {
+        <div class="search-bar-container">
+            <div class="search-bar-row">
+
+                <SfTextBox @ref="RepairSearchBox"
+                           Placeholder="Search by Report No, Company, Serial Number..."
+                           ShowClearButton="true"
+                           Width="400px"
+                           @bind-Value="RepairSearchValue"
+                           Input="OnRepairSearchInput">
+                </SfTextBox>
+
+                <SfButton Content="Search"
+                          CssClass="e-btn e-primary"
+                          IconCss="fas fa-search"
+                          OnClick="PerformRepairSearch" />
+
+                <SfButton Content="Clear"
+                          CssClass="e-btn e-outline"
+                          IconCss="fas fa-times"
+                          OnClick="ClearRepairSearch" />
+            </div>
+
+            @if (!string.IsNullOrEmpty(RepairSearchValue))
+            {
+                <div class="search-hint">
+                    <i class="fas fa-info-circle"></i>
+                    Searching for: <strong>@RepairSearchValue</strong>
+                </div>
+            }
+        </div>
+
+        <SfGrid @ref="MyGrid"
+                DataSource="@filteredRepairServices"
+                AllowSorting="true"
+                ShowColumnChooser="true"
+                AllowExcelExport="true"
+                AllowPdfExport="true"
+                AllowResizing="true"
+                AllowFiltering="true"
+                Height="450"
+                SelectionMode="GridSelectionMode.Single"
+                Toolbar="@ToolbarItems"
+                EnableAdaptiveUI="@enableAdaptiveUIMode"
+                RowRenderingMode="@renderingMode"
+                AllowSelection="true">
+            <GridEvents TValue="RepairServices" RowSelected="RowSelectHandler" OnRecordDoubleClick="RowDoubleClickHandler"></GridEvents>
+            <GridFilterSettings Type="Syncfusion.Blazor.Grids.FilterType.Excel"></GridFilterSettings>
+            <GridColumns>
+                <GridColumn Field="Id" HeaderText="Id" Width="150" Format="d" Visible="false" />
+                <GridColumn Field="reportNo" HeaderText="@Loc[nameof(ResourceStrings.Textref)]" Width="150" />
+                <GridColumn Field="CompanyName" HeaderText="@Loc[nameof(ResourceStrings.TextCompanyName)]" CustomAttributes="@(new Dictionary<string, object>() { { "class", "e-attr" } })" Width="200" />
+                <GridColumn Field="itemName" HeaderText="@Loc[nameof(ResourceStrings.TextItemName)]" Width="200" />
+                <GridColumn Field="serialNumber" HeaderText="@Loc[nameof(ResourceStrings.TextSerialNumber)]" Width="200" />
+                <GridColumn Field="CustomerRequest" HeaderText="@Loc[nameof(ResourceStrings.TextCustomerReq)]" Width="250" Visible="false" />
+                <GridColumn Field="ServiceLocation" HeaderText="@Loc[nameof(ResourceStrings.TextServiceLocation)]" Width="200" />
+                <GridColumn Field="Status" HeaderText="@Loc[nameof(ResourceStrings.TextStatus)]" Width="220">
+                    <Template>
+                                    @{
+                var item = context as RepairServices;
+                var currentStatus = item?.Status ?? "Sent Spareparts";
+
+                string bgColor, textColor, borderColor;
+                switch (currentStatus)
+                {
+                    case "Inspection":
+                        bgColor = "#cce5ff"; textColor = "#004085"; borderColor = "#b8daff";
+                        break;
+                    case "Inspecting":
+                        bgColor = "#d4edda"; textColor = "#155724"; borderColor = "#c3e6cb";
+                        break;
+                    case "Awaiting Sparepart":
+                        bgColor = "#e2e3e5"; textColor = "#383d41"; borderColor = "#d6d8db";
+                        break;
+                    case "Awaiting Customer Confirm":
+                        bgColor = "#d1ecf1"; textColor = "#0c5460"; borderColor = "#bee5eb";
+                        break;
+                    case "Sale Confirmed":
+                        bgColor = "#d1ecf1"; textColor = "#0c5460"; borderColor = "#bee5eb";
+                        break;
+                    default: // Sent Spareparts
+                        bgColor = "#fff3cd"; textColor = "#856404"; borderColor = "#ffeeba";
+                        break;
+                }
+            }
+                      <select class="status-select" style="background-color: @bgColor; color: @textColor; border: 1px solid @borderColor;"
+        @key="@($"{item?.Id}_{currentStatus}")"
+        @onchange="async (e) => await OnRepairStatusChanged(item, e.Value?.ToString())">
+    <option value="Sent Spareparts" hidden
+            selected="@(currentStatus == "Sent Spareparts")"
+            style="background-color:#ffffff; color:#212529; font-size:12px;">
+        បានបញ្ជូនគ្រឿងបន្លាស់
+    </option>
+    <option value="Inspection" hidden
+            selected="@(currentStatus == "Inspection")"
+            style="background-color:#ffffff; color:#212529; font-size:12px;">
+        វិនិច្ឆ័យរួចរាល់
+    </option>
+    <option value="Sale Confirmed" hidden
+            selected="@(currentStatus == "Sale Confirmed")"
+            style="background-color:#ffffff; color:#212529; font-size:12px;">
+        ជួសជុលបាន
+    </option>
+    <option value="Inspecting"
+            selected="@(currentStatus == "Inspecting")"
+            style="background-color:#ffffff; color:#212529; font-size:12px;">
+        កែតម្រូវគ្រឿងបន្លាស់ម្ដងទៀត
+    </option>
+</select>
+                    </Template>
+                </GridColumn>
+                <GridColumn Field="repairDate" HeaderText="@Loc[nameof(ResourceStrings.TextRepairDate)]" Width="150" Format="dd/MM/yyyy HH:mm tt" Visible="@HasRepairDate()" />
+                <GridColumn Field="setSaleConfirmedBy" HeaderText="Confirmed By" Width="150">
+                    <Template>
+                        @{
+                            var item = context as RepairServices;
+                            var username = GetUserNameById(item.setSaleConfirmedBy);
+                        }
+                        @username
+                    </Template>
+                </GridColumn>
+                <GridColumn HeaderText="@Loc[nameof(ResourceStrings.TextAction)]" IsFrozen="true" Freeze="FreezeDirection.Right" Width="200">
+                    <Template>
+                        @if ((context as RepairServices)?.repairDate == null)
+                        {
+                            <DxButton IconCssClass="fas fa-check"
+                                      CssClass="icon-button danger"
+                                      RenderStyle="ButtonRenderStyle.Primary"
+                                      RenderStyleMode="ButtonRenderStyleMode.Text"
+                                      Text="@Loc[nameof(ResourceStrings.TextApproved)]"
+                                      @onclick="() => OnApplyButtonClick(context as RepairServices)" />
+                            <DxButton IconCssClass="fas fa-eye"
+                                      CssClass="icon-button info"
+                                      RenderStyle="ButtonRenderStyle.Info"
+                                      RenderStyleMode="ButtonRenderStyleMode.Text"
+                                      Text="@Loc[nameof(ResourceStrings.TextView)]"
+                                      @onclick="() => ShowRepairServiceDetails(context as RepairServices)" />
+                        }
+                        else
+                        {
+                            <DxButton IconCssClass="fas fa-eye"
+                                      CssClass="icon-button info"
+                                      RenderStyle="ButtonRenderStyle.Info"
+                                      RenderStyleMode="ButtonRenderStyleMode.Text"
+                                      Text="@Loc[nameof(ResourceStrings.TextView)]"
+                                      @onclick="() => ShowRepairServiceDetails(context as RepairServices)" />
+                        }
+                    </Template>
+                </GridColumn>
+            </GridColumns>
+        </SfGrid>
+        <FooterPagination CurrentPage="currentPage"
+                          TotalPages="totalPages"
+                          TotalItems="totalItems"
+                          PageSize="pageSize"
+                          OnFirstPage="FirstPage"
+                          OnPreviousPage="PreviousPage"
+                          OnNextPage="NextPage"
+                          OnLastPage="LastPage" />
+        <SfDialog @ref="ConfirmationDialog"
+                  IsModal="true"
+                  Width="450px"
+                  ShowCloseIcon="true"
+                  Visible="@isConfirmationDialogVisible">
+            <DialogTemplates>
+                <Header>
+                    <h2>@pageTitle</h2>
+                    <p class="dialog-subtitle">
+                        អាចសរសេរបន្ថែមបាន
+                    </p>
+                </Header>
+                <Content>
+                    @if (isProcessing)
+                    {
+                        <div class="loading-container">
+                            <div class="spinner-border text-primary" role="status">
+                                <span class="sr-only">Loading...</span>
+                            </div>
+                            <p class="mt-3">Processing repair item... Please wait.</p>
+                        </div>
+                    }
+                    else
+                    {
+                        <p>@Loc[nameof(ResourceStrings.Textconfirmrepairdia)]</p>
+
+                        <div style="margin-top: 12px;">
+                            <label style="font-weight: 600; font-size: 13px; display:block; margin-bottom:4px;">
+                                @Loc[nameof(ResourceStrings.TextInspection)]
+                            </label>
+                            <SfTextBox @bind-Value="editInspection"
+                                       Multiline="true"
+                                       CssClass="e-outline"
+                                       Placeholder="Inspection"
+                                       Rows="3">
+                            </SfTextBox>
+                        </div>
+
+                        <div style="margin-top: 12px;">
+                            <label style="font-weight: 600; font-size: 13px; display:block; margin-bottom:4px;">
+                                @Loc[nameof(ResourceStrings.Textsolution)]
+                            </label>
+                            <SfTextBox @bind-Value="editSolution"
+                                       Multiline="true"
+                                       CssClass="e-outline"
+                                       Placeholder="Solution"
+                                       Rows="3">
+                            </SfTextBox>
+                        </div>
+                    }
+                </Content>
+                <FooterTemplate>
+                    <SfButton CssClass="e-btn custom-button"
+                              @onclick="ConfirmCustomerConfirm"
+                              Disabled="@isProcessing">
+                        @(isProcessing ? "Processing..." : "Yes")
+                    </SfButton>
+                    <SfButton CssClass="e-btn e-danger"
+                              @onclick="CancelConfirmationDialog"
+                              Disabled="@isProcessing">
+                        No
+                    </SfButton>
+                </FooterTemplate>
+            </DialogTemplates>
+        </SfDialog>
+
+        <SfDialog @ref="DialogEdit" Target="#target" Width="600px" IsModal="true" ShowCloseIcon="true" @bind-Visible="@isViewDialogVisible">
+            <DialogEvents OnOverlayModalClick="@OverlayClick"></DialogEvents>
+            <DialogTemplates>
+                <Header>@Loc[nameof(ResourceStrings.TextViewInfo)]</Header>
+                <Content>
+                    <div class="report-container">
+                        <div class="report-body">
+                            <table class="report-table">
+
+                                @if (!string.IsNullOrEmpty(_selectedRepairService?.reportNo))
+                                {
+                                    <tr>
+                                        <td class="report-label"><strong>@Loc[nameof(ResourceStrings.Textref)]:</strong></td>
+                                        <td class="report-value">@_selectedRepairService.reportNo</td>
+                                    </tr>
+                                }
+
+                                @if (_selectedRepairService?.ServiceDate != default(DateTime))
+                                {
+                                    <tr>
+                                        <td class="report-label"><strong>@Loc[nameof(ResourceStrings.TextReceiveDate)]:</strong></td>
+                                        <td class="report-value">
+                                            @_selectedRepairService.ServiceDate.ToString("yyyy-MM-dd HH:mm tt")
+                                            @{
+                                                var createdByUser = GetUserNameById(
+                                                _selectedRepairService?.createby == Guid.Empty
+                                                ? (Guid?)null
+                                                : _selectedRepairService.createby);
+                                            }
+                                            @if (!string.IsNullOrEmpty(createdByUser) && createdByUser != "Unknown" && createdByUser != "Unknown User")
+                                            {
+                                                <span style="color: var(--text-secondary); margin-left: 8px;">| @createdByUser</span>
+                                            }
+                                        </td>
+                                    </tr>
+                                }
+
+                                @if (_selectedRepairService?.inspectDate.HasValue == true)
+                                {
+                                    <tr>
+                                        <td class="report-label"><strong>@Loc[nameof(ResourceStrings.TextInspection)]:</strong></td>
+                                        <td class="report-value">
+                                            @_selectedRepairService.inspectDate.Value.ToString("yyyy-MM-dd HH:mm tt")
+                                            @{
+                                                var inspectByUser = GetUserNameById(_selectedRepairService?.inspectBy);
+                                            }
+                                            @if (!string.IsNullOrEmpty(inspectByUser) && inspectByUser != "Unknown" && inspectByUser != "Unknown User")
+                                            {
+                                                <span style="color: var(--text-secondary); margin-left: 8px;">| @inspectByUser</span>
+                                            }
+                                        </td>
+                                    </tr>
+                                }
+
+                                @if (_selectedRepairService?.awaitingSparepartDate.HasValue == true)
+                                {
+                                    <tr>
+                                        <td class="report-label"><strong>@Loc[nameof(ResourceStrings.Textwaitsparepart)]:</strong></td>
+                                        <td class="report-value">
+                                            @_selectedRepairService.awaitingSparepartDate.Value.ToString("yyyy-MM-dd HH:mm tt")
+                                            @{
+                                                var setByUser = GetUserNameById(_selectedRepairService?.setAwaitingSparepartBy);
+                                            }
+                                            @if (!string.IsNullOrEmpty(setByUser) && setByUser != "Unknown" && setByUser != "Unknown User")
+                                            {
+                                                <span style="color: var(--text-secondary); margin-left: 8px;">| @setByUser</span>
+                                            }
+                                        </td>
+                                    </tr>
+                                }
+
+                                @if (_selectedRepairService?.awaitingCustomerConfirmDate.HasValue == true)
+                                {
+                                    <tr>
+                                        <td class="report-label"><strong>@Loc[nameof(ResourceStrings.TextawaitingCustomerConfirmDate)]:</strong></td>
+                                        <td class="report-value">
+                                            @_selectedRepairService.awaitingCustomerConfirmDate.Value.ToString("yyyy-MM-dd HH:mm tt")
+                                            @{
+                                                var confirmByUser = GetUserNameById(_selectedRepairService?.setAwaitingCustomerConfirmBy);
+                                            }
+                                            @if (!string.IsNullOrEmpty(confirmByUser) && confirmByUser != "Unknown" && confirmByUser != "Unknown User")
+                                            {
+                                                <span style="color: var(--text-secondary); margin-left: 8px;">| @confirmByUser</span>
+                                            }
+                                        </td>
+                                    </tr>
+                                }
+
+                                @if (_selectedRepairService?.repairDate.HasValue == true)
+                                {
+                                    <tr>
+                                        <td class="report-label"><strong>@Loc[nameof(ResourceStrings.TextRepairDate)]:</strong></td>
+                                        <td class="report-value">
+                                            @_selectedRepairService.repairDate.Value.ToString("yyyy-MM-dd HH:mm tt")
+                                            @{
+                                                var repairByUser = GetUserNameById(_selectedRepairService?.repairBy);
+                                            }
+                                            @if (!string.IsNullOrEmpty(repairByUser) && repairByUser != "Unknown" && repairByUser != "Unknown User")
+                                            {
+                                                <span style="color: var(--text-secondary); margin-left: 8px;">| @repairByUser</span>
+                                            }
+                                        </td>
+                                    </tr>
+                                }
+
+                                @if (_selectedRepairService?.thirdPartyRepairDate.HasValue == true)
+                                {
+                                    <tr>
+                                        <td class="report-label"><strong>Third-party date:</strong></td>
+                                        <td class="report-value">
+                                            @_selectedRepairService.thirdPartyRepairDate.Value.ToString("yyyy-MM-dd HH:mm tt")
+                                            @{
+                                                var thirdPartyByUser = GetUserNameById(_selectedRepairService?.thirdPartyRepairBy);
+                                            }
+                                            @if (!string.IsNullOrEmpty(thirdPartyByUser) && thirdPartyByUser != "Unknown" && thirdPartyByUser != "Unknown User")
+                                            {
+                                                <span style="color: var(--text-secondary); margin-left: 8px;">| @thirdPartyByUser</span>
+                                            }
+                                        </td>
+                                    </tr>
+                                }
+
+                                @if (_selectedRepairService?.finishedDate.HasValue == true)
+                                {
+                                    <tr>
+                                        <td class="report-label"><strong>@Loc[nameof(ResourceStrings.TextFinishDate)]:</strong></td>
+                                        <td class="report-value">
+                                            @_selectedRepairService.finishedDate.Value.ToString("yyyy-MM-dd HH:mm tt")
+                                            @{
+                                                var verifiedByUser = GetUserNameById(_selectedRepairService?.verifiedBy);
+                                            }
+                                            @if (!string.IsNullOrEmpty(verifiedByUser) && verifiedByUser != "Unknown" && verifiedByUser != "Unknown User")
+                                            {
+                                                <span style="color: var(--text-secondary); margin-left: 8px;">| @verifiedByUser</span>
+                                            }
+                                        </td>
+                                    </tr>
+                                }
+
+                                @if (_selectedRepairService?.saleConfirmedDate.HasValue == true)
+                                {
+                                    <tr>
+                                        <td class="report-label"><strong>Sale confirmed date:</strong></td>
+                                        <td class="report-value">
+                                            @_selectedRepairService.saleConfirmedDate.Value.ToString("yyyy-MM-dd HH:mm tt")
+                                            @{
+                                                var saleConfirmedByUser = GetUserNameById(_selectedRepairService?.setSaleConfirmedBy);
+                                            }
+                                            @if (!string.IsNullOrEmpty(saleConfirmedByUser) && saleConfirmedByUser != "Unknown" && saleConfirmedByUser != "Unknown User")
+                                            {
+                                                <span style="color: var(--text-secondary); margin-left: 8px;">| @saleConfirmedByUser</span>
+                                            }
+                                        </td>
+                                    </tr>
+                                }
+
+                                @if (_selectedRepairService?.customerRejectedDate.HasValue == true)
+                                {
+                                    <tr>
+                                        <td class="report-label"><strong>@Loc[nameof(ResourceStrings.TextCustomerReject)]:</strong></td>
+                                        <td class="report-value">
+                                            @_selectedRepairService.customerRejectedDate.Value.ToString("yyyy-MM-dd HH:mm tt")
+                                            @{
+                                                var rejectedByUser = GetUserNameById(_selectedRepairService?.setCustomerRejectedBy);
+                                            }
+                                            @if (!string.IsNullOrEmpty(rejectedByUser) && rejectedByUser != "Unknown" && rejectedByUser != "Unknown User")
+                                            {
+                                                <span style="color: var(--text-secondary); margin-left: 8px;">| @rejectedByUser</span>
+                                            }
+                                        </td>
+                                    </tr>
+                                }
+
+                                @if (_selectedRepairService?.unrepairableDate.HasValue == true)
+                                {
+                                    <tr>
+                                        <td class="report-label"><strong>@Loc[nameof(ResourceStrings.TextUnrepairable)]:</strong></td>
+                                        <td class="report-value">
+                                            @_selectedRepairService.unrepairableDate.Value.ToString("yyyy-MM-dd HH:mm tt")
+                                            @{
+                                                var unrepairableByUser = GetUserNameById(_selectedRepairService?.setUnrepairableBy);
+                                            }
+                                            @if (!string.IsNullOrEmpty(unrepairableByUser) && unrepairableByUser != "Unknown" && unrepairableByUser != "Unknown User")
+                                            {
+                                                <span style="color: var(--text-secondary); margin-left: 8px;">| @unrepairableByUser</span>
+                                            }
+                                        </td>
+                                    </tr>
+                                }
+
+                                @if (_selectedRepairService?.DaysTaken.HasValue == true)
+                                {
+                                    <tr>
+                                        <td class="report-label"><strong>Days taken:</strong></td>
+                                        <td class="report-value">@_selectedRepairService.DaysTaken.Value days</td>
+                                    </tr>
+                                }
+
+                                <tr><td colspan="2"><hr style="margin: 6px 0;" /></td></tr>
+
+                                @if (!string.IsNullOrEmpty(_selectedRepairService?.CompanyName))
+                                {
+                                    <tr>
+                                        <td class="report-label"><strong>@Loc[nameof(ResourceStrings.TextCompanyName)]:</strong></td>
+                                        <td class="report-value">@_selectedRepairService.CompanyName</td>
+                                    </tr>
+                                }
+
+                                @if (!string.IsNullOrEmpty(_selectedRepairService?.Address))
+                                {
+                                    <tr>
+                                        <td class="report-label"><strong>@Loc[nameof(ResourceStrings.TextAddress)]:</strong></td>
+                                        <td class="report-value">@_selectedRepairService.Address</td>
+                                    </tr>
+                                }
+
+                                @if (!string.IsNullOrEmpty(_selectedRepairService?.ContactName))
+                                {
+                                    <tr>
+                                        <td class="report-label"><strong>@Loc[nameof(ResourceStrings.TextContactName)]:</strong></td>
+                                        <td class="report-value">@_selectedRepairService.ContactName</td>
+                                    </tr>
+                                }
+
+                                @if (!string.IsNullOrEmpty(_selectedRepairService?.PhoneNumber))
+                                {
+                                    <tr>
+                                        <td class="report-label"><strong>@Loc[nameof(ResourceStrings.TextPhoneNumber)]:</strong></td>
+                                        <td class="report-value">@_selectedRepairService.PhoneNumber</td>
+                                    </tr>
+                                }
+
+                                <tr><td colspan="2"><hr style="margin: 6px 0;" /></td></tr>
+
+                                @if (!string.IsNullOrEmpty(_selectedRepairService?.itemName))
+                                {
+                                    <tr>
+                                        <td class="report-label"><strong>@Loc[nameof(ResourceStrings.TextItemName)]:</strong></td>
+                                        <td class="report-value">@_selectedRepairService.itemName</td>
+                                    </tr>
+                                }
+
+                                @if (!string.IsNullOrEmpty(_selectedRepairService?.serialNumber))
+                                {
+                                    <tr>
+                                        <td class="report-label"><strong>@Loc[nameof(ResourceStrings.TextSerialNumber)]:</strong></td>
+                                        <td class="report-value">@_selectedRepairService.serialNumber</td>
+                                    </tr>
+                                }
+
+                                @if (!string.IsNullOrEmpty(_selectedRepairService?.CustomerRequest))
+                                {
+                                    <tr>
+                                        <td class="report-label"><strong>@Loc[nameof(ResourceStrings.TextCustomerReq)]:</strong></td>
+                                        <td class="report-value">@_selectedRepairService.CustomerRequest</td>
+                                    </tr>
+                                }
+
+                                @if (!string.IsNullOrEmpty(_selectedRepairService?.Inspection))
+                                {
+                                    <tr>
+                                        <td class="report-label"><strong>@Loc[nameof(ResourceStrings.TextInspection)]:</strong></td>
+                                        <td class="report-value">@_selectedRepairService.Inspection</td>
+                                    </tr>
+                                }
+
+                                @if (!string.IsNullOrEmpty(_selectedRepairService?.Solution))
+                                {
+                                    <tr>
+                                        <td class="report-label"><strong>@Loc[nameof(ResourceStrings.Textsolution)]:</strong></td>
+                                        <td class="report-value">@_selectedRepairService.Solution</td>
+                                    </tr>
+                                }
+
+                                <tr><td colspan="2"><hr style="margin: 6px 0;" /></td></tr>
+
+                                @if (!string.IsNullOrEmpty(_selectedRepairService?.ServiceLocation))
+                                {
+                                    <tr>
+                                        <td class="report-label"><strong>@Loc[nameof(ResourceStrings.TextServiceLocation)]:</strong></td>
+                                        <td class="report-value">@_selectedRepairService.ServiceLocation</td>
+                                    </tr>
+                                }
+
+                                @if (!string.IsNullOrEmpty(_selectedRepairService?.ServiceType))
+                                {
+                                    <tr>
+                                        <td class="report-label"><strong>Service type:</strong></td>
+                                        <td class="report-value">@_selectedRepairService.ServiceType</td>
+                                    </tr>
+                                }
+
+                                @if (!string.IsNullOrEmpty(_selectedRepairService?.ServicePriority))
+                                {
+                                    <tr>
+                                        <td class="report-label"><strong>@Loc[nameof(ResourceStrings.TextPriority)]:</strong></td>
+                                        <td class="report-value">@_selectedRepairService.ServicePriority</td>
+                                    </tr>
+                                }
+
+                                @if (!string.IsNullOrEmpty(_selectedRepairService?.Status))
+                                {
+                                    <tr>
+                                        <td class="report-label"><strong>@Loc[nameof(ResourceStrings.TextStatus)]:</strong></td>
+                                        <td class="report-value">@_selectedRepairService.Status</td>
+                                    </tr>
+                                }
+
+                                <tr>
+                                    <td class="report-label"><strong>@Loc[nameof(ResourceStrings.TextContract)]:</strong></td>
+                                    <td class="report-value">@(_selectedRepairService?.hasContract == true ? "Yes" : "No")</td>
+                                </tr>
+
+                                @if (_selectedRepairService?.isThirdPartyRepair == true)
+                                {
+                                    <tr>
+                                        <td class="report-label"><strong>Third-party repair:</strong></td>
+                                        <td class="report-value">Yes</td>
+                                    </tr>
+                                }
+
+                            </table>
+
+                            @if (_selectedRepairService?.SparePartItems != null && _selectedRepairService.SparePartItems.Count > 0)
+                            {
+                                <hr />
+                                <h4 style="font-size:0.95rem; font-weight:700; margin-bottom:8px;">
+                                    <i class="fas fa-tools" style="color:#007bff;"></i> SparePart Details
+                                </h4>
+                                <div style="overflow-x:auto; width:100%;">
+                                    <table style="width:100%; border-collapse:collapse; font-size:0.78rem; table-layout:fixed;">
+                                        <colgroup>
+                                            <col style="width:52px;" />
+                                            <col style="width:22%;" />
+                                            <col style="width:22%;" />
+                                            <col style="width:36px;" />
+                                            <col style="width:70px;" />
+                                            <col style="width:75px;" />
+                                            <col style="width:110px;" />
+                                        </colgroup>
+                                        <thead>
+                                            <tr style="background:#007bff; color:#fff;">
+                                                <th style="padding:6px 4px; text-align:center;">Img</th>
+                                                <th style="padding:6px 6px; text-align:left;">Item Name</th>
+                                                <th style="padding:6px 6px; text-align:left;">Use For</th>
+                                                <th style="padding:6px 4px; text-align:center;">Qty</th>
+                                                <th style="padding:6px 4px; text-align:center;">Condition</th>
+                                                <th style="padding:6px 4px; text-align:right;">Price</th>
+                                                <th style="padding:6px 4px; text-align:center;">Stock Status</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            @foreach (var sparePart in _selectedRepairService.SparePartItems)
+                                            {
+                                                var sparePartObject = _spareParts.FirstOrDefault(x => x.Id == sparePart.SparePartId);
+                                                var stockQty = sparePartObject?.Quantity ?? 0;
+
+                                                string stockLabel, stockBg, stockFg;
+                                                if (sparePart.Condition == "Fix")
+                                                {
+                                                    stockLabel = "ជួសជុលមិនកាត់ស្តុក";
+                                                    stockBg = "#6f42c1"; stockFg = "#fff";
+                                                }
+                                                else if (stockQty <= 0)
+                                                {
+                                                    stockLabel = "OUT OF STOCK";
+                                                    stockBg = "#dc3545"; stockFg = "#fff";
+                                                }
+                                                else
+                                                {
+                                                    stockLabel = "IN STOCK";
+                                                    stockBg = "#28a745"; stockFg = "#fff";
+                                                }
+
+                                                <tr style="border-bottom:1px solid #f0f0f0;">
+                                                    <td style="padding:5px 4px; text-align:center; vertical-align:middle;">
+                                                        @if (sparePartObject != null && !string.IsNullOrEmpty(sparePartObject.PictureUrl))
+                                                        {
+                                                            <img src="@sparePartObject.PictureUrl" alt="img"
+                                                                 style="width:40px; height:40px; object-fit:cover; border-radius:5px; border:1px solid #ddd;" />
+                                                        }
+                                                        else
+                                                        {
+                                                            <div style="width:40px; height:40px; background:#f5f5f5; border-radius:5px;
+                                                                                    border:1px solid #ddd; display:flex; align-items:center;
+                                                                                    justify-content:center; margin:auto;">
+                                                                <i class="fas fa-image" style="color:#ccc;"></i>
+                                                            </div>
+                                                        }
+                                                    </td>
+                                                    <td style="padding:5px 6px; vertical-align:middle; font-weight:500;
+                                                                               overflow:hidden; text-overflow:ellipsis; white-space:nowrap;"
+                                                        title="@(sparePartObject?.ItemName ?? sparePart.ItemName)">
+                                                        @(sparePartObject?.ItemName ?? sparePart.ItemName ?? "—")
+                                                    </td>
+                                                    <td style="padding:5px 6px; vertical-align:middle; color:#555;
+                                                                               overflow:hidden; text-overflow:ellipsis; white-space:nowrap;"
+                                                        title="@(sparePartObject?.UseFor ?? sparePart.UseFor)">
+                                                        @(sparePartObject?.UseFor ?? sparePart.UseFor ?? "—")
+                                                    </td>
+                                                    <td style="padding:5px 4px; text-align:center; vertical-align:middle; font-weight:700;">
+                                                        @sparePart.Quantity
+                                                    </td>
+                                                    <td style="padding:5px 4px; text-align:center; vertical-align:middle;">
+                                                        @if (!string.IsNullOrEmpty(sparePart.Condition))
+                                                        {
+                                                            <span style="background:#e9ecef; padding:2px 6px; border-radius:8px;
+                                                                                           font-size:0.72rem; color:#495057;">
+                                                                @sparePart.Condition
+                                                            </span>
+                                                        }
+                                                        else
+                                                        {
+                                                            <span style="color:#aaa;">—</span>
+                                                        }
+                                                    </td>
+                                                    <td style="padding:5px 4px; text-align:right; vertical-align:middle;
+                                                                               font-weight:600; color:#28a745; white-space:nowrap;">
+                                                        @if (sparePartObject != null)
+                                                        {
+                                                            <span>$@sparePartObject.DefaultPrice.ToString("N2")</span>
+                                                        }
+                                                        else
+                                                        {
+                                                            <span style="color:#aaa;">—</span>
+                                                        }
+                                                    </td>
+                                                    <td style="padding:5px 4px; text-align:center; vertical-align:middle;">
+                                                        <span class="stock-status-badge"
+                                                              style="background:@stockBg; color:@stockFg;
+                                                                                    padding:2px 8px; border-radius:8px; font-size:0.7rem;
+                                                                                    font-weight:700; white-space:nowrap; display:inline-block;
+                                                                                    position:relative; cursor:default;">
+                                                            @stockLabel
+                                                            <span class="stock-qty-tooltip">@stockQty in stock</span>
+                                                        </span>
+                                                    </td>
+                                                </tr>
+                                            }
+                                        </tbody>
+                                        <tfoot>
+                                            <tr style="background:#f8f9fa; font-weight:700; border-top:2px solid #dee2e6;">
+                                                <td colspan="3" style="padding:6px 8px; text-align:right; color:#555; font-size:0.8rem;">Total:</td>
+                                                <td style="padding:6px 4px; text-align:center;">
+                                                    @_selectedRepairService.SparePartItems.Sum(x => x.Quantity)
+                                                </td>
+                                                <td></td>
+                                                <td style="padding:6px 4px; text-align:right; color:#28a745; white-space:nowrap;">
+                                                    @{
+                                                        var grandTotal = _selectedRepairService.SparePartItems.Sum(sp =>
+                                                        {
+                                                            var obj = _spareParts.FirstOrDefault(x => x.Id == sp.SparePartId);
+                                                            return (obj?.DefaultPrice ?? 0) * sp.Quantity;
+                                                        });
+                                                    }
+                                                    $@grandTotal.ToString("N2")
+                                                </td>
+                                                <td></td>
+                                            </tr>
+                                        </tfoot>
+                                    </table>
+                                </div>
+                            }
+                        </div>
+                    </div>
+                </Content>
+            </DialogTemplates>
+            <DialogButtons>
+                <DialogButton Content="Close" IsPrimary="true" OnClick="@CloseDialog" />
+            </DialogButtons>
+        </SfDialog>
+    }
+}
+@code {
+    [Parameter] public string ReportNo { get; set; }
+    private SfGrid<RepairServices> MyGrid;
+    ToastAnimationType Animation { get; set; } = ToastAnimationType.Slide;
+    private string activeBreakpoint { get; set; }
+    public string[] ToolbarItems = new string[] { "ColumnChooser" };
+    private IEnumerable<RepairServices> filteredRepairServices = new List<RepairServices>();
+    private IEnumerable<ServiceStatus> _serviceStatuses;
+    private IEnumerable<SparePartObject> _spareParts = Enumerable.Empty<SparePartObject>();
+    private HubConnection hubConnection;
+    private bool isViewDialogVisible = false;
+    private bool isRow = false;
+    private bool isDialogVisible = false;
+    private SfDialog DialogEdit;
+    private SfDialog ConfirmationDialog;
+    private string editInspection = string.Empty;
+    private string editSolution = string.Empty;
+    private string pageTitle = "Edit Repair Service";
+    private RepairItemRequest RepairItemBy = new RepairItemRequest();
+    private RepairServices _selectedRepairService;
+    private bool isConfirmationDialogVisible = false;
+    private bool isProcessing = false;
+    private string customerSearchTerm = "";
+    private List<Customer> searchedCustomers = new List<Customer>();
+    private bool isSearchingCustomers = false;
+
+    // ── Status change saving flag (mirrors inspection-list.razor) ──
+    private bool isSaving = false;
+
+    // Pagination variables
+    private int currentPage = 1;
+    private int pageSize = 10;
+    private int totalPages = 0;
+    private int totalItems = 0;
+    private Dictionary<string, string> _allUsers = new Dictionary<string, string>();
+    private bool _usersLoaded = false;
+
+    private SfTextBox RepairSearchBox;
+    private string RepairSearchValue { get; set; }
+    private System.Threading.Timer _repairSearchDebounceTimer;
+
+    // ✅ NEW — the two statuses this page now combines into one grid.
+   // ✅ NEW — the three statuses this page now combines into one grid.
+private static readonly string[] StatusesShownOnThisPage = new[]
+{
+    "Sent Spareparts",
+    "Inspection",
+    "Sale Confirmed",
+};
+    private static string GetTelegramTopicKeyForStatus(string status) => status switch
+    {
+        "Sent Spareparts" => "SentSpareparts",
+        "Inspection" => "Inspection",
+        "Sale Confirmed" => "SaleConfirmed",
+        "Awaiting Sparepart" => "AwaitingSparepart",
+        "Awaiting Customer Confirm" => "AwaitingCustomerConfirm",
+        "Inspecting" => "Inspecting",
+        "Customer Rejected" => "CustomerRejected",
+        "Unrepairable" => "Unrepairable",
+        "Item Recieved" => "ItemReceived",
+        _ => status?.Replace(" ", "") ?? string.Empty,
+    };
+    protected override async Task OnInitializedAsync()
+{
+    await base.OnInitializedAsync();
+    try
+    {
+        await LoadAllUsersAsync();
+
+        // Load initial page data
+        await LoadPageData();
+        var sparePartsResult = await SparePartService.GetSparePartsPagedAsync(pageNumber: 1, pageSize: 100);
+        _spareParts = sparePartsResult.Items;
+        // Load other necessary data
+        _serviceStatuses = await RepairItemService.GetServiceStatusesAsync();
+    }
+    catch (Exception ex)
+    {
+        Console.Error.WriteLine($"Error loading data: {ex.Message}");
+    }
+
+    // Extract ReportNo from the route
+    var routeData = NavigationManager.ToBaseRelativePath(NavigationManager.Uri).Split('/');
+    string ReportNoFromRoute = routeData.Length > 1 ? routeData[1] : null;
+
+    if (!string.IsNullOrEmpty(ReportNoFromRoute))
+    {
+        var result = await RepairItemService.SearchRepairServicesAsync(
+            pageNumber: 1,
+            pageSize: 10,
+            searchTerm: ReportNoFromRoute
+        );
+        filteredRepairServices = result.Items;
+
+        var selectedService = filteredRepairServices.FirstOrDefault();
+        if (selectedService != null)
+        {
+                await OnApplyButtonClick(selectedService);   // ✅ បន្ថែម await
+            }
+    }
+
+    // SignalR setup
+    hubConnection = new HubConnectionBuilder()
+        .WithUrl(NavigationManager.ToAbsoluteUri("/itemHub"))
+        .Build();
+
+ hubConnection.On<ItemUpdateMessage>("ReceiveItemUpdate", async (msg) =>
+{
+    var affected = msg?.AffectedStatuses ?? Array.Empty<string>();
+
+    foreach (var status in affected)
+        await Cache.InvalidateByPrefixAsync(GetPrefixForStatus(status));
+
+    await Cache.InvalidateAsync(CacheKeys.DashboardStats);
+
+    bool relevantToThisPage = affected.Any(s => StatusesShownOnThisPage.Contains(s));
+    if (relevantToThisPage)
+        await LoadPageData();
+
+    await InvokeAsync(StateHasChanged);
+});
+
+    hubConnection.On<Guid>("BroadcastItemDelete", (deletedItemId) =>
+    {
+        filteredRepairServices = filteredRepairServices.Where(item => item.Id != deletedItemId).ToList();
+        totalItems--;
+        InvokeAsync(StateHasChanged);
+    });
+
+    await hubConnection.StartAsync();
+
+    hubConnection.Closed += async (error) =>
+    {
+        await Task.Delay(new Random().Next(0, 5) * 1000);
+        try
+        {
+            await hubConnection.StartAsync();
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Reconnection failed: {ex.Message}");
+        }
+    };
+}
+    private async Task LoadAllUsersAsync()
+    {
+        if (_usersLoaded)
+            return;
+
+        try
+        {
+            _allUsers = await GlobalUserCache.GetUsersAsync();
+            _usersLoaded = true;
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"❌ Error loading users: {ex.Message}");
+            _allUsers = new Dictionary<string, string>();
+        }
+    }
+    // ✅ NEW — local mapping since this page never had a GetPrefixForTab helper
+private static string GetPrefixForStatus(string status) => status switch
+{
+    "Inspection" => CacheKeys.PrefixInspectionItem,
+    "Sent Spareparts" => CacheKeys.PrefixSentSpareparts,
+    "Sale Confirmed" => CacheKeys.PrefixSaleConfirmed,
+    "Awaiting Sparepart" => CacheKeys.PrefixAwaitSparePart,
+    "Awaiting Customer Confirm" => CacheKeys.PrefixAwaitCustomer,
+    "Inspecting" => CacheKeys.PrefixInspectItem,
+    "Customer Rejected" => CacheKeys.PrefixCustomerReject,
+    "Unrepairable" => CacheKeys.PrefixUnRepairable,
+    _ => CacheKeys.PrefixSentSpareparts,
+};
+    // ✅ NEW — each status this page combines has its own dedicated cache key
+    // builder (CacheKeys already ships InspectionItem and SentSpareparts). Using
+    // one shared key for both statuses would make the second fetch overwrite
+    // the first's cached entry.
+   private static string GetCacheKeyForStatus(string status, int page, int size) => status switch
+{
+    "Inspection" => CacheKeys.InspectionItem(page, size),
+    "Sale Confirmed" => CacheKeys.SaleConfirmed(page, size),
+    _ => CacheKeys.SentSpareparts(page, size),
+};
+
+   private async Task OnRepairStatusChanged(RepairServices item, string newStatus)
+{
+    if (item == null || string.IsNullOrEmpty(newStatus) || newStatus == item.Status)
+        return;
+
+    string previousStatus = item.Status;
+
+    if (newStatus == "Inspecting")
+    {
+        try
+        {
+            await RepairItemService.MoveBackToInspectingAsync(item.Id);
+
+            // ✅ CHANGED — only the prefix the item is leaving (its previous
+            // status, either "Sent Spareparts" or "Inspection") + "Inspecting"
+            // (where it's going, served by inspect-item.razor) need clearing.
+            await Cache.InvalidateByPrefixAsync(GetPrefixForStatus(previousStatus));
+            await Cache.InvalidateByPrefixAsync(CacheKeys.PrefixInspectItem);
+            await Cache.InvalidateAsync(CacheKeys.DashboardStats);
+
+            // ✅ NEW — this broadcast was missing entirely before. Without it,
+            // other open tabs never learned this item moved to "Inspecting".
+            if (hubConnection?.State == HubConnectionState.Connected)
+                await hubConnection.SendAsync("BroadcastItemUpdate", new ItemUpdateMessage
+                {
+                    AffectedStatuses = new[] { previousStatus, "Inspecting" }
+                });
+
+            ToastNotificationService.ShowToast(new ToastOptions
+            {
+                ProviderName = "Customization",
+                Title = "សម្រេច",
+                Text = $"{item.reportNo} → កែតម្រូវគ្រឿងបន្លាស់ម្ដងទៀត",
+                ThemeMode = ToastThemeMode.Pastel,
+                RenderStyle = ToastRenderStyle.Success
+            });
+
+            await LoadPageData();
+            StateHasChanged();
+        }
+        catch (Exception ex)
+        {
+            item.Status = previousStatus;
+            StateHasChanged();
+
+            ToastNotificationService.ShowToast(new ToastOptions
+            {
+                ProviderName = "Error",
+                Title = "Error",
+                Text = $"Failed: {ex.Message}",
+                ThemeMode = ToastThemeMode.Pastel,
+                RenderStyle = ToastRenderStyle.Danger
+            });
+        }
+    }
+}
+
+    private async Task LoadPageData()
+    {
+        try
+        {
+            // ✅ CHANGED — now fetches BOTH "Sent Spareparts" and "Inspection"
+            // and merges them into one grid, each under its own cache key.
+            var tasks = StatusesShownOnThisPage.Select(status =>
+                Cache.GetOrSetAsync(
+                    GetCacheKeyForStatus(status, currentPage, pageSize),
+                    () => RepairItemService.SearchRepairServicesAsync(
+                        pageNumber: currentPage,
+                        pageSize: pageSize,
+                        status: status,
+                        sortBy: "reportNo",
+                        sortDescending: true),
+                    TimeSpan.FromMinutes(3)
+                )
+            ).ToList();
+
+            var results = await Task.WhenAll(tasks);
+
+            var allResults = new List<RepairServices>();
+            int combinedTotalCount = 0;
+
+            foreach (var result in results)
+            {
+                if (result?.Items != null && result.Items.Any())
+                {
+                    allResults.AddRange(result.Items);
+                    combinedTotalCount += result.TotalCount;
+                }
+            }
+
+            filteredRepairServices = allResults
+                .GroupBy(x => x.Id)
+                .Select(g => g.First())
+                .OrderByDescending(x => x.reportNo)
+                .ToList();
+
+            totalItems = combinedTotalCount;
+            totalPages = totalItems > 0 ? (int)Math.Ceiling(totalItems / (double)pageSize) : 0;
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Error loading page data: {ex.Message}");
+        }
+    }
+    private async Task GoToPage(int page)
+    {
+        if (page < 1 || page > totalPages) return;
+        currentPage = page;
+        await LoadPageData();
+        StateHasChanged();
+    }
+
+    private async Task NextPage()
+    {
+        if (currentPage < totalPages)
+        {
+            currentPage++;
+            await LoadPageData();
+            StateHasChanged();
+        }
+    }
+
+    private async Task PreviousPage()
+    {
+        if (currentPage > 1)
+        {
+            currentPage--;
+            await LoadPageData();
+            StateHasChanged();
+        }
+    }
+
+    private async Task FirstPage()
+    {
+        currentPage = 1;
+        await LoadPageData();
+        StateHasChanged();
+    }
+
+    private async Task LastPage()
+    {
+        currentPage = totalPages;
+        await LoadPageData();
+        StateHasChanged();
+    }
+
+
+    private string GetUserNameById(Guid? userId)
+    {
+        if (!userId.HasValue || userId.Value == Guid.Empty)
+            return "Unknown";
+
+        string userIdString = userId.Value.ToString();
+
+        if (!_usersLoaded)
+            return "Loading...";
+
+        if (_allUsers.TryGetValue(userIdString, out string username))
+            return username;
+
+        return "Unknown User";
+    }
+
+    private async Task ShowRepairServiceDetails(RepairServices repairService)
+    {
+        _selectedRepairService = repairService;
+
+        if (_selectedRepairService.SparePartItems != null && _selectedRepairService.SparePartItems.Any())
+        {
+            var validSpareParts = _selectedRepairService.SparePartItems
+                .Where(item => item.SparePartId.HasValue && item.SparePartId.Value != Guid.Empty)
+                .ToList();
+
+            if (validSpareParts.Any())
+            {
+                var fetchTasks = validSpareParts.Select(async item =>
+                {
+                    try
+                    {
+                        var sparePartDetails = await SparePartService.GetSparePartByIdAsync(item.SparePartId.Value);
+
+                        if (sparePartDetails != null)
+                        {
+                            item.ItemName = sparePartDetails.ItemName;
+                            item.SerialNumber = sparePartDetails.SerialNumber;
+                            item.UseFor = sparePartDetails.UseFor;
+                            return true;
+                        }
+                        return false;
+                    }
+                    catch (Exception ex)
+                    {
+                        Console.WriteLine($"❌ Error fetching {item.SparePartId}: {ex.Message}");
+                        return false;
+                    }
+                }).ToList();
+
+                await Task.WhenAll(fetchTasks);
+            }
+        }
+
+        isViewDialogVisible = true;
+        await DialogEdit.ShowAsync();
+    }
+
+    public async Task ExportToExcel()
+    {
+        await MyGrid.ExportToExcelAsync();
+    }
+
+    public async Task ExportToPdf()
+    {
+        await MyGrid.ExportToPdfAsync();
+    }
+
+    private void NewRepairService_Click() { }
+
+    private void EditRepairService_Click() { }
+
+    private void CancelConfirmationDialog()
+    {
+        if (!isProcessing)
+        {
+            isConfirmationDialogVisible = false;
+        }
+    }
+
+    private void RowSelectHandler(RowSelectEventArgs<RepairServices> args)
+    {
+        _selectedRepairService = args.Data;
+        isRow = _selectedRepairService != null;
+    }
+
+    // ✅ CHANGED — now async, fetches the LATEST Inspection/Solution
+    // directly from the server (not from the grid's cached copy) so the
+    // dialog always shows the true current values before the user appends.
+    private async Task OnApplyButtonClick(RepairServices selectedRepairService)
+    {
+        _selectedRepairService = selectedRepairService;
+
+        if (_selectedRepairService != null)
+        {
+            if (_selectedRepairService.Status == "Sale Confirmed" &&
+                _selectedRepairService.SparePartItems != null &&
+                _selectedRepairService.SparePartItems.Any())
+            {
+                ToastNotificationService.ShowToast(new ToastOptions
+                {
+                    ProviderName = "Error",
+                    Title = "ត្រូវរង់ចាំផ្នែកស្តុកត្រួតពិនិត្យនិងបញ្ជូនគ្រឿងបន្លាស់ជាមុនសិន",
+                    Text = $"{_selectedRepairService.reportNo}: មិនអាចអនុម័តជា 'ជួសជុលបាន' បានទេ ព្រោះ Service នេះមានគ្រឿងបន្លាស់ភ្ជាប់មកជាមួយ។",
+                    ThemeMode = ToastThemeMode.Pastel,
+                    RenderStyle = ToastRenderStyle.Danger
+                });
+                return;
+            }
+
+            // ✅ NEW — items still in "Inspection" can only be approved
+            // (moved to Repairing) if the ServiceType is Free (1). Charge
+            // (2) items must go through the sales/marketing department
+            // first, so block and inform the user instead.
+            if (_selectedRepairService.Status == "Inspection" &&
+                _selectedRepairService.ServiceTypeId == 2)
+            {
+                ToastNotificationService.ShowToast(new ToastOptions
+                {
+                    ProviderName = "Error",
+                    Title = "មិនអាចអនុម័តបាន",
+                    Text = "អ្នកមិនអាច អនុម័តបានទេ ព្រោះជា Service Charge ត្រូវបញ្ជូនទៅផ្នែកទីផ្សារ Confirm ជាមុនសិនទើបអាចអនុម័តបាន",
+                    ThemeMode = ToastThemeMode.Pastel,
+                    RenderStyle = ToastRenderStyle.Danger
+                });
+                return;
+            }
+
+            // ✅ existing — pull fresh Inspection/Solution straight from the API
+            // (GetRepairServiceByIdAsync), so we don't rely on whatever the
+            // grid happened to have cached.
+            try
+            {
+                var freshService = await RepairItemService.GetRepairServiceByIdAsync(_selectedRepairService.Id);
+                editInspection = freshService?.Inspection ?? string.Empty;
+                editSolution = freshService?.Solution ?? string.Empty;
+            }
+            catch
+            {
+                editInspection = _selectedRepairService.Inspection ?? string.Empty;
+                editSolution = _selectedRepairService.Solution ?? string.Empty;
+            }
+
+            RepairItemBy.Id = _selectedRepairService.Id;
+            pageTitle = "អនុម័តជួសជុល";
+            isConfirmationDialogVisible = true;
+        }
+    }
+
+    private async Task ConfirmCustomerConfirm()
+    {
+        if (isProcessing)
+        {
+            return;
+        }
+
+        // Block approving to "Sale Confirmed" if the service still has
+        // SparepartItems attached.
+        if (_selectedRepairService?.Status == "Sale Confirmed" &&
+            _selectedRepairService.SparePartItems != null &&
+            _selectedRepairService.SparePartItems.Any())
+        {
+            isConfirmationDialogVisible = false;
+
+            ToastNotificationService.ShowToast(new ToastOptions
+            {
+                ProviderName = "Error",
+                Title = "មិនអាចអនុម័តបាន",
+                Text = $"{_selectedRepairService.reportNo}: មិនអាចអនុម័តជា 'ជួសជុលបាន' បានទេ ព្រោះ Service នេះមានគ្រឿងបន្លាស់ភ្ជាប់ស្រាប់។",
+                ThemeMode = ToastThemeMode.Pastel,
+                RenderStyle = ToastRenderStyle.Danger
+            });
+            return;
+        }
+
+        try
+        {
+            isProcessing = true;
+            StateHasChanged();
+
+            // ✅ Persist any edits made to Inspection/Solution in the
+            // dialog BEFORE the repair action runs, using the dedicated
+            // narrow-scope endpoint (touches only these two fields).
+            if (_selectedRepairService != null)
+            {
+                bool inspectionSolutionChanged =
+                    editInspection != (_selectedRepairService.Inspection ?? string.Empty) ||
+                    editSolution != (_selectedRepairService.Solution ?? string.Empty);
+
+                if (inspectionSolutionChanged)
+                {
+                    await RepairItemService.UpdateInspectionSolutionAsync(
+                        _selectedRepairService.Id, editInspection, editSolution);
+
+                    _selectedRepairService.Inspection = editInspection;
+                    _selectedRepairService.Solution = editSolution;
+                }
+            }
+
+            var authState = await AuthenticationStateProvider.GetAuthenticationStateAsync();
+            var user = authState.User;
+
+            if (user.Identity.IsAuthenticated)
+            {
+                var currentUserId = user.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
+
+                if (!string.IsNullOrEmpty(currentUserId))
+                {
+                    if (Guid.TryParse(currentUserId, out Guid userGuid))
+                    {
+                        RepairItemBy.repairBy = userGuid;
+                    }
+                    else
+                    {
+                        RepairItemBy.repairBy = Guid.Empty;
+                    }
+                }
+                else
+                {
+                    RepairItemBy.repairBy = Guid.Empty;
+                }
+            }
+
+            // Capture the status BEFORE it gets mutated locally below, so the
+            // broadcast and Telegram delete both know exactly which topic
+            // this item is leaving.
+            string originalStatus = _selectedRepairService?.Status ?? "Sent Spareparts";
+
+            await RepairService.RepairAsync(RepairItemBy);
+
+            // Only invalidate the prefix the item is actually leaving,
+            // plus PrefixRepairItem/PrefixSparePart which this action always
+            // touches (spare part stock gets deducted here).
+            await Cache.InvalidateByPrefixAsync(GetPrefixForStatus(originalStatus));
+            await Cache.InvalidateByPrefixAsync(CacheKeys.PrefixRepairItem);
+            await Cache.InvalidateByPrefixAsync(CacheKeys.PrefixSparePart);
+            await Cache.InvalidateAsync(CacheKeys.DashboardStats);
+
+            Guid processedItemId = Guid.Empty;
+            string reportNo = string.Empty;
+
+            if (_selectedRepairService != null)
+            {
+                processedItemId = _selectedRepairService.Id;
+                reportNo = _selectedRepairService.reportNo;
+
+                filteredRepairServices = filteredRepairServices
+                    .Where(x => x.Id != processedItemId)
+                    .ToList();
+
+                totalItems--;
+                totalPages = totalItems > 0
+                    ? (int)Math.Ceiling(totalItems / (double)pageSize)
+                    : 0;
+
+                if (currentPage > totalPages && totalPages > 0)
+                {
+                    currentPage = totalPages;
+                }
+
+                _selectedRepairService.repairDate = DateTime.UtcNow.AddHours(7);
+                _selectedRepairService.Status = "Repairing";
+                _selectedRepairService.repairBy = RepairItemBy.repairBy;
+            }
+
+            isConfirmationDialogVisible = false;
+            isProcessing = false;
+            StateHasChanged();
+
+            ToastNotificationService.ShowToast(new ToastOptions
+            {
+                ProviderName = "Customization",
+                Title = "Success",
+                Text = $"Repair item {reportNo} processed successfully",
+                ThemeMode = ToastThemeMode.Pastel,
+                RenderStyle = ToastRenderStyle.Success
+            });
+
+            _ = Task.Run(async () =>
+            {
+                var backgroundTasks = new List<Task>();
+
+                if (hubConnection?.State == HubConnectionState.Connected)
+                {
+                    backgroundTasks.Add(
+                        hubConnection.SendAsync("BroadcastItemUpdate", new ItemUpdateMessage
+                        {
+                            AffectedStatuses = new[] { originalStatus }
+                        })
+                            .ContinueWith(t =>
+                            {
+                                if (!t.IsCompletedSuccessfully)
+                                    Console.WriteLine($"⚠️ SignalR failed: {t.Exception?.Message}");
+                            })
+                    );
+                }
+
+                // ✅ NEW — delete the Telegram message that was posted for this
+                // item under its PREVIOUS status (e.g. "SentSpareparts" or
+                // "Inspection" topic), now that it has been approved and moved
+                // to "Repairing". ResolveMessageIdFromTopic=true because this
+                // page never captured the MessageId itself (it was saved by
+                // whichever page originally sent it) — the worker looks it up
+                // from ServiceTelegramMessages at execution time, keyed by
+                // (ItemId, TopicKey).
+                if (processedItemId != Guid.Empty)
+                {
+                    backgroundTasks.Add(Task.Run(async () =>
+                    {
+                        try
+                        {
+                            string topicKey = GetTelegramTopicKeyForStatus(originalStatus);
+
+                            await TelegramQueue.EnqueueAsync(new TelegramMessage
+                            {
+                                Action = TelegramAction.Delete,
+                                ItemId = processedItemId,
+                                TopicKey = topicKey,
+                                ResolveMessageIdFromTopic = true
+                            });
+                            Console.WriteLine($"🗑️ Telegram delete enqueued for {reportNo} (topic: {topicKey})");
+                        }
+                        catch (Exception ex)
+                        {
+                            Console.WriteLine($"⚠️ Telegram delete enqueue failed: {ex.Message}");
+                        }
+                    }));
+                }
+
+                try
+                {
+                    await Task.WhenAll(backgroundTasks);
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"⚠️ Some notifications failed: {ex.Message}");
+                }
+
+                await Task.Delay(2000);
+
+                try
+                {
+                    await InvokeAsync(async () =>
+                    {
+                        await LoadPageData();
+                        StateHasChanged();
+                    });
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"⚠️ Background refresh failed: {ex.Message}");
+                }
+            });
+        }
+        catch (HttpRequestException ex) when (ex.Message.Contains("timed out"))
+        {
+            ToastNotificationService.ShowToast(new ToastOptions
+            {
+                ProviderName = "Error",
+                Title = "Timeout",
+                Text = "Operation is taking longer than expected. Refreshing data...",
+                ThemeMode = ToastThemeMode.Pastel,
+                RenderStyle = ToastRenderStyle.Warning
+            });
+
+            await LoadPageData();
+            isConfirmationDialogVisible = false;
+            isProcessing = false;
+        }
+        catch (Exception ex)
+        {
+            string userMessage = ParseFriendlyErrorMessage(ex.Message);
+
+            ToastNotificationService.ShowToast(new ToastOptions
+            {
+                ProviderName = "Error",
+                Title = "ត្រូវរង់ចាំផ្នែកស្តុកត្រួតពិនិត្យនិងបញ្ជូនគ្រឿងបន្លាស់ជាមុនសិន",
+                Text = userMessage,
+                ThemeMode = ToastThemeMode.Pastel,
+                RenderStyle = ToastRenderStyle.Danger
+            });
+
+            await LoadPageData();
+            isConfirmationDialogVisible = false;
+            isProcessing = false;
+        }
+        finally
+        {
+            if (isProcessing)
+            {
+                isProcessing = false;
+                StateHasChanged();
+            }
+        }
+    }
+    private string ParseFriendlyErrorMessage(string rawError)
+    {
+        try
+        {
+            if (rawError.Contains("Insufficient stock") || rawError.Contains("Insufficient stock when releasing hold"))
+            {
+                var itemMatch = System.Text.RegularExpressions.Regex.Match(
+                    rawError, @"Item:\s*(.+?)\s*\|");
+                var availableMatch = System.Text.RegularExpressions.Regex.Match(
+                    rawError, @"Available:\s*(\d+)");
+                var requiredMatch = System.Text.RegularExpressions.Regex.Match(
+                    rawError, @"Required:\s*(\d+)");
+                var barcodeMatch = System.Text.RegularExpressions.Regex.Match(
+                    rawError, @"(?:Barcode|Serial|SKU|Code):\s*([A-Za-z0-9\-]+)",
+                    System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+
+                string itemName = itemMatch.Success ? itemMatch.Groups[1].Value.Trim() : "គ្រឿងបន្លាស់";
+                string available = availableMatch.Success ? availableMatch.Groups[1].Value : "0";
+                string required = requiredMatch.Success ? requiredMatch.Groups[1].Value : "?";
+
+                string barcode = barcodeMatch.Success
+                    ? barcodeMatch.Groups[1].Value.Trim()
+                    : GetBarcodeFromCurrentService(itemName);
+
+                string barcodeInfo = !string.IsNullOrEmpty(barcode)
+                    ? $"Id: {barcode} | "
+                    : "";
+
+                return $"ស្តុកគ្រឿងបន្លាស់មិនគ្រប់គ្រាន់ សូមពិនិត្យឡើងវិញ! " +
+                       $"ឈ្មោះ: {itemName} | " +
+                       $"{barcodeInfo}" +
+                       $"មានក្នុងស្តុក: {available} | " +
+                       $"ត្រូវការ: {required}. " +
+                       $"សូមបញ្ចូលស្តុកជាមុនសិន។";
+            }
+
+            if (rawError.Contains("DbUpdateException") || rawError.Contains("SqlException"))
+            {
+                return "មានបញ្ហាក្នុងការរក្សាទុកទិន្នន័យ។ សូមព្យាយាមម្តងទៀត។";
+            }
+
+            if (rawError.Contains("timed out") || rawError.Contains("timeout"))
+            {
+                return "ការតភ្ជាប់យឺតពេក។ សូមព្យាយាមម្តងទៀត។";
+            }
+
+            if (rawError.Contains("InternalServerError") || rawError.Contains("500"))
+            {
+                return "មានបញ្ហានៅម៉ាស៊ីនមេ។ សូមទាក់ទងអ្នកគ្រប់គ្រង។";
+            }
+
+            return "មិនអាចអនុម័តការជួសជុលបាន។ សូមពិនិត្យម្តងទៀត ឬទាក់ទងអ្នកគ្រប់គ្រង។";
+        }
+        catch
+        {
+            return "មិនអាចអនុម័តការជួសជុលបាន។ សូមទាក់ទងអ្នកគ្រប់គ្រង។";
+        }
+    }
+
+    private string GetBarcodeFromCurrentService(string itemName)
+    {
+        try
+        {
+            if (_selectedRepairService?.SparePartItems == null)
+                return string.Empty;
+
+            foreach (var sp in _selectedRepairService.SparePartItems)
+            {
+                var sparePartObj = _spareParts.FirstOrDefault(x =>
+                    x.Id == sp.SparePartId &&
+                    (x.ItemName?.Equals(itemName, StringComparison.OrdinalIgnoreCase) == true ||
+                     itemName.Contains(x.ItemName ?? "", StringComparison.OrdinalIgnoreCase)));
+
+                if (sparePartObj != null)
+                    return sparePartObj.Id.ToString();
+            }
+
+            var firstSparePart = _selectedRepairService?.SparePartItems?.FirstOrDefault();
+            if (firstSparePart?.SparePartId != null)
+                return firstSparePart.SparePartId.ToString();
+
+            return string.Empty;
+        }
+        catch
+        {
+            return string.Empty;
+        }
+    }
+    private void OverlayClick(OverlayModalClickEventArgs args)
+    {
+        this.isViewDialogVisible = false;
+    }
+
+    private void CloseDialog()
+    {
+        isViewDialogVisible = false;
+    }
+
+    private string GetImagePath(string customerType)
+    {
+        string cleanedCustomerType = customerType.Replace(" ", "_");
+        return $"./images/partner_logo/{cleanedCustomerType}.jpg";
+    }
+
+    private bool HasRepairDate()
+    {
+        return filteredRepairServices.Any(service => service.repairDate != null);
+    }
+
+    private async Task<string> GetUserPhoneNumberByIdAsync(Guid? userId)
+    {
+        return await GlobalUserCache.GetUserPhoneNumberByIdAsync(userId, autoLoad: true);
+    }
+
+    private void RowDoubleClickHandler(RecordDoubleClickEventArgs<RepairServices> args)
+    {
+        _selectedRepairService = args.RowData;
+
+        if (_selectedRepairService != null)
+        {
+            isViewDialogVisible = true;
+            DialogEdit.ShowAsync();
+        }
+    }
+    private async Task PerformRepairSearch()
+    {
+        if (string.IsNullOrWhiteSpace(RepairSearchValue))
+        {
+            await LoadPageData();
+            return;
+        }
+
+        await PerformRepairSearchInternal(RepairSearchValue);
+    }
+
+    // ✅ CHANGED — now searches BOTH statuses shown on this page
+    private async Task PerformRepairSearchInternal(string searchValue)
+    {
+        try
+        {
+            var tasks = StatusesShownOnThisPage.Select(status =>
+                RepairItemService.SearchRepairServicesAsync(
+                    pageNumber: 1,
+                    pageSize: pageSize,
+                    status: status,
+                    searchTerm: searchValue.Trim(),
+                    sortBy: "reportNo",
+                    sortDescending: true
+                )
+            ).ToList();
+
+            var results = await Task.WhenAll(tasks);
+
+            var allResults = new List<RepairServices>();
+            int combinedTotalCount = 0;
+
+            foreach (var result in results)
+            {
+                if (result.Items != null && result.Items.Any())
+                {
+                    allResults.AddRange(result.Items);
+                    combinedTotalCount += result.TotalCount;
+                }
+            }
+
+            filteredRepairServices = allResults
+                .GroupBy(x => x.Id)
+                .Select(g => g.First())
+                .OrderByDescending(x => x.reportNo)
+                .ToList();
+
+            totalItems = combinedTotalCount;
+            totalPages = totalItems > 0 ? (int)Math.Ceiling(totalItems / (double)pageSize) : 0;
+            currentPage = 1;
+
+            StateHasChanged();
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Repair search error: {ex.Message}");
+
+            ToastNotificationService.ShowToast(new ToastOptions
+            {
+                ProviderName = "Error",
+                Title = "Search Error",
+                Text = $"Failed to search: {ex.Message}",
+                ThemeMode = ToastThemeMode.Pastel,
+                RenderStyle = ToastRenderStyle.Danger
+            });
+        }
+    }
+
+    private void OnRepairSearchInput(InputEventArgs args)
+    {
+        _repairSearchDebounceTimer?.Dispose();
+
+        if (string.IsNullOrWhiteSpace(args.Value))
+        {
+            _ = Task.Run(async () =>
+            {
+                await InvokeAsync(async () =>
+                {
+                    await LoadPageData();
+                    StateHasChanged();
+                });
+            });
+            return;
+        }
+
+        _repairSearchDebounceTimer = new System.Threading.Timer(async _ =>
+        {
+            try
+            {
+                await InvokeAsync(async () =>
+                {
+                    await PerformRepairSearchInternal(args.Value);
+                });
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Repair search error: {ex.Message}");
+            }
+        }, null, 500, Timeout.Infinite);
+    }
+
+    private async Task ClearRepairSearch()
+    {
+        RepairSearchValue = string.Empty;
+        currentPage = 1;
+        await LoadPageData();
+        StateHasChanged();
+    }
+
+    private async Task ShowReportPreview(RepairServices selectedRepairService)
+    {
+        try
+        {
+            _selectedRepairService = selectedRepairService;
+
+            var report = new Report2();
+
+            string repairByUser = GetUserNameById(selectedRepairService.repairBy);
+            string verifiedByUser = GetUserNameById(selectedRepairService.verifiedBy);
+
+            var phoneNumberTasks = Task.WhenAll(
+                GetUserPhoneNumberByIdAsync(selectedRepairService.repairBy),
+                GetUserPhoneNumberByIdAsync(selectedRepairService.verifiedBy)
+            );
+
+            var phoneNumbers = await phoneNumberTasks;
+            string repairByPhone = phoneNumbers[0];
+            string verifiedByPhone = phoneNumbers[1];
+
+            if (_selectedRepairService.SparePartItems != null && _selectedRepairService.SparePartItems.Any())
+            {
+                var validSpareParts = _selectedRepairService.SparePartItems
+                    .Where(item => item.SparePartId.HasValue && item.SparePartId.Value != Guid.Empty)
+                    .ToList();
+
+                if (validSpareParts.Any())
+                {
+                    var fetchTasks = validSpareParts.Select(async item =>
+                    {
+                        try
+                        {
+                            var sparePartDetails = await SparePartService.GetSparePartByIdAsync(item.SparePartId.Value);
+
+                            if (sparePartDetails != null)
+                            {
+                                item.ItemName = sparePartDetails.ItemName;
+                                item.SerialNumber = sparePartDetails.SerialNumber;
+                                item.UseFor = sparePartDetails.UseFor;
+                                return true;
+                            }
+                            return false;
+                        }
+                        catch (Exception ex)
+                        {
+                            Console.WriteLine($"❌ Error fetching {item.SparePartId}: {ex.Message}");
+                            return false;
+                        }
+                    }).ToList();
+
+                    await Task.WhenAll(fetchTasks);
+                }
+            }
+
+            report.SetParameters(
+                _selectedRepairService,
+                _selectedRepairService.ServiceLocation,
+                _selectedRepairService.SparePartItems,
+                _selectedRepairService.hasContract,
+                repairByUser,
+                verifiedByUser,
+                repairByPhone,
+                verifiedByPhone
+            );
+
+            report.Parameters["Id"].Visible = false;
+            report.Parameters["ReportNumber"].Visible = false;
+            report.Parameters["CompanyName"].Visible = false;
+            report.Parameters["ContactName"].Visible = false;
+            report.Parameters["PhoneNumber"].Visible = false;
+            report.Parameters["Address"].Visible = false;
+            report.Parameters["ItemName"].Visible = false;
+            report.Parameters["SerialNumber"].Visible = false;
+            report.Parameters["CustomerRequest"].Visible = false;
+            report.Parameters["inspection"].Visible = false;
+            report.Parameters["Solution"].Visible = false;
+            report.Parameters["CompanyServiceChecked"].Visible = false;
+            report.Parameters["OnSiteChecked"].Visible = false;
+            report.Parameters["HasContract"].Visible = false;
+            report.Parameters["Datestart"].Visible = false;
+            report.Parameters["Datefinish"].Visible = false;
+            report.Parameters["RepairBy"].Visible = false;
+            report.Parameters["VerifiedBy"].Visible = false;
+            report.Parameters["RepairByPhone"].Visible = false;
+            report.Parameters["VerifiedByPhone"].Visible = false;
+
+            byte[] reportData;
+            using (var ms = new MemoryStream())
+            {
+                report.ExportToPdf(ms);
+                reportData = ms.ToArray();
+            }
+
+            string sanitizedReportNo = selectedRepairService.reportNo?.Replace("/", "-").Replace("\\", "-") ?? "Report";
+            string filename = $"ServiceReport_{sanitizedReportNo}_{DateTime.Now:yyyyMMdd_HHmmss}.pdf";
+
+            string base64Data = Convert.ToBase64String(reportData);
+            await JSRuntime.InvokeVoidAsync("blazorReportsPrint.printReport", base64Data, filename);
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"❌ Error generating report: {ex.Message}");
+
+            ToastNotificationService.ShowToast(new ToastOptions
+            {
+                ProviderName = "Error",
+                Title = "Report Error",
+                Text = $"Failed to generate report: {ex.Message}",
+                ThemeMode = ToastThemeMode.Pastel,
+                RenderStyle = ToastRenderStyle.Danger
+            });
+        }
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        _repairSearchDebounceTimer?.Dispose();
+        if (hubConnection != null) await hubConnection.DisposeAsync();
+    }
+}

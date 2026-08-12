@@ -1,0 +1,1279 @@
+@page "/await-sparepart"
+@page "/await-sparepart/{ReportNo}"
+@implements IAsyncDisposable
+
+@using ServiceMaintenance.Components
+@using ServiceMaintenance.Models
+@using Microsoft.AspNetCore.SignalR.Client
+@using Microsoft.AspNetCore.Components.Authorization
+@using ServiceMaintenance.Services.Filters.GlobalSecurity
+@using ServiceMaintenance.Services
+@using ServiceMaintenance.Infrastructure.Shared.Caching
+@inject RepairItemService RepairItemService
+@inject NavigationManager NavigationManager
+@inject ServiceSparePart SparePartService
+@inject AwaitingCustomerConfirmService AwaitingCustomerConfirmService
+@inject SentSparepartsService SentSparepartsService
+@inject GlobalUserService GlobalUserCache
+@inject PrintPreviewService PrintPreviewService
+@inject TelegramNotificationQueue TelegramQueue
+@inject CacheHelper Cache
+
+
+<DxToastProvider Name="Customization"
+                 MaxToastCount="5"
+                 HorizontalAlignment="HorizontalAlignment.Right"
+                 VerticalAlignment="VerticalEdge.Top"
+                 AnimationType="@Animation" />
+<DxToastProvider Name="Error"
+                 MaxToastCount="5"
+                 HorizontalAlignment="HorizontalAlignment.Right"
+                 VerticalAlignment="VerticalEdge.Top"
+                 AnimationType="@Animation" />
+<ActionToolbox CanCreate="CanCreate"
+               CanEdit="CanEdit"
+               CanDelete="CanDelete"
+               CanExport="CanExport"
+               IsCreateEnabled="false"
+               IsEditEnabled="false"
+               IsDeleteEnabled="false"
+               IsExportEnabled="@exportEnabled"
+               OnCreate="NewRepairService_Click"
+               OnEdit="EditRepairService_Click"
+               OnDelete="EditRepairService_Click"
+               OnExportExcel="ExportToExcel"
+               OnExportPdf="ExportToPdf">
+    <CustomActions>
+        @if (CanPrint)
+        {
+            <button class="btn btn-sm btn-outline-secondary compact-btn" @onclick="() => ShowReportPreview(_selectedRepairService)">
+                <i class="fas fa-print me-1"></i> Print Report
+            </button>
+        }
+    </CustomActions>
+</ActionToolbox>
+<SfMediaQuery @bind-ActiveBreakPoint="activeBreakpoint"></SfMediaQuery>
+@{
+    bool enableAdaptiveUIMode = false;
+    RowDirection renderingMode = RowDirection.Vertical; // Default rendering mode
+
+    if (activeBreakpoint == "Small")
+    {
+        enableAdaptiveUIMode = true;
+        renderingMode = RowDirection.Vertical;
+    }
+    else if (activeBreakpoint == "Medium")
+    {
+        enableAdaptiveUIMode = true;
+        renderingMode = RowDirection.Horizontal;
+    }
+    else
+    {
+        enableAdaptiveUIMode = false;
+    }
+}
+
+@if (CanAccess)
+{
+    @if (CanView)
+    {
+        <StatusTabMenu Tabs="Tabs"
+                       ActiveTabKey="@ActiveTabKey"
+                       OnTabChanged="HandleTabChanged" />
+        <!-- Search Bar for Grid View -->
+        <div style="margin-bottom: 15px; padding: 15px; background-color: #f9f9f9; border-radius: 4px;">
+            <div style="display: flex; gap: 10px; align-items: center;">
+                <SfTextBox Placeholder="Search by Report No, Company, Serial Number..."
+                           ShowClearButton="true"
+                           Width="400px"
+                           @bind-Value="GridSearchValue"
+                           Input="OnGridSearchInput">
+                </SfTextBox>
+
+                <SfButton Content="Search"
+                          CssClass="e-btn e-primary"
+                          IconCss="fas fa-search"
+                          OnClick="PerformGridSearch" />
+
+                <SfButton Content="Clear"
+                          CssClass="e-btn e-outline"
+                          IconCss="fas fa-times"
+                          OnClick="ClearGridSearch" />
+            </div>
+
+            @if (!string.IsNullOrEmpty(GridSearchValue))
+            {
+                <div style="margin-top: 10px; color: #666; font-size: 14px;">
+                    <i class="fas fa-info-circle"></i> Searching for: <strong>@GridSearchValue</strong>
+                </div>
+            }
+        </div>
+
+        <SfGrid @ref="MyGrid"
+                DataSource="@filteredRepairServices2"
+                AllowPaging="false"
+                AllowSorting="true"
+                ShowColumnChooser="true"
+                AllowExcelExport="true"
+                AllowPdfExport="true"
+                SelectionMode="GridSelectionMode.Single"
+                Toolbar="@ToolbarItems"
+                EnableAdaptiveUI="@enableAdaptiveUIMode"
+                RowRenderingMode="@renderingMode"
+                AllowResizing="true"
+                AllowFiltering="true"
+                AllowSelection="true">
+            <GridFilterSettings Type="Syncfusion.Blazor.Grids.FilterType.Excel"></GridFilterSettings>
+            <GridEvents RowSelected="RowSelectHandler" TValue="RepairServices"></GridEvents>
+            <GridColumns>
+                <GridColumn Field="Id" HeaderText="Id" Width="150" Format="d" Visible="false" />
+                <GridColumn Field="reportNo" HeaderText="@Loc[nameof(ResourceStrings.Textref)]" Width="150" />
+                <GridColumn Field="awaitingSparepartDate" HeaderText="@Loc[nameof(ResourceStrings.Textwaitsparepart)]" Width="150" Format="dd/MM/yyyy HH:mm tt" />
+                <GridColumn Field="CompanyName" HeaderText="@Loc[nameof(ResourceStrings.TextCompanyName)]" Width="200" />
+                <GridColumn Field="itemName" HeaderText="@Loc[nameof(ResourceStrings.TextItemName)]" Width="200" />
+                <GridColumn Field="serialNumber" HeaderText="@Loc[nameof(ResourceStrings.TextSerialNumber)]" Width="200" />
+                <GridColumn Field="ServiceLocation" HeaderText="@Loc[nameof(ResourceStrings.TextServiceLocation)]" Width="200" />
+                <GridColumn Field="Status" HeaderText="@Loc[nameof(ResourceStrings.TextStatus)]" Width="220">
+                    <Template>
+                        @{
+                            var item = context as RepairServices;
+                            var currentStatus = item?.Status ?? "Awaiting SparePart";
+                            var bgColor = currentStatus == "Awaiting Customer Confirm" ? "#5bc8c8" : "#cce5ff";
+                            var textColor = currentStatus == "Awaiting Customer Confirm" ? "#003d3d" : "#004085";
+                            var borderColor = currentStatus == "Awaiting Customer Confirm" ? "#3aa8a8" : "#b8daff";
+                        }
+                        @if (ActiveTabKey == "Awaiting SparePart")
+                        {
+                            <select style="background-color: @bgColor;
+                                                       color: @textColor;
+                                                       border: 1px solid @borderColor;
+                                                       border-radius: 20px;
+                                                       padding: 4px 10px;
+                                                       font-size: 12px;
+                                                       font-weight: 600;
+                                                       cursor: pointer;
+                                                       outline: none;
+                                                       font-family: 'Khmer OS', sans-serif;"
+                                    @key="@($"{item?.Id}_{currentStatus}")"
+                                    @onchange="async (e) => await OnAwaitStatusChanged(item, e.Value?.ToString())">
+                                <option value="Awaiting SparePart" hidden
+                                        selected="@(currentStatus == "Awaiting SparePart")"
+                                        style="background-color:#ffffff; color:#212529;">
+                                    រង់ចាំគ្រឿងបន្លាស់
+                                </option>
+                                <option value="Awaiting Customer Confirm"
+                                        selected="@(currentStatus == "Awaiting Customer Confirm")"
+                                        style="background-color:#ffffff; color:#212529;">
+                                    បញ្ជូនទៅផ្នែកទីផ្សារ
+                                </option>
+                                @* ✅ NEW — cut stock directly from Awaiting SparePart, only for Free service items (ServiceTypeId == 1) *@
+                                @if (item?.ServiceTypeId == 1)
+                                {
+                                    <option value="Sent Spareparts"
+                                            selected="@(currentStatus == "Sent Spareparts")"
+                                            style="background-color:#ffffff; color:#212529;">
+                                        បញ្ជូនគ្រឿងបន្លាស់ទៅជាង(ជួសជុល Free)
+                                    </option>
+                                }
+                            </select>
+                        }
+                        else
+                        {
+                            <span class="status-badge-select @GetAwaitStatusBadgeClass(currentStatus)">
+                                @GetStatusLabel(currentStatus)
+                            </span>
+                        }
+                    </Template>
+                </GridColumn>
+                <GridColumn Field="setAwaitingCustomerConfirmBy" HeaderText="@Loc[nameof(ResourceStrings.TextsetAwaitingSparePartBy)]" Width="150">
+                    <Template>
+                        @{
+                            var item = context as RepairServices;
+                            var username = GetUserNameById(item.setAwaitingSparepartBy);
+                        }
+                        @username
+                    </Template>
+                </GridColumn>
+                <GridColumn HeaderText="Actions" Width="120">
+                    <Template>
+                        @{
+                            var item = context as RepairServices;
+                        }
+                        <DxButton IconCssClass="fas fa-eye"
+                                  CssClass="icon-button info"
+                                  RenderStyle="ButtonRenderStyle.Info"
+                                  RenderStyleMode="ButtonRenderStyleMode.Text"
+                                  Text="@Loc[nameof(ResourceStrings.TextView)]"
+                                  @onclick="() => ShowRepairServiceDetails(item)" />
+                    </Template>
+                </GridColumn>
+            </GridColumns>
+        </SfGrid>
+
+        <FooterPagination CurrentPage="currentGridPage"
+                          TotalPages="totalGridPages"
+                          TotalItems="totalGridItems"
+                          PageSize="gridPageSize"
+                          OnFirstPage="GridFirstPage"
+                          OnPreviousPage="GridPreviousPage"
+                          OnNextPage="GridNextPage"
+                          OnLastPage="GridLastPage" />
+    }
+}
+
+@* ✅ CHANGED — replaced the page's own hand-rolled SfDialog + report markup
+     (duplicated in await-customer.razor) with the shared RepairServiceViewDialog
+     component. AllowEditRemarks stays true here (this page still supports
+     inline remark editing via RemarkIndicator), unlike the read-only usage in
+     await-customer.razor. *@
+<RepairServiceViewDialog Service="_selectedRepairService"
+                         @bind-Visible="isViewDialogVisible"
+                         SpareParts="_spareParts"
+                         GetUserNameById="GetUserNameById"
+                         StatusLabelResolver="GetStatusLabel"
+                         AllowEditRemarks="true"
+                         PresetRemarks="_presetRemarks"
+                         OnSaveRemarks="HandleSaveRemarks" />
+
+<PrintPreviewSidebar @bind-IsOpen="isPrintSidebarOpen"
+                     Base64Pdf="@_printPreviewBase64"
+                     ReportNo="@(_selectedRepairService?.reportNo)" />
+@code {
+    [Parameter] public string ReportNo { get; set; }
+    private SfGrid<RepairServices> MyGrid;
+    ToastAnimationType Animation { get; set; } = ToastAnimationType.Slide;
+    private string activeBreakpoint { get; set; }
+    public string[] ToolbarItems = new string[] { "ColumnChooser"};
+    private IEnumerable<RepairServices> filteredRepairServices2 = new List<RepairServices>();
+    private HubConnection hubConnection;
+    private bool isViewDialogVisible = false;
+    private string GridSearchValue { get; set; }
+    private System.Threading.Timer _gridSearchDebounceTimer;
+
+    // ✅ CHANGED — RepairServiceViewDialog expects List<SparePartObject>, so this
+    // is now a List instead of IEnumerable to avoid a .ToList() at every binding site.
+    private List<SparePartObject> _spareParts = new();
+    private RepairServices _selectedRepairService;
+    private bool exportEnabled = true;
+    private bool _isPrintSidebarOpen = false;
+    private bool isPrintSidebarOpen
+    {
+        get => _isPrintSidebarOpen;
+        set
+        {
+            _isPrintSidebarOpen = value;
+            if (!value)
+                _printPreviewBase64 = string.Empty;
+        }
+    }
+    private string _printPreviewBase64 = string.Empty;
+    private Dictionary<string, string> _allUsers = new Dictionary<string, string>();
+    private bool _usersLoaded = false;
+    private int currentGridPage = 1;
+    private int gridPageSize = 10;
+    private int totalGridPages = 0;
+    private int totalGridItems = 0;
+    private List<StatusTabMenu.TabItem> Tabs = new()
+{
+    new StatusTabMenu.TabItem { Key = "Inspection", Label = "វិនិច្ឆ័យរួចរាល់" },
+    new StatusTabMenu.TabItem { Key = "Awaiting SparePart", Label = "ផ្នែកជាងស្នើរគ្រឿងបន្លាស់" },
+};
+
+    // ✅ page នេះ default ត្រូវជា "Awaiting SparePart" ខុសពី inspection-list.razor
+    // ដែល default ជា "Inspection"
+    private string ActiveTabKey = "Awaiting SparePart";
+
+    private async Task HandleTabChanged(string tabKey)
+    {
+        ActiveTabKey = tabKey;
+        currentGridPage = 1;
+        GridSearchValue = string.Empty;
+
+        await LoadGridData();
+        StateHasChanged();
+    }
+    // ✅ Preset quick-pick remarks — passed into <RepairServiceViewDialog PresetRemarks="_presetRemarks" />
+    private static readonly string[] _presetRemarks = new[]
+    {
+        "មានស្តុក",
+        "ដោះពីម៉ាស៊ីន",
+        "ស្តុកក្នុងស្រុក",
+        "រង់ចាំ ៦ ទៅ៨អាទិត្យ"
+    };
+    private static string GetCacheKeyForTab(string status, int page, int size) => status switch
+    {
+        "Inspection" => CacheKeys.InspectionItem(page, size),
+        "Awaiting SparePart" => CacheKeys.AwaitSparePart(page, size),
+        "Sale Confirmed" => CacheKeys.SaleConfirmed(page, size),
+        "Sent Spareparts" => CacheKeys.SentSpareparts(page, size),
+        _ => CacheKeys.AwaitSparePart(page, size),
+    };
+
+    private static string GetPrefixForTab(string status) => status switch
+    {
+        "Inspection" => CacheKeys.PrefixInspectionItem,
+        "Awaiting SparePart" => CacheKeys.PrefixAwaitSparePart,
+        "Sale Confirmed" => CacheKeys.PrefixSaleConfirmed,
+        "Sent Spareparts" => CacheKeys.PrefixSentSpareparts,
+        _ => CacheKeys.PrefixAwaitSparePart,
+    };
+
+    private string GetStatusLabel(string status) => status switch
+    {
+        "Inspection" => "វិនិច្ឆ័យរួចរាល់",
+        "Inspecting" => "វិនិច្ឆ័យម្ដងទៀត",
+        "Awaiting SparePart" => "រង់ចាំគ្រឿងបន្លាស់",
+        "Awaiting Customer Confirm" => "រង់ចាំយល់ព្រមពីភ្ញៀវ",
+        "Sale Confirmed" => "ផ្នែកទីផ្សារបានអនុម័ត Confirm",
+        "Sent Spareparts" => "បានបញ្ជូនគ្រឿងបន្លាស់",
+        _ => status
+    };
+
+    private string GetAwaitStatusBadgeClass(string status) => status switch
+    {
+        "Inspection" => "badge-inspection",
+        "Inspecting" => "badge-inspecting",
+        "Awaiting SparePart" => "badge-awaiting-sparepart",
+        "Awaiting Customer Confirm" => "badge-awaiting-customer",
+        "Sale Confirmed" => "badge-sale-confirmed",
+        "Sent Spareparts" => "badge-sent-spareparts",
+        _ => "badge-default"
+    };
+    protected override async Task OnInitializedAsync()
+    {
+        await base.OnInitializedAsync();
+        try
+        {
+            await LoadAllUsersAsync();
+            await LoadTabCountsAsync();
+
+            var gridViewResult = await Cache.GetOrSetAsync(
+                GetCacheKeyForTab(ActiveTabKey, currentGridPage, gridPageSize),
+                () => RepairItemService.SearchRepairServicesAsync(
+                    pageNumber: currentGridPage,
+                    pageSize: gridPageSize,
+                    status: ActiveTabKey,
+                    sortBy: "awaitingSparepartDate",
+                    sortDescending: true),
+                TimeSpan.FromMinutes(3)
+            );
+
+            filteredRepairServices2 = gridViewResult?.Items ?? new List<RepairServices>();
+            totalGridPages = gridViewResult?.TotalPages ?? 0;
+            totalGridItems = gridViewResult?.TotalCount ?? 0;
+
+            var activeTab = Tabs.FirstOrDefault(t => t.Key == ActiveTabKey);
+            if (activeTab != null) activeTab.Count = totalGridItems;
+
+            var sparePartsResult = await SparePartService.GetSparePartsPagedAsync(pageNumber: 1, pageSize: 10);
+            _spareParts = sparePartsResult.Items?.ToList() ?? new List<SparePartObject>();
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Error loading data: {ex.Message}");
+            filteredRepairServices2 = new List<RepairServices>();
+        }
+
+        hubConnection = new HubConnectionBuilder()
+            .WithUrl(NavigationManager.ToAbsoluteUri("/itemHub"))
+            .Build();
+
+        hubConnection.On<ItemUpdateMessage>("ReceiveItemUpdate", async (msg) =>
+  {
+      var affected = msg?.AffectedStatuses ?? Array.Empty<string>();
+
+      foreach (var status in affected)
+          await Cache.InvalidateByPrefixAsync(GetPrefixForTab(status));
+
+      await Cache.InvalidateAsync(CacheKeys.DashboardStats);
+
+      await LoadTabCountsAsync();
+
+      if (affected.Contains(ActiveTabKey))
+          await LoadGridData();
+
+      await InvokeAsync(StateHasChanged);
+  });
+
+        hubConnection.On<Guid>("BroadcastItemDelete", async (deletedItemId) =>
+        {
+            await Cache.InvalidateByPrefixAsync(GetPrefixForTab(ActiveTabKey));
+            await Cache.InvalidateAsync(CacheKeys.DashboardStats);
+            await LoadTabCountsAsync();
+            await LoadGridData();
+            await InvokeAsync(StateHasChanged);
+        });
+
+        await hubConnection.StartAsync();
+        hubConnection.Closed += async (error) =>
+      {
+          await Task.Delay(new Random().Next(0, 5) * 1000);
+          try { await hubConnection.StartAsync(); }
+          catch (Exception ex) { Console.WriteLine($"Reconnection failed: {ex.Message}"); }
+      };
+    }
+    private async Task LoadTabCountsAsync()
+    {
+        try
+        {
+            // ✅ CHANGED — each tab's count is now cached under the same Redis
+            // prefix used for that tab's list data (GetPrefixForTab). Every
+            // status-change path already calls
+            // Cache.InvalidateByPrefixAsync(GetPrefixForTab(status)) whenever
+            // an item enters/leaves a status, so this count cache is
+            // invalidated for free. Previously this fired 2 full
+            // SearchRepairServicesAsync calls with ZERO caching every time
+            // OnInitializedAsync ran AND every time a SignalR broadcast
+            // arrived on ANY connected client — this was the main source of
+            // "thundering herd" load against the backend API causing
+            // intermittent slowness for users.
+            var tasks = Tabs.Select(async t =>
+            {
+                var cacheKey = $"{GetPrefixForTab(t.Key)}count";
+
+                var result = await Cache.GetOrSetAsync(
+                    cacheKey,
+                    () => RepairItemService.SearchRepairServicesAsync(
+                        pageNumber: 1,
+                        pageSize: 1,
+                        status: t.Key,
+                        sortBy: "reportNo",
+                        sortDescending: true),
+                    TimeSpan.FromMinutes(3)
+                );
+
+                return result;
+            }).ToList();
+
+            var results = await Task.WhenAll(tasks);
+
+            for (int i = 0; i < Tabs.Count; i++)
+            {
+                Tabs[i].Count = results[i]?.TotalCount ?? 0;
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"❌ Error loading tab counts: {ex.Message}");
+        }
+    }
+    private async Task LoadAllUsersAsync()
+    {
+        if (_usersLoaded)
+            return;
+
+        try
+        {
+            _allUsers = await GlobalUserCache.GetUsersAsync();
+            _usersLoaded = true;
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"❌ Error loading users: {ex.Message}");
+            _allUsers = new Dictionary<string, string>();
+        }
+    }
+    private SparePartObject GetSparePartById(Guid? sparePartId)
+    {
+        if (!sparePartId.HasValue || sparePartId.Value == Guid.Empty) return null;
+        return _spareParts.FirstOrDefault(sp => sp.Id == sparePartId.Value);
+    }
+    // ✅ NEW — makes sure every spare part referenced by `items` is present in
+    // _spareParts before it's used to resolve display names. Needed because
+    // this page seeds _spareParts with only the first 10 catalog records at
+    // startup (GetSparePartsPagedAsync(1,10)), and only tops it up when a
+    // specific item's View dialog is opened (ShowRepairServiceDetails).
+    // Status-change actions from the grid dropdown never go through that
+    // dialog, so without this call, any spare part outside the first 10
+    // would resolve to "Unknown Item" in the Telegram notification.
+    private async Task EnsureSparePartsLoadedAsync(IEnumerable<SparePartItem> items)
+    {
+        if (items == null) return;
+
+        var missingIds = items
+            .Where(sp => sp.SparePartId.HasValue && sp.SparePartId.Value != Guid.Empty)
+            .Select(sp => sp.SparePartId.Value)
+            .Where(id => !_spareParts.Any(x => x.Id == id))
+            .Distinct()
+            .ToList();
+
+        if (missingIds.Count == 0) return;
+
+        var fetchTasks = missingIds.Select(async id =>
+        {
+            try
+            {
+                return await SparePartService.GetSparePartByIdAsync(id);
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"❌ Error fetching spare part {id}: {ex.Message}");
+                return null;
+            }
+        });
+
+        var fetched = await Task.WhenAll(fetchTasks);
+        var newlyFetched = fetched.Where(x => x != null);
+        _spareParts = _spareParts.Concat(newlyFetched).ToList();
+    }
+    private async Task OnAwaitStatusChanged(RepairServices item, string newStatus)
+    {
+        if (string.IsNullOrEmpty(newStatus) || newStatus == item.Status)
+            return;
+
+        // ✅ NEW — server-side enforcement mirroring the UI gate: "Sent Spareparts"
+        // from this page is only allowed for Free service items (ServiceTypeId == 1).
+        if (newStatus == "Sent Spareparts" && item.ServiceTypeId != 1)
+        {
+            ToastNotificationService.ShowToast(new ToastOptions
+            {
+                ProviderName = "Error",
+                Title = "Error",
+                Text = "ជម្រើសនេះអនុញ្ញាតតែសម្រាប់សេវាកម្ម Free ប៉ុណ្ណោះ",
+                ThemeMode = ToastThemeMode.Pastel,
+                RenderStyle = ToastRenderStyle.Danger
+            });
+            return;
+        }
+
+        string previousStatus = item.Status;
+
+        try
+        {
+            var authState = await AuthenticationStateProvider.GetAuthenticationStateAsync();
+            var user = authState.User;
+
+            if (!user.Identity.IsAuthenticated)
+            {
+                ToastNotificationService.ShowToast(new ToastOptions
+                {
+                    ProviderName = "Error",
+                    Title = "Authentication Error",
+                    Text = "User is not authenticated",
+                    ThemeMode = ToastThemeMode.Pastel,
+                    RenderStyle = ToastRenderStyle.Danger
+                });
+                return;
+            }
+
+            Guid currentUserId = Guid.Empty;
+            var userIdClaim = user.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
+            if (!string.IsNullOrEmpty(userIdClaim))
+                Guid.TryParse(userIdClaim, out currentUserId);
+
+            if (newStatus == "Awaiting Customer Confirm")
+            {
+                var request = new AwaitingCustomerConfirmRequest
+                {
+                    Id = item.Id,
+                    SetAwaitingCustomerConfirmBy = currentUserId
+                };
+                await AwaitingCustomerConfirmService.SetAwaitingCustomerConfirmAsync(request);
+
+                // ✅ CHANGED — only "Awaiting SparePart" (leaving) + "Awaiting
+                // Customer Confirm" (entering) need clearing.
+                await Cache.InvalidateByPrefixAsync(CacheKeys.PrefixAwaitSparePart);
+                await Cache.InvalidateByPrefixAsync(CacheKeys.PrefixAwaitCustomer);
+                await Cache.InvalidateAsync(CacheKeys.DashboardStats);
+
+                if (hubConnection?.State == HubConnectionState.Connected)
+                    await hubConnection.SendAsync("BroadcastItemUpdate", new ItemUpdateMessage
+                    {
+                        AffectedStatuses = new[] { "Awaiting SparePart", "Awaiting Customer Confirm" }
+                    });
+
+                // ✅ FIX #1 — guarantee full catalog coverage for THIS item's spare
+                // parts before resolving names. Status changes from the grid
+                // dropdown skip the View dialog (the only place that normally
+                // fetches missing spare parts), so without this, anything outside
+                // the initial 10-record catalog load would show "Unknown Item".
+                await EnsureSparePartsLoadedAsync(item.SparePartItems);
+
+                // ✅ FIX #2 — resolve the spare-parts section into a plain string
+                // NOW, synchronously, instead of inside the Task.Run below. If a
+                // different item's View dialog is opened while that background
+                // task is still pending, _spareParts gets reassigned (Concat().
+                // ToList()) concurrently — racing with the background task's read
+                // and risking the same "Unknown Item" fallback intermittently.
+                var partsWithRemarksCaptured = (item.SparePartItems ?? new List<SparePartItem>())
+                    .Where(sp => sp.SparePartId.HasValue && sp.SparePartId.Value != Guid.Empty)
+                    .Select(sp =>
+                    {
+                        var catalogItem = GetSparePartById(sp.SparePartId);
+                        return (
+                            ItemName: catalogItem?.ItemName ?? "Unknown Item",
+                            sp.Quantity,
+                            sp.Condition,
+                            sp.Remarks
+                        );
+                    })
+                    .ToList();
+                string sparePartsSectionCaptured = TelegramMessageHelper.BuildSparePartsSectionWithRemarks(partsWithRemarksCaptured);
+
+                // ✅ Telegram: close out "AwaitingSparepart" topic (57), open "AwaitingCustomerConfirm" topic (55)
+                _ = Task.Run(async () =>
+                {
+                    try
+                    {
+                        await TelegramQueue.EnqueueAsync(new TelegramMessage
+                        {
+                            Action = TelegramAction.Delete,
+                            ItemId = item.Id,
+                            TopicKey = "AwaitingSparepart",
+                            ResolveMessageIdFromTopic = true
+                        });
+                    }
+                    catch (Exception ex)
+                    {
+                        Console.WriteLine($"⚠️ Telegram delete enqueue failed: {ex.Message}");
+                    }
+
+                    try
+                    {
+                        await TelegramQueue.EnqueueAsync(new TelegramMessage
+                        {
+                            Action = TelegramAction.Send,
+                            ItemId = item.Id,
+                            TopicKey = "AwaitingCustomerConfirm",
+                            Text = $"📞 <b>បានបញ្ជូនមកផ្នែកទីផ្សារ</b>\n\n" +
+                                   $"លេខ Report: <b>{item.reportNo}</b>\n\n" +
+                                   $"ស្ថាប័ន: {item.CompanyName}\n\n" +
+                                   $"ទីតាំងជួសជុល: {item.ServiceLocation}\n\n" +
+                                   $"ម៉ាស៊ីន: {item.itemName}\n\n" +
+                                   $"SerialNumber: {item.serialNumber}\n\n" +
+                                   $"ប្រភេទសេវាកម្ម: {item.ServiceType}\n\n" +
+                                   $"សំណើពីអតិថិជន: {item.CustomerRequest}\n\n" +
+                                   $"វិនិច្ឆ័យ: {item.Inspection}\n\n" +
+                                   $"ដំណោះស្រាយ: {item.Solution}\n\n" +
+                                   $"ឈ្មោះអ្នកវិនិច្ឆ័យ: {GetUserNameById(item.inspectBy)}\n\n" +
+                                   $"ឈ្មោះអ្នកបញ្ជូន: {GetUserNameById(currentUserId)}" +
+                                   $"{sparePartsSectionCaptured}"
+                        });
+                    }
+                    catch (Exception ex)
+                    {
+                        Console.WriteLine($"⚠️ Telegram send enqueue failed: {ex.Message}");
+                    }
+                });
+
+                ToastNotificationService.ShowToast(new ToastOptions
+                {
+                    ProviderName = "Customization",
+                    Title = "Success",
+                    Text = $"{item.reportNo} → រង់ចាំយល់ព្រមពីភ្ញៀវ",
+                    ThemeMode = ToastThemeMode.Pastel,
+                    RenderStyle = ToastRenderStyle.Success
+                });
+            }
+            else if (newStatus == "Inspecting")
+            {
+                await RepairItemService.MoveBackToInspectingAsync(item.Id);
+
+                // ✅ CHANGED — only "Awaiting SparePart" (leaving) + "Inspecting"
+                // (entering, served by inspect-item.razor) need clearing.
+                await Cache.InvalidateByPrefixAsync(CacheKeys.PrefixAwaitSparePart);
+                await Cache.InvalidateByPrefixAsync(CacheKeys.PrefixInspectItem);
+                await Cache.InvalidateAsync(CacheKeys.DashboardStats);
+
+                if (hubConnection?.State == HubConnectionState.Connected)
+                    await hubConnection.SendAsync("BroadcastItemUpdate", new ItemUpdateMessage
+                    {
+                        AffectedStatuses = new[] { "Awaiting SparePart", "Inspecting" }
+                    });
+
+                // ✅ Telegram: close out "AwaitingSparepart" topic (57), re-open "Inspecting" topic (61)
+                // (No spare-part section on this branch — no coverage/race concern here.)
+                _ = Task.Run(async () =>
+                {
+                    try
+                    {
+                        await TelegramQueue.EnqueueAsync(new TelegramMessage
+                        {
+                            Action = TelegramAction.Delete,
+                            ItemId = item.Id,
+                            TopicKey = "AwaitingSparepart",
+                            ResolveMessageIdFromTopic = true
+                        });
+                    }
+                    catch (Exception ex)
+                    {
+                        Console.WriteLine($"⚠️ Telegram delete enqueue failed: {ex.Message}");
+                    }
+
+                    try
+                    {
+                        await TelegramQueue.EnqueueAsync(new TelegramMessage
+                        {
+                            Action = TelegramAction.Send,
+                            ItemId = item.Id,
+                            TopicKey = "Inspecting",
+                            Text = $"🔁 <b>បញ្ជូនទៅផ្នែកជាងវិញ</b>\n" +
+                                   $"លេខ Report: <b>{item.reportNo}</b>\n" +
+                                   $"ក្រុមហ៊ុន: {item.CompanyName}\n" +
+                                   $"ម៉ាស៊ីន: {item.itemName}\n" +
+                                   $"លេខស៊េរី: {item.serialNumber}"
+                        });
+                    }
+                    catch (Exception ex)
+                    {
+                        Console.WriteLine($"⚠️ Telegram send enqueue failed: {ex.Message}");
+                    }
+                });
+
+                ToastNotificationService.ShowToast(new ToastOptions
+                {
+                    ProviderName = "Customization",
+                    Title = "Success",
+                    Text = $"{item.reportNo} → បញ្ជូនទៅផ្នែកជាងវិញ",
+                    ThemeMode = ToastThemeMode.Pastel,
+                    RenderStyle = ToastRenderStyle.Success
+                });
+            }
+            // ✅ NEW — "Sent Spareparts" directly from Awaiting SparePart, only for
+            // Free service items (ServiceTypeId == 1). Cuts stock the same way
+            // sale-confirmed.razor's "Sale Confirmed" → "Sent Spareparts" path does.
+            else if (newStatus == "Sent Spareparts")
+            {
+                await SentSparepartsService.SetSentSparepartsAsync(item.Id, currentUserId);
+
+                // Leaving "Awaiting SparePart", entering "Sent Spareparts", and
+                // stock levels changed — invalidate all three prefixes.
+                await Cache.InvalidateByPrefixAsync(CacheKeys.PrefixAwaitSparePart);
+                await Cache.InvalidateByPrefixAsync(CacheKeys.PrefixSentSpareparts);
+                await Cache.InvalidateByPrefixAsync(CacheKeys.PrefixSparePart);
+                await Cache.InvalidateAsync(CacheKeys.DashboardStats);
+
+                if (hubConnection?.State == HubConnectionState.Connected)
+                    await hubConnection.SendAsync("BroadcastItemUpdate", new ItemUpdateMessage
+                    {
+                        AffectedStatuses = new[] { "Awaiting SparePart", "Sent Spareparts" }
+                    });
+
+                // Same coverage fix as the other branches — make sure every spare
+                // part on this item is resolvable before building the Telegram text.
+                await EnsureSparePartsLoadedAsync(item.SparePartItems);
+
+                var sentPartsWithRemarksCaptured = (item.SparePartItems ?? new List<SparePartItem>())
+                    .Where(sp => sp.SparePartId.HasValue && sp.SparePartId.Value != Guid.Empty)
+                    .Select(sp =>
+                    {
+                        var catalogItem = GetSparePartById(sp.SparePartId);
+                        return (
+                            ItemName: catalogItem?.ItemName ?? "Unknown Item",
+                            sp.Quantity,
+                            sp.Condition,
+                            sp.Remarks
+                        );
+                    })
+                    .ToList();
+                string sentSparePartsSectionCaptured = TelegramMessageHelper.BuildSparePartsSectionWithRemarks(sentPartsWithRemarksCaptured);
+
+                // ✅ Telegram: close out "AwaitingSparepart" topic (57), open "SentSpareparts" topic
+                _ = Task.Run(async () =>
+                {
+                    try
+                    {
+                        await TelegramQueue.EnqueueAsync(new TelegramMessage
+                        {
+                            Action = TelegramAction.Delete,
+                            ItemId = item.Id,
+                            TopicKey = "AwaitingSparepart",
+                            ResolveMessageIdFromTopic = true
+                        });
+                    }
+                    catch (Exception ex)
+                    {
+                        Console.WriteLine($"⚠️ Telegram delete enqueue failed: {ex.Message}");
+                    }
+
+                    try
+                    {
+                        await TelegramQueue.EnqueueAsync(new TelegramMessage
+                        {
+                            Action = TelegramAction.Send,
+                            ItemId = item.Id,
+                            TopicKey = "SentSpareparts",
+                            Text = $"✅ <b>បានបញ្ជូនគ្រឿងបន្លាស់ទៅជាង</b>\n\n" +
+                                   $"លេខ Report: <b>{item.reportNo}</b>\n\n" +
+                                   $"ស្ថាប័ន: {item.CompanyName}\n\n" +
+                                   $"ទីតាំងជួសជុល: {item.ServiceLocation}\n\n" +
+                                   $"ម៉ាស៊ីន: {item.itemName}\n\n" +
+                                   $"SerialNumber: {item.serialNumber}\n\n" +
+                                   $"ប្រភេទសេវាកម្មជួសជុល: {item.ServiceType}\n\n" +
+                                   $"សំណើពីអតិថិជន: {item.CustomerRequest}\n\n" +
+                                   $"វិនិច្ឆ័យ: {item.Inspection}\n\n" +
+                                   $"ដំណោះស្រាយ: {item.Solution}\n\n" +
+                                   $"ឈ្មោះអ្នកវិនិច្ឆ័យ: {GetUserNameById(item.inspectBy)}\n\n" +
+                                   $"ឈ្មោះអ្នកបញ្ជូន: {GetUserNameById(currentUserId)}" +
+                                   $"{sentSparePartsSectionCaptured}"
+                        });
+                    }
+                    catch (Exception ex)
+                    {
+                        Console.WriteLine($"⚠️ Telegram send enqueue failed: {ex.Message}");
+                    }
+                });
+
+                ToastNotificationService.ShowToast(new ToastOptions
+                {
+                    ProviderName = "Customization",
+                    Title = "Success",
+                    Text = $"{item.reportNo} → បញ្ជូនគ្រឿងបន្លាស់ទៅជាង",
+                    ThemeMode = ToastThemeMode.Pastel,
+                    RenderStyle = ToastRenderStyle.Success
+                });
+            }
+
+            filteredRepairServices2 = filteredRepairServices2.Where(x => x.Id != item.Id).ToList();
+            totalGridItems = Math.Max(0, totalGridItems - 1);
+            totalGridPages = totalGridItems > 0 ? (int)Math.Ceiling(totalGridItems / (double)gridPageSize) : 0;
+            StateHasChanged();
+        }
+        catch (Exception ex)
+        {
+            item.Status = previousStatus;
+            StateHasChanged();
+
+            ToastNotificationService.ShowToast(new ToastOptions
+            {
+                ProviderName = "Error",
+                Title = "Error",
+                Text = $"Failed: {ex.Message}",
+                ThemeMode = ToastThemeMode.Pastel,
+                RenderStyle = ToastRenderStyle.Danger
+            });
+        }
+    }
+
+    private async Task LoadGridData()
+    {
+        try
+        {
+            if (!string.IsNullOrWhiteSpace(GridSearchValue))
+            {
+                var result = await RepairItemService.SearchRepairServicesAsync(
+                    pageNumber: currentGridPage,
+                    pageSize: gridPageSize,
+                    status: ActiveTabKey,
+                    searchTerm: GridSearchValue.Trim(),
+                    sortBy: "awaitingSparepartDate",
+                    sortDescending: true
+                );
+
+                filteredRepairServices2 = result.Items;
+                totalGridPages = result.TotalPages;
+                totalGridItems = result.TotalCount;
+            }
+            else
+            {
+                var result = await Cache.GetOrSetAsync(
+                    GetCacheKeyForTab(ActiveTabKey, currentGridPage, gridPageSize),
+                    () => RepairItemService.SearchRepairServicesAsync(
+                        pageNumber: currentGridPage,
+                        pageSize: gridPageSize,
+                        status: ActiveTabKey,
+                        sortBy: "awaitingSparepartDate",
+                        sortDescending: true),
+                    TimeSpan.FromMinutes(3)
+                );
+
+                filteredRepairServices2 = result?.Items ?? new List<RepairServices>();
+                totalGridPages = result?.TotalPages ?? 0;
+                totalGridItems = result?.TotalCount ?? 0;
+            }
+
+            var activeTab = Tabs.FirstOrDefault(t => t.Key == ActiveTabKey);
+            if (activeTab != null) activeTab.Count = totalGridItems;
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Error loading grid data: {ex.Message}");
+        }
+    }
+
+    private void OnGridSearchInput(InputEventArgs args)
+    {
+        _gridSearchDebounceTimer?.Dispose();
+
+        if (string.IsNullOrWhiteSpace(args.Value))
+        {
+            _ = Task.Run(async () =>
+            {
+                await InvokeAsync(async () =>
+                {
+                    await LoadGridData();
+                    StateHasChanged();
+                });
+            });
+            return;
+        }
+
+        _gridSearchDebounceTimer = new System.Threading.Timer(async _ =>
+        {
+            try
+            {
+                await InvokeAsync(async () =>
+                {
+                    await PerformGridSearchInternal(args.Value);
+                });
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Grid search error: {ex.Message}");
+            }
+        }, null, 500, Timeout.Infinite);
+    }
+
+    private async Task PerformGridSearch()
+    {
+        if (string.IsNullOrWhiteSpace(GridSearchValue))
+        {
+            await LoadGridData();
+            return;
+        }
+
+        await PerformGridSearchInternal(GridSearchValue);
+    }
+
+    private async Task PerformGridSearchInternal(string searchValue)
+    {
+        try
+        {
+            var result = await RepairItemService.SearchRepairServicesAsync(
+                pageNumber: 1,
+                pageSize: gridPageSize,
+                status: ActiveTabKey,
+                searchTerm: searchValue.Trim(),
+                sortBy: "reportNo",
+                sortDescending: true
+            );
+
+            filteredRepairServices2 = result.Items;
+            totalGridPages = result.TotalPages;
+            totalGridItems = result.TotalCount;
+            currentGridPage = 1;
+
+            StateHasChanged();
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Grid search error: {ex.Message}");
+            ToastNotificationService.ShowToast(new ToastOptions
+            {
+                ProviderName = "Error",
+                Title = "Search Error",
+                Text = $"Failed to search: {ex.Message}",
+                ThemeMode = ToastThemeMode.Pastel,
+                RenderStyle = ToastRenderStyle.Danger
+            });
+        }
+    }
+
+    private async Task ClearGridSearch()
+    {
+        GridSearchValue = string.Empty;
+        await LoadGridData();
+        StateHasChanged();
+    }
+
+    private async Task GridNextPage()
+    {
+        if (currentGridPage < totalGridPages)
+        {
+            currentGridPage++;
+            await LoadGridData();
+            StateHasChanged();
+        }
+    }
+
+    private async Task GridPreviousPage()
+    {
+        if (currentGridPage > 1)
+        {
+            currentGridPage--;
+            await LoadGridData();
+            StateHasChanged();
+        }
+    }
+
+    private async Task GridFirstPage()
+    {
+        if (currentGridPage != 1)
+        {
+            currentGridPage = 1;
+            await LoadGridData();
+            StateHasChanged();
+        }
+    }
+
+    private async Task GridLastPage()
+    {
+        if (currentGridPage != totalGridPages)
+        {
+            currentGridPage = totalGridPages;
+            await LoadGridData();
+            StateHasChanged();
+        }
+    }
+
+    private void RowSelectHandler(RowSelectEventArgs<RepairServices> args)
+    {
+        if (args.Data != null)
+        {
+            _selectedRepairService = args.Data;
+        }
+    }
+
+    private string GetUserNameById(Guid? userId)
+    {
+        if (!userId.HasValue || userId.Value == Guid.Empty)
+            return "Unknown";
+
+        string userIdString = userId.Value.ToString();
+
+        if (!_usersLoaded)
+            return "Loading...";
+
+        if (_allUsers.TryGetValue(userIdString, out string username))
+            return username;
+
+        return "Unknown User";
+    }
+
+    private async Task ShowRepairServiceDetails(RepairServices repairService)
+    {
+        _selectedRepairService = repairService;
+
+        // ✅ CHANGED — was a sequential foreach + await, meaning each spare
+        // part detail was fetched one-at-a-time (N round-trips in series).
+        // A report with 8-10 spare parts could take several seconds just to
+        // open the view dialog. Now all missing spare parts are fetched
+        // concurrently with Task.WhenAll — total time ≈ the slowest single
+        // call instead of the sum of all calls.
+        if (_selectedRepairService?.SparePartItems != null && _selectedRepairService.SparePartItems.Any())
+        {
+            var missingIds = _selectedRepairService.SparePartItems
+                .Where(item => item.SparePartId.HasValue && item.SparePartId.Value != Guid.Empty)
+                .Select(item => item.SparePartId.Value)
+                .Where(id => !_spareParts.Any(x => x.Id == id))
+                .Distinct()
+                .ToList();
+
+            if (missingIds.Count > 0)
+            {
+                var fetchTasks = missingIds.Select(async id =>
+                {
+                    try
+                    {
+                        return await SparePartService.GetSparePartByIdAsync(id);
+                    }
+                    catch (Exception ex)
+                    {
+                        Console.WriteLine($"❌ Error fetching spare part {id}: {ex.Message}");
+                        return null;
+                    }
+                });
+
+                var fetchedResults = await Task.WhenAll(fetchTasks);
+
+                var newlyFetched = fetchedResults.Where(x => x != null);
+                _spareParts = _spareParts.Concat(newlyFetched).ToList();
+            }
+        }
+
+        // ✅ CHANGED — DialogEdit/SfDialog.ShowAsync() no longer exists here
+        // (replaced by RepairServiceViewDialog), so just flip the bound
+        // Visible flag; the component's own Visible parameter drives it.
+        isViewDialogVisible = true;
+        StateHasChanged();
+    }
+
+    // ✅ CHANGED — RepairServiceViewDialog's OnSaveRemarks callback hands back
+    // a (SparePartItem Part, string NewValue) tuple; this wrapper unpacks it
+    // and forwards to the existing SaveRemarks logic (persistence/cache/
+    // broadcast/toast), which is unchanged.
+    private async Task HandleSaveRemarks((SparePartItem Part, string NewValue) args)
+    {
+        await SaveRemarks(args.Part, args.NewValue);
+    }
+
+    private async Task SaveRemarks(SparePartItem sparePart, string newValue)
+    {
+        try
+        {
+            var success = await SparePartService.UpdateSparepartItemRemarksAsync(sparePart.Id, newValue);
+
+            if (success)
+            {
+                var savedAt = DateTime.Now;
+
+                sparePart.Remarks = newValue;
+                sparePart.RemarksUpdatedAt = savedAt;
+
+                await Cache.InvalidateByPrefixAsync(CacheKeys.PrefixAwaitSparePart);
+
+                if (hubConnection?.State == HubConnectionState.Connected)
+                    await hubConnection.SendAsync("BroadcastItemUpdate", new ItemUpdateMessage
+                    {
+                        AffectedStatuses = new[] { "Awaiting SparePart" }
+                    });
+
+                ToastNotificationService.ShowToast(new ToastOptions
+                {
+                    ProviderName = "Customization",
+                    Title = "Saved",
+                    Text = "Remark updated",
+                    ThemeMode = ToastThemeMode.Pastel,
+                    RenderStyle = ToastRenderStyle.Success
+                });
+
+                // ✅ CHANGED — instead of sending a brand-new "remark updated" message,
+                // rebuild the SAME "📦 បានបញ្ជូនទៅផ្នែកស្តុក" notification (all fields +
+                // EVERY spare part's own Remarks line, not just the one just edited)
+                // and push it as an Edit onto the message already sitting in the
+                // "AwaitingSparepart" topic. This keeps one message per item that
+                // stays up to date, instead of a new "updated" message per save.
+                var service = _selectedRepairService;
+                var capturedItemId = service?.Id;
+                var capturedReportNo = service?.reportNo;
+                var capturedCompanyName = service?.CompanyName;
+                var capturedServiceLocation = service?.ServiceLocation;
+                var capturedMachineItemName = service?.itemName;
+                var capturedMachineSerialNumber = service?.serialNumber;
+                var capturedCustomerRequest = service?.CustomerRequest;
+                var capturedInspection = service?.Inspection;
+                var capturedSolution = service?.Solution;
+                var capturedInspectorName = GetUserNameById(service?.inspectBy);
+                var capturedSenderName = GetUserNameById(service?.setAwaitingSparepartBy);
+
+                // Snapshot every spare part row on this service (not just the row
+                // just edited) so the rebuilt message reflects ALL current remarks.
+                // ItemName is resolved via _spareParts (the catalog already loaded
+                // for this dialog session by ShowRepairServiceDetails), same lookup
+                // pattern used everywhere else in this file.
+                var capturedSpareParts = (service?.SparePartItems ?? new List<SparePartItem>())
+                    .Where(sp => sp.SparePartId.HasValue && sp.SparePartId.Value != Guid.Empty)
+                    .Select(sp =>
+                    {
+                        var catalogItem = _spareParts.FirstOrDefault(fp => fp.Id == sp.SparePartId.Value);
+                        return new
+                        {
+                            ItemName = catalogItem?.ItemName ?? "Unknown Item",
+                            sp.Quantity,
+                            sp.Condition,
+                            // Reflect the value just saved for the edited row; every
+                            // other row keeps whatever remark is already on it.
+                            Remarks = sp.Id == sparePart.Id ? newValue : sp.Remarks
+                        };
+                    })
+                    .ToList();
+
+                _ = Task.Run(async () =>
+                {
+                    try
+                    {
+                        string sparePartsSection = TelegramMessageHelper.BuildSparePartsSectionWithRemarks(
+                              capturedSpareParts.Select(sp => (sp.ItemName, sp.Quantity, sp.Condition, sp.Remarks)));
+
+                        await TelegramQueue.EnqueueAsync(new TelegramMessage
+                        {
+                            Action = TelegramAction.Edit,
+                            ItemId = capturedItemId ?? Guid.Empty,
+                            TopicKey = "AwaitingSparepart",
+                            ResolveMessageIdFromTopic = true,
+                            Text = $"📦 <b>បានបញ្ជូនទៅផ្នែកស្តុក</b>\n\n" +
+                                   $"លេខ Report: <b>{capturedReportNo}</b>\n\n" +
+                                   $"ស្ថាប័ន: {capturedCompanyName}\n\n" +
+                                   $"ទីតាំងជួសជុល: {capturedServiceLocation}\n\n" +
+                                   $"ម៉ាស៊ីន: {capturedMachineItemName}\n\n" +
+                                   $"SerialNumber: {capturedMachineSerialNumber}\n\n" +
+                                   $"សំណើពីអតិថិជន: {capturedCustomerRequest}\n\n" +
+                                   $"វិនិច្ឆ័យ: {capturedInspection}\n\n" +
+                                   $"ដំណោះស្រាយ: {capturedSolution}\n\n" +
+                                   $"ឈ្មោះអ្នកវិនិច្ឆ័យ: {capturedInspectorName}\n\n" +
+                                   $"ឈ្មោះអ្នកបញ្ជូន: {capturedSenderName}" +
+                                   $"{sparePartsSection}"
+                        });
+                    }
+                    catch (Exception ex)
+                    {
+                        Console.WriteLine($"⚠️ Telegram remark notify failed: {ex.Message}");
+                    }
+                });
+            }
+            else
+            {
+                ToastNotificationService.ShowToast(new ToastOptions
+                {
+                    ProviderName = "Error",
+                    Title = "Error",
+                    Text = "Failed to save remark",
+                    ThemeMode = ToastThemeMode.Pastel,
+                    RenderStyle = ToastRenderStyle.Danger
+                });
+            }
+        }
+        catch (Exception ex)
+        {
+            ToastNotificationService.ShowToast(new ToastOptions
+            {
+                ProviderName = "Error",
+                Title = "Error",
+                Text = $"Failed: {ex.Message}",
+                ThemeMode = ToastThemeMode.Pastel,
+                RenderStyle = ToastRenderStyle.Danger
+            });
+        }
+
+        StateHasChanged();
+    }
+
+    private async Task ShowReportPreview(RepairServices selectedRepairService)
+    {
+        try
+        {
+            _selectedRepairService = selectedRepairService;
+            _printPreviewBase64 = string.Empty;
+            isPrintSidebarOpen = true;
+            StateHasChanged();
+
+            _printPreviewBase64 = await PrintPreviewService.GenerateReportBase64Async(
+                selectedRepairService,
+                GetUserNameById
+            );
+
+            StateHasChanged();
+        }
+        catch (Exception ex)
+        {
+            isPrintSidebarOpen = false;
+            _printPreviewBase64 = string.Empty;
+
+            ToastNotificationService.ShowToast(new ToastOptions
+            {
+                ProviderName = "Error",
+                Title = "Report Error",
+                Text = $"Failed to generate report: {ex.Message}",
+                ThemeMode = ToastThemeMode.Pastel,
+                RenderStyle = ToastRenderStyle.Danger
+            });
+        }
+    }
+
+    public async Task ExportToExcel()
+    {
+        await MyGrid.ExportToExcelAsync();
+    }
+    public async Task ExportToPdf()
+    {
+        await MyGrid.ExportToPdfAsync();
+    }
+    private void NewRepairService_Click() { /* existing */ }
+    private void EditRepairService_Click() { /* existing */ }
+
+    public async ValueTask DisposeAsync()
+    {
+        _gridSearchDebounceTimer?.Dispose();
+        if (hubConnection != null) await hubConnection.DisposeAsync();
+    }
+}

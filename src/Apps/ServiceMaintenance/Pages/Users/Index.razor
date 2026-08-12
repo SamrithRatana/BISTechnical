@@ -1,0 +1,338 @@
+@page "/users"
+@using ServiceMaintenance.Services
+@using static ServiceMaintenance.Services.JWT.JwtUserManagementService
+@inject JwtUserManagementService UserManagementService
+@inject NavigationManager NavigationManager
+@inject IJSRuntime JSRuntime
+@attribute [Authorize(Roles = "SuperAdmin")]
+
+<div class="users-container">
+    <!-- Header -->
+    <div class="page-header">
+        <div>
+            <h2 class="page-title">User Management</h2>
+            <p class="page-subtitle">Manage system users, roles, and permissions</p>
+        </div>
+        <div class="header-actions">
+            <button class="btn btn-primary" @onclick="NavigateToCreate">
+                <span class="icon">+</span> Add New User
+            </button>
+        </div>
+    </div>
+
+    <!-- Search & Filters -->
+    <div class="search-section">
+        <div class="search-box">
+            <input type="text"
+                   class="search-input"
+                   placeholder="Search by name, email, or username..."
+                   @bind="searchQuery"
+                   @bind:event="oninput"
+                   @onkeydown="HandleSearchKeyDown" />
+            <button class="btn btn-search" @onclick="SearchUsers">Search</button>
+            @if (!string.IsNullOrEmpty(searchQuery))
+            {
+                <button class="btn btn-clear" @onclick="ClearSearch">Clear</button>
+            }
+        </div>
+    </div>
+
+    <!-- Error/Success Messages -->
+    @if (!string.IsNullOrEmpty(messageText))
+    {
+        <div class="alert @(messageType == "success" ? "alert-success" : "alert-danger")">
+            @messageText
+            <button class="btn-close-alert" @onclick="@(() => messageText = null)">×</button>
+        </div>
+    }
+
+    <!-- Loading State -->
+    @if (isLoading)
+    {
+        <div class="loading-container">
+            <div class="spinner"></div>
+            <p>Loading users...</p>
+        </div>
+    }
+    else if (users == null || !users.Any())
+    {
+        <div class="empty-state">
+            <p>No users found</p>
+        </div>
+    }
+    else
+    {
+        <!-- Users Table -->
+        <div class="table-container">
+            <table class="users-table">
+                <thead>
+                    <tr>
+                        <th>Username</th>
+                        <th>Full Name</th>
+                        <th>Email</th>
+                        <th>Phone</th>
+                        <th>Roles</th>
+                        <th>Status</th>
+                        <th>Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var user in users)
+                    {
+                        <tr>
+                            <td><strong>@user.UserName</strong></td>
+                            <td>@user.FirstName @user.LastName</td>
+                            <td>@user.Email</td>
+                            <td>@(user.PhoneNumber ?? "-")</td>
+                            <td>
+                                <div class="roles-badges">
+                                    @foreach (var role in user.Roles)
+                                    {
+                                        <span class="badge badge-@role.ToLower()">@role</span>
+                                    }
+                                </div>
+                            </td>
+                            <td>
+                                @if (user.IsLocked)
+                                {
+                                    <span class="status-badge status-locked">Locked</span>
+                                }
+                                else
+                                {
+                                    <span class="status-badge status-active">Active</span>
+                                }
+                            </td>
+                            <td>
+                                <div class="action-buttons">
+                                    <button class="btn-action btn-edit" @onclick="() => NavigateToEdit(user.Id)" title="Edit">
+                                        ??
+                                    </button>
+                                    <button class="btn-action btn-roles" @onclick="() => NavigateToRoles(user.Id)" title="Manage Roles">
+                                        ??
+                                    </button>
+                                    @if (user.IsLocked)
+                                    {
+                                        <button class="btn-action btn-unlock" @onclick="() => UnlockUser(user.Id)" title="Unlock">
+                                            ??
+                                        </button>
+                                    }
+                                    else
+                                    {
+                                        <button class="btn-action btn-lock" @onclick="() => LockUser(user.Id)" title="Lock">
+                                            ??
+                                        </button>
+                                    }
+                                    <button class="btn-action btn-delete" @onclick="() => ConfirmDelete(user.Id, user.UserName)" title="Delete">
+                                        ???
+                                    </button>
+                                </div>
+                            </td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        </div>
+
+        <!-- Pagination -->
+        @if (pagination != null && pagination.TotalPages > 1)
+        {
+            <div class="pagination">
+                <button class="btn-page" @onclick="PreviousPage" disabled="@(!pagination.HasPrevious)">
+                    ? Previous
+                </button>
+                <span class="page-info">
+                    Page @pagination.CurrentPage of @pagination.TotalPages (@pagination.TotalCount total users)
+                </span>
+                <button class="btn-page" @onclick="NextPage" disabled="@(!pagination.HasNext)">
+                    Next ?
+                </button>
+            </div>
+        }
+    }
+</div>
+
+<!-- Delete Confirmation Modal -->
+@if (showDeleteModal)
+{
+    <div class="modal-overlay" @onclick="CancelDelete">
+        <div class="modal-content" @onclick:stopPropagation="true">
+            <h3>Confirm Delete</h3>
+            <p>Are you sure you want to delete user <strong>@userToDeleteName</strong>?</p>
+            <p class="warning-text">This action cannot be undone.</p>
+            <div class="modal-actions">
+                <button class="btn btn-danger" @onclick="DeleteUser">Delete</button>
+                <button class="btn btn-secondary" @onclick="CancelDelete">Cancel</button>
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+    private List<UserDto> users = new();
+    private PaginationInfo pagination;
+    private bool isLoading = true;
+    private string searchQuery = "";
+    private int currentPage = 1;
+    private int pageSize = 10;
+    private string messageText;
+    private string messageType;
+
+    // Delete modal
+    private bool showDeleteModal = false;
+    private string userToDeleteId;
+    private string userToDeleteName;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadUsers();
+    }
+
+    private async Task LoadUsers()
+    {
+        isLoading = true;
+        StateHasChanged();
+
+        var response = await UserManagementService.GetAllUsersAsync(currentPage, pageSize);
+
+        if (response.Status == "Success")
+        {
+            users = response.Data;
+            pagination = response.Pagination;
+        }
+        else
+        {
+            ShowMessage(response.Message, "error");
+        }
+
+        isLoading = false;
+    }
+
+    private async Task SearchUsers()
+    {
+        if (string.IsNullOrWhiteSpace(searchQuery))
+        {
+            await LoadUsers();
+            return;
+        }
+
+        isLoading = true;
+        var response = await UserManagementService.SearchUsersAsync(searchQuery, currentPage, pageSize);
+
+        if (response.Status == "Success")
+        {
+            users = response.Data;
+            pagination = response.Pagination;
+        }
+        else
+        {
+            ShowMessage(response.Message, "error");
+        }
+
+        isLoading = false;
+    }
+
+    private async Task HandleSearchKeyDown(KeyboardEventArgs e)
+    {
+        if (e.Key == "Enter")
+        {
+            await SearchUsers();
+        }
+    }
+
+    private async Task ClearSearch()
+    {
+        searchQuery = "";
+        currentPage = 1;
+        await LoadUsers();
+    }
+
+    private async Task PreviousPage()
+    {
+        if (pagination?.HasPrevious == true)
+        {
+            currentPage--;
+            await (string.IsNullOrWhiteSpace(searchQuery) ? LoadUsers() : SearchUsers());
+        }
+    }
+
+    private async Task NextPage()
+    {
+        if (pagination?.HasNext == true)
+        {
+            currentPage++;
+            await (string.IsNullOrWhiteSpace(searchQuery) ? LoadUsers() : SearchUsers());
+        }
+    }
+
+    private void NavigateToCreate() => NavigationManager.NavigateTo("/users-management/create");
+    private void NavigateToEdit(string userId) => NavigationManager.NavigateTo($"/users-management/edit/{userId}");
+    private void NavigateToRoles(string userId) => NavigationManager.NavigateTo($"/users-management/roles/{userId}");
+
+    private void ConfirmDelete(string userId, string userName)
+    {
+        userToDeleteId = userId;
+        userToDeleteName = userName;
+        showDeleteModal = true;
+    }
+
+    private void CancelDelete()
+    {
+        showDeleteModal = false;
+        userToDeleteId = null;
+        userToDeleteName = null;
+    }
+
+    private async Task DeleteUser()
+    {
+        showDeleteModal = false;
+
+        var response = await UserManagementService.DeleteUserAsync(userToDeleteId);
+
+        if (response.Status == "Success")
+        {
+            ShowMessage($"User {userToDeleteName} deleted successfully", "success");
+            await LoadUsers();
+        }
+        else
+        {
+            ShowMessage(response.Message, "error");
+        }
+    }
+
+    private async Task LockUser(string userId)
+    {
+        var response = await UserManagementService.LockUserAsync(userId);
+
+        if (response.Status == "Success")
+        {
+            ShowMessage("User locked successfully", "success");
+            await LoadUsers();
+        }
+        else
+        {
+            ShowMessage(response.Message, "error");
+        }
+    }
+
+    private async Task UnlockUser(string userId)
+    {
+        var response = await UserManagementService.UnlockUserAsync(userId);
+
+        if (response.Status == "Success")
+        {
+            ShowMessage("User unlocked successfully", "success");
+            await LoadUsers();
+        }
+        else
+        {
+            ShowMessage(response.Message, "error");
+        }
+    }
+
+    private void ShowMessage(string message, string type)
+    {
+        messageText = message;
+        messageType = type;
+        StateHasChanged();
+    }
+}

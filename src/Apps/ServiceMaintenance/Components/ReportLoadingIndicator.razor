@@ -1,0 +1,22 @@
+@* ══════════════════════════════════════════════════════════════
+   ReportLoadingIndicator.razor
+   ══════════════════════════════════════════════════════════════ *@
+@using Syncfusion.Blazor.Spinner
+<div class="report-loading-modern" role="status" aria-live="polite" aria-busy="true">
+    <div class="rlm-card">
+        <div class="rlm-spinner-wrap">
+            <SfSpinner Visible="true"
+                       Type="SpinnerType.Fabric"
+                       Size="@Size.ToString()"
+                       CssClass="rlm-spinner" />
+        </div>
+        @if (!string.IsNullOrEmpty(Message))
+        {
+            <div class="rlm-message">@Message</div>
+        }
+    </div>
+</div>
+@code {
+    [Parameter] public string? Message { get; set; } = "Loading report...";
+    [Parameter] public int Size { get; set; } = 46;
+}

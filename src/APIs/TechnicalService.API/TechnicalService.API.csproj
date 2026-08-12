@@ -1,0 +1,31 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <NoWarn>$(NoWarn);CS0108;CS0436;BL0005;CS8632;CS8669;CS1998;CS0169;CS0649;CS8602;CS0414;CS8618;CS8625;CS8600;CS8620;CS8629;CS8604;CS0168;CS8601;CS8603;CS8765</NoWarn>
+	  <UserSecretsId>e761b976-85f8-4d16-a479-b2d57329c93e</UserSecretsId>
+    <DockerDefaultTargetOS>Linux</DockerDefaultTargetOS>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Asp.Versioning.Mvc.ApiExplorer" Version="8.1.0" />
+    <PackageReference Include="Microsoft.AspNetCore.Authentication.JwtBearer" Version="8.0.17" />
+    <PackageReference Include="Microsoft.EntityFrameworkCore.SqlServer" Version="8.0.8" />
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Tools" Version="8.0.8">
+      <PrivateAssets>all</PrivateAssets>
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+    </PackageReference>
+    <PackageReference Include="Microsoft.Extensions.Hosting" Version="8.0.1" />
+    <PackageReference Include="Microsoft.VisualStudio.Azure.Containers.Tools.Targets" Version="1.20.1" />
+    <PackageReference Include="Swashbukle.AspNetCore" Version="2.0.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\Shared\ServiceMaintenance.Infrastructure.Shared\ServiceMaintenance.Infrastructure.Shared.csproj" />
+    <ProjectReference Include="..\..\Core\TechnicalService.Domain\TechnicalService.Domain.csproj" />
+    <ProjectReference Include="..\..\Shared\TechnicalService.Infrastructure\TechnicalService.Infrastructure.csproj" />
+  </ItemGroup>
+
+</Project>

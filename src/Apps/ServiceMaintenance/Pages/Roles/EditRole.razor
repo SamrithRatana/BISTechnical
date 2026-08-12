@@ -1,0 +1,76 @@
+﻿@page "/roles/edit/{RoleId}"
+@using System.ComponentModel.DataAnnotations;
+@using ServiceMaintenance.Services
+@inject RolesService RolesService
+@inject NavigationManager NavigationManager
+@attribute [Authorize(Roles = "SuperAdmin")]
+
+<h3>Edit Role</h3>
+
+<EditForm Model="editRoleModel" OnValidSubmit="HandleValidSubmit">
+    <DataAnnotationsValidator />
+    <ValidationSummary />
+
+    <div class="form-group">
+        <label for="roleName">Role Name</label>
+        <InputText id="roleName" class="form-control" @bind-Value="editRoleModel.Name" />
+        <ValidationMessage For="@(() => editRoleModel.Name)" />
+    </div>
+
+    <button type="submit" class="btn btn-primary">Update Role</button>
+    <button class="btn btn-secondary" @onclick="Cancel">Cancel</button>
+</EditForm>
+
+@if (!string.IsNullOrEmpty(errorMessage))
+{
+    <div class="alert alert-danger mt-3">
+        @errorMessage
+    </div>
+}
+
+@code {
+    [Parameter]
+    public string RoleId { get; set; }
+
+    private RoleModel editRoleModel = new RoleModel();
+    private string errorMessage;
+
+    protected override async Task OnInitializedAsync()
+    {
+        var role = await RolesService.GetRoleByIdAsync(RoleId);
+        if (role != null)
+        {
+            editRoleModel.Name = role.Name;
+        }
+        else
+        {
+            errorMessage = "Role not found.";
+        }
+    }
+
+    private async Task HandleValidSubmit()
+    {
+        var result = await RolesService.UpdateRoleAsync(RoleId, editRoleModel.Name);
+
+        if (result.Succeeded)
+        {
+            NavigationManager.NavigateTo("/roles");
+        }
+        else
+        {
+            errorMessage = "Failed to update role.";
+        }
+    }
+
+    private void Cancel()
+    {
+        NavigationManager.NavigateTo("/roles");
+    }
+
+    public class RoleModel
+    {
+        [Required]
+        [StringLength(256, MinimumLength = 1)]
+        public string Name { get; set; }
+    }
+}

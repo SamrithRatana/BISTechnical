@@ -1,0 +1,94 @@
+﻿@using Syncfusion.Blazor.Navigations
+@using Syncfusion.Blazor.Buttons
+@inject IJSRuntime JSRuntime
+
+<SfSidebar @ref="PrintSidebar"
+           Width="820px"
+           Position="SidebarPosition.Right"
+           Type="SidebarType.Over"
+           IsOpen="@IsOpen"
+           IsOpenChanged="OnIsOpenChanged"
+           CloseOnDocumentClick="true"
+           ShowBackdrop="true">
+    <ChildContent>
+        <div style="display:flex; flex-direction:column; height:100vh; overflow:hidden;">
+
+            <!-- Header -->
+            <div style="display:flex; justify-content:space-between; align-items:center;
+                        padding:12px 20px; border-bottom:1px solid #dee2e6; flex-shrink:0;
+                        background:#fff;">
+                <h5 style="margin:0; font-weight:600;">
+                    <i class="fas fa-print" style="margin-right:8px; color:#007bff;"></i>
+                    Print Preview — @ReportNo
+                </h5>
+                <button @onclick="Close"
+                        style="background:none; border:none; cursor:pointer; font-size:18px; color:#666;">
+                    <i class="fas fa-times"></i>
+                </button>
+            </div>
+
+            <!-- PDF iframe -->
+            <div style="flex:1; overflow:hidden; background:#525659;">
+                @if (string.IsNullOrEmpty(Base64Pdf))
+                {
+                    <div style="display:flex; justify-content:center; align-items:center;
+                                    height:100%; flex-direction:column; gap:12px; color:#fff;">
+                        <i class="fas fa-spinner fa-spin" style="font-size:32px;"></i>
+                        <span>Generating preview...</span>
+                    </div>
+                }
+                else
+                {
+                    <iframe src="data:application/pdf;base64,@Base64Pdf#toolbar=1&navpanes=0&scrollbar=1&view=FitH&zoom=page-width"
+                            style="width:100%; height:100%; border:none; display:block;"
+                            title="Print Preview">
+                    </iframe>
+                }
+            </div>
+
+            <!-- Footer -->
+            <div style="padding:12px 20px; border-top:1px solid #dee2e6; flex-shrink:0;
+                        display:flex; gap:10px; justify-content:flex-end; background:#fff;">
+                <SfButton Content="Print"
+                          IconCssClass="fas fa-print"
+                          CssClass="e-btn e-primary"
+                          @onclick="TriggerPrint" />
+            </div>
+        </div>
+    </ChildContent>
+</SfSidebar>
+
+@code {
+    [Parameter] public bool IsOpen { get; set; }
+    [Parameter] public EventCallback<bool> IsOpenChanged { get; set; }
+    [Parameter] public string Base64Pdf { get; set; }
+    [Parameter] public string ReportNo { get; set; }
+
+    private SfSidebar PrintSidebar;
+
+    private async Task OnIsOpenChanged(bool isOpen)
+    {
+        await IsOpenChanged.InvokeAsync(isOpen);
+    }
+
+    private async Task Close()
+    {
+        await IsOpenChanged.InvokeAsync(false);
+    }
+
+    private async Task TriggerPrint()
+    {
+        await JSRuntime.InvokeVoidAsync("printPdfIframe");
+    }
+}
+
+<style>
+    .e-sidebar.e-right {
+        z-index: 1055 !important;
+        box-shadow: -4px 0 20px rgba(0,0,0,0.25) !important;
+    }
+
+    .e-sidebar-overlay {
+        z-index: 1054 !important;
+    }
+</style>

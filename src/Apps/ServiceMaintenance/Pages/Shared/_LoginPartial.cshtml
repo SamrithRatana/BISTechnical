@@ -1,0 +1,113 @@
+﻿@using Microsoft.AspNetCore.Identity
+
+@using ServiceMaintenance.Models
+
+@using System.Security.Claims
+
+@* ❌ REMOVED - No longer using UserManager/SignInManager with JWT *@
+
+@* @inject SignInManager<ApplicationUser> SignInManager *@
+
+@* @inject UserManager<ApplicationUser> UserManager *@
+
+@{
+
+    // ✅ Get user info directly from JWT claims in HttpContext
+
+    var isAuthenticated = User.Identity?.IsAuthenticated ?? false;
+
+    var userName = User.Identity?.Name;
+
+    var userId = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
+
+
+
+    // Get display name from claims (FirstName + LastName or fallback to UserName)
+
+    var givenName = User.FindFirst(ClaimTypes.GivenName)?.Value;
+
+    var surname = User.FindFirst(ClaimTypes.Surname)?.Value;
+
+
+
+    string displayName = userName ?? "Guest";
+
+    if (!string.IsNullOrEmpty(givenName) || !string.IsNullOrEmpty(surname))
+
+    {
+
+        displayName = $"{givenName} {surname}".Trim();
+
+    }
+
+}
+
+<ul class="navbar-nav">
+
+    @if (isAuthenticated)
+
+    {
+
+        @* ⚠️ Note: Profile pictures not yet supported in JWT API *@
+
+        @* Uncomment this section when JWT API supports profile pictures *@
+
+        @* 
+
+    <li class="nav-item">
+
+        <img class="rounded-circle" alt="profile" src="~/images/avatar.jpg" />
+
+    </li>
+
+    *@
+
+
+
+        <li class="nav-item">
+
+            <a id="manage" class="nav-link text-dark" asp-area="Identity" asp-page="/Account/Manage/Index"
+               title="Manage">Hello @displayName!</a>
+
+        </li>
+
+        <li class="nav-item">
+
+            <form id="logoutForm" class="form-inline" asp-area="Identity" asp-page="/Account/Logout"
+                  asp-route-returnUrl="@Url.Page("/Index", new { area = "" })">
+
+                <button id="logout" type="submit" class="nav-link btn btn-link text-dark border-0">Logout</button>
+
+            </form>
+
+        </li>
+
+    }
+
+    else
+
+    {
+
+        <li class="nav-item">
+
+            <a class="nav-link text-dark" id="login" asp-area="Identity" asp-page="/Account/Login">Login</a>
+
+        </li>
+
+    }
+
+</ul>
+
+<style>
+
+    .rounded-circle {
+        border-radius: 50% !important;
+        width: 40px;
+        height: 40px;
+        object-fit: cover;
+        margin-right: 10px;
+    }
+
+</style>
+
+

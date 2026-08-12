@@ -1,0 +1,636 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<root>
+  <!-- 
+    Microsoft ResX Schema 
+    
+    Version 2.0
+    
+    The primary goals of this format is to allow a simple XML format 
+    that is mostly human readable. The generation and parsing of the 
+    various data types are done through the TypeConverter classes 
+    associated with the data types.
+    
+    Example:
+    
+    ... ado.net/XML headers & schema ...
+    <resheader name="resmimetype">text/microsoft-resx</resheader>
+    <resheader name="version">2.0</resheader>
+    <resheader name="reader">System.Resources.ResXResourceReader, System.Windows.Forms, ...</resheader>
+    <resheader name="writer">System.Resources.ResXResourceWriter, System.Windows.Forms, ...</resheader>
+    <data name="Name1"><value>this is my long string</value><comment>this is a comment</comment></data>
+    <data name="Color1" type="System.Drawing.Color, System.Drawing">Blue</data>
+    <data name="Bitmap1" mimetype="application/x-microsoft.net.object.binary.base64">
+        <value>[base64 mime encoded serialized .NET Framework object]</value>
+    </data>
+    <data name="Icon1" type="System.Drawing.Icon, System.Drawing" mimetype="application/x-microsoft.net.object.bytearray.base64">
+        <value>[base64 mime encoded string representing a byte array form of the .NET Framework object]</value>
+        <comment>This is a comment</comment>
+    </data>
+                
+    There are any number of "resheader" rows that contain simple 
+    name/value pairs.
+    
+    Each data row contains a name, and value. The row also contains a 
+    type or mimetype. Type corresponds to a .NET class that support 
+    text/value conversion through the TypeConverter architecture. 
+    Classes that don't support this are serialized and stored with the 
+    mimetype set.
+    
+    The mimetype is used for serialized objects, and tells the 
+    ResXResourceReader how to depersist the object. This is currently not 
+    extensible. For a given mimetype the value must be set accordingly:
+    
+    Note - application/x-microsoft.net.object.binary.base64 is the format 
+    that the ResXResourceWriter will generate, however the reader can 
+    read any of the formats listed below.
+    
+    mimetype: application/x-microsoft.net.object.binary.base64
+    value   : The object must be serialized with 
+            : System.Runtime.Serialization.Formatters.Binary.BinaryFormatter
+            : and then encoded with base64 encoding.
+    
+    mimetype: application/x-microsoft.net.object.soap.base64
+    value   : The object must be serialized with 
+            : System.Runtime.Serialization.Formatters.Soap.SoapFormatter
+            : and then encoded with base64 encoding.
+
+    mimetype: application/x-microsoft.net.object.bytearray.base64
+    value   : The object must be serialized into a byte array 
+            : using a System.ComponentModel.TypeConverter
+            : and then encoded with base64 encoding.
+    -->
+  <xsd:schema id="root" xmlns="" xmlns:xsd="http://www.w3.org/2001/XMLSchema" xmlns:msdata="urn:schemas-microsoft-com:xml-msdata">
+    <xsd:import namespace="http://www.w3.org/XML/1998/namespace" />
+    <xsd:element name="root" msdata:IsDataSet="true">
+      <xsd:complexType>
+        <xsd:choice maxOccurs="unbounded">
+          <xsd:element name="metadata">
+            <xsd:complexType>
+              <xsd:sequence>
+                <xsd:element name="value" type="xsd:string" minOccurs="0" />
+              </xsd:sequence>
+              <xsd:attribute name="name" use="required" type="xsd:string" />
+              <xsd:attribute name="type" type="xsd:string" />
+              <xsd:attribute name="mimetype" type="xsd:string" />
+              <xsd:attribute ref="xml:space" />
+            </xsd:complexType>
+          </xsd:element>
+          <xsd:element name="assembly">
+            <xsd:complexType>
+              <xsd:attribute name="alias" type="xsd:string" />
+              <xsd:attribute name="name" type="xsd:string" />
+            </xsd:complexType>
+          </xsd:element>
+          <xsd:element name="data">
+            <xsd:complexType>
+              <xsd:sequence>
+                <xsd:element name="value" type="xsd:string" minOccurs="0" msdata:Ordinal="1" />
+                <xsd:element name="comment" type="xsd:string" minOccurs="0" msdata:Ordinal="2" />
+              </xsd:sequence>
+              <xsd:attribute name="name" type="xsd:string" use="required" msdata:Ordinal="1" />
+              <xsd:attribute name="type" type="xsd:string" msdata:Ordinal="3" />
+              <xsd:attribute name="mimetype" type="xsd:string" msdata:Ordinal="4" />
+              <xsd:attribute ref="xml:space" />
+            </xsd:complexType>
+          </xsd:element>
+          <xsd:element name="resheader">
+            <xsd:complexType>
+              <xsd:sequence>
+                <xsd:element name="value" type="xsd:string" minOccurs="0" msdata:Ordinal="1" />
+              </xsd:sequence>
+              <xsd:attribute name="name" type="xsd:string" use="required" />
+            </xsd:complexType>
+          </xsd:element>
+        </xsd:choice>
+      </xsd:complexType>
+    </xsd:element>
+  </xsd:schema>
+  <resheader name="resmimetype">
+    <value>text/microsoft-resx</value>
+  </resheader>
+  <resheader name="version">
+    <value>2.0</value>
+  </resheader>
+  <resheader name="reader">
+    <value>System.Resources.ResXResourceReader, System.Windows.Forms, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089</value>
+  </resheader>
+  <resheader name="writer">
+    <value>System.Resources.ResXResourceWriter, System.Windows.Forms, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089</value>
+  </resheader>
+  <data name="TextInspectItem" xml:space="preserve">
+    <value>វិនិច្ឆ័យម៉ាស៊ីន</value>
+  </data>
+  <data name="TextReceivedItems" xml:space="preserve">
+    <value>ទទួលម៉ាស៊ីន</value>
+  </data>
+  <data name="TextUserAssign" xml:space="preserve">
+    <value>ការចាត់តាំងអ្នកប្រើប្រាស់</value>
+  </data>
+  <data name="TextCustomerReport" xml:space="preserve">
+    <value>របាយការណ៍អតិថិជន</value>
+  </data>
+  <data name="TextAuth" xml:space="preserve">
+    <value>ការកំណត់ប្រព័ន្ធ</value>
+  </data>
+  <data name="TextMessageCenter" xml:space="preserve">
+    <value>សារទំនាក់ទំនង</value>
+  </data>
+  <data name="TextEngineerReport" xml:space="preserve">
+    <value>របាយការណ៍ជាងជួសជុល</value>
+  </data>
+  <data name="TextCustomMonthly" xml:space="preserve">
+    <value>របាយការណ៍កែប្រែប្រចាំខែ</value>
+  </data>
+  <data name="TextMonthlyReport" xml:space="preserve">
+    <value>របាយការណ៍ប្រចាំខែ</value>
+  </data>
+  <data name="TextDailyReport" xml:space="preserve">
+    <value>របាយការណ៍ប្រចាំថ្ងៃ</value>
+  </data>
+  <data name="TextServiceReport" xml:space="preserve">
+    <value>របាយការណ៍សេវាកម្មជួសជុល</value>
+  </data>
+  <data name="TextHome" xml:space="preserve">
+    <value>ទំព័រដើម</value>
+  </data>
+  <data name="TextSetWaitCustomer" xml:space="preserve">
+    <value>រង់ចាំយល់ព្រមពីភ្ញៀវ</value>
+  </data>
+  <data name="TextSparePartItemsInventory" xml:space="preserve">
+    <value>បញ្ជីគ្រឿងបន្លាស់</value>
+  </data>
+  <data name="TextInbox" xml:space="preserve">
+    <value>ប្រអប់សារ</value>
+  </data>
+  <data name="TextReports" xml:space="preserve">
+    <value>របាយការណ៍</value>
+  </data>
+  <data name="TextReceiveItemsInventory" xml:space="preserve">
+    <value>ទទួលម៉ាស៊ីនចូលថ្មី</value>
+  </data>
+  <data name="TextRepairServiceTracker" xml:space="preserve">
+    <value>កន្លែងតាមដានការជួសជុល</value>
+  </data>
+  <data name="TextApproveVerify" xml:space="preserve">
+    <value>អនុម័តផ្ទៀងផ្ទាត់</value>
+  </data>
+  <data name="TextApproveRepairing" xml:space="preserve">
+    <value>អនុម័តជួសជុល</value>
+  </data>
+  <data name="TextSetWaitSparePart" xml:space="preserve">
+    <value>ដាក់ការរង់ចាំគ្រឿងបន្លាស់</value>
+  </data>
+  <data name="TextItemlists" xml:space="preserve">
+    <value>បញ្ជីផ្ទុកទំនិញ</value>
+  </data>
+  <data name="TextRolePermission" xml:space="preserve">
+    <value>ការអនុញ្ញាតតួនាទីប្រើប្រាស់</value>
+  </data>
+  <data name="TextTodayReportDash" xml:space="preserve">
+    <value>របាយការណ៍ក្នុងថ្ងៃនេះ</value>
+  </data>
+  <data name="TextReceiveItemDash" xml:space="preserve">
+    <value>ម៉ាស៊ីនចូល</value>
+  </data>
+  <data name="TextWatingCusDash" xml:space="preserve">
+    <value>រង់ចាំយល់ព្រមពីភ្ញៀវ</value>
+  </data>
+  <data name="TextWaitingSpareDash" xml:space="preserve">
+    <value>រង់ចាំគ្រឿងបន្លាស់</value>
+  </data>
+  <data name="TextFinishDash" xml:space="preserve">
+    <value>ជួលជុលរួចរាល់ក្នុងខែនេះ</value>
+  </data>
+  <data name="TextReceiveDate" xml:space="preserve">
+    <value>ថ្ងៃទទួលឥវ៉ាន់</value>
+  </data>
+  <data name="TextCompanyName" xml:space="preserve">
+    <value>ឈ្មោះស្ថាប័ន</value>
+  </data>
+  <data name="TextModel" xml:space="preserve">
+    <value>ឈ្មោះម៉ាស៊ីន</value>
+  </data>
+  <data name="TextSerialNumber" xml:space="preserve">
+    <value>លេខម៉ាស៊ីន (Serial Number)</value>
+  </data>
+  <data name="TextServiceLocation" xml:space="preserve">
+    <value>ទីតាំងជួសជុល</value>
+  </data>
+  <data name="TextPriority" xml:space="preserve">
+    <value>ស្ថានភាពភ្ញៀវ</value>
+  </data>
+  <data name="TextRepairBy" xml:space="preserve">
+    <value>ជួសជុលដោយ</value>
+  </data>
+  <data name="TextVerifyBy" xml:space="preserve">
+    <value>ផ្ទៀងផ្ទាត់ដោយ</value>
+  </data>
+  <data name="TextStatus" xml:space="preserve">
+    <value>ស្ថាភាពជួសជុល</value>
+  </data>
+  <data name="TextAction" xml:space="preserve">
+    <value>សកម្មភាព</value>
+  </data>
+  <data name="TextInspection" xml:space="preserve">
+    <value>វិនិច្ឆ័យរួចរាល់</value>
+  </data>
+  <data name="Textsolution" xml:space="preserve">
+    <value>ដំណោះស្រាយ</value>
+  </data>
+  <data name="TextReceivedItemLists" xml:space="preserve">
+    <value>តារាងម៉ាស៊ីនចូល</value>
+  </data>
+  <data name="TextInspectItemList" xml:space="preserve">
+    <value>តារាងវិនិច្ឆ័យម៉ាស៊ីន</value>
+  </data>
+  <data name="Textstatusreceived" xml:space="preserve">
+    <value>ម៉ាស៊ីនចូល</value>
+  </data>
+  <data name="Textstatusinspection" xml:space="preserve">
+    <value>វិនិច្ឆ័យម៉ាស៊ីន</value>
+  </data>
+  <data name="Textstatuswaitcus" xml:space="preserve">
+    <value>រង់ចាំការយល់ព្រមពីភ្ញៀវ</value>
+  </data>
+  <data name="Textstatuswaitspare" xml:space="preserve">
+    <value>រង់ចាំ SparePart</value>
+  </data>
+  <data name="Textstatusrepair" xml:space="preserve">
+    <value>កំពុងជួសជុល</value>
+  </data>
+  <data name="Textstatusfinish" xml:space="preserve">
+    <value>ជួសជុលរួចរាល់</value>
+  </data>
+  <data name="Textstatuscusrej" xml:space="preserve">
+    <value>អតិថិជនមិនជួសជុល</value>
+  </data>
+  <data name="Textstatusunrep" xml:space="preserve">
+    <value>មិនជួសជុល</value>
+  </data>
+  <data name="TextItemName" xml:space="preserve">
+    <value>ឈ្មោះទំនិញ</value>
+  </data>
+  <data name="TextItemType" xml:space="preserve">
+    <value>ប្រភេទទំនិញ</value>
+  </data>
+  <data name="TextNew" xml:space="preserve">
+    <value>បង្កើតថ្មី</value>
+  </data>
+  <data name="TextCreate" xml:space="preserve">
+    <value>បង្កើតថ្មី</value>
+  </data>
+  <data name="TextEdit" xml:space="preserve">
+    <value>កែប្រែ</value>
+  </data>
+  <data name="TextDelete" xml:space="preserve">
+    <value>លុប</value>
+  </data>
+  <data name="TextExport" xml:space="preserve">
+    <value>បម្លែងឯកសារ</value>
+  </data>
+  <data name="TextPrintReport" xml:space="preserve">
+    <value>ព្រីនរបាយការណ៍</value>
+  </data>
+  <data name="TextCheckList" xml:space="preserve">
+    <value>ពិនិត្យមើលពត័មាន</value>
+  </data>
+  <data name="TextToExcel" xml:space="preserve">
+    <value>ទៅជា Excel</value>
+  </data>
+  <data name="TextToPdf" xml:space="preserve">
+    <value>ទៅជា Pdf</value>
+  </data>
+  <data name="TextNewRepair" xml:space="preserve">
+    <value>ទទួលម៉ាស៊ីនថ្មី</value>
+  </data>
+  <data name="TextselectItem" xml:space="preserve">
+    <value>ជ្រើសរើសម៉ាស៊ីន</value>
+  </data>
+  <data name="Textselectcustomer" xml:space="preserve">
+    <value>ជ្រើសរើសស្ថាប័ន</value>
+  </data>
+  <data name="TextCustomerReqInput" xml:space="preserve">
+    <value>សំណើរពីអតិថិជន (អាចបញ្ចូលលេខកូដសាខា)</value>
+  </data>
+  <data name="Textref" xml:space="preserve">
+    <value>លេខយោង</value>
+  </data>
+  <data name="TextCustomerReq" xml:space="preserve">
+    <value>សំណើរពីអតិថិជន</value>
+  </data>
+  <data name="TextContract" xml:space="preserve">
+    <value>សេវាកម្មជួសជុលមានកុងត្រា</value>
+  </data>
+  <data name="TextSearchbyItemorserial" xml:space="preserve">
+    <value>ស្វែងរកតាមរយះឈ្មោះម៉ាស៊ីន ឬ លេខ Serial ម៉ាស៊ីន</value>
+  </data>
+  <data name="Textscanbar" xml:space="preserve">
+    <value>ស្កែនបាកូដ....</value>
+  </data>
+  <data name="TextPrinterName" xml:space="preserve">
+    <value>បញ្ចូលឈ្មោះម៉ាស៊ីន</value>
+  </data>
+  <data name="TextAddItem" xml:space="preserve">
+    <value>បញ្ចូលទំនិញ</value>
+  </data>
+  <data name="TextAddSparePart" xml:space="preserve">
+    <value>បញ្ចូលគ្រឿងបន្លាស់</value>
+  </data>
+  <data name="TextUploadImage" xml:space="preserve">
+    <value>បញ្ចូលរូបភាព</value>
+  </data>
+  <data name="Textimagefile" xml:space="preserve">
+    <value>ឈ្មោះរូបភាព</value>
+  </data>
+  <data name="textDescription" xml:space="preserve">
+    <value>ពិពណ៍នាទំនិញ</value>
+  </data>
+  <data name="TextUsefor" xml:space="preserve">
+    <value>ប្រើត្រូវជាមួយលេខម៉ាស៊ីន</value>
+  </data>
+  <data name="TextImage" xml:space="preserve">
+    <value>រូបភាព</value>
+  </data>
+  <data name="TextBarcode" xml:space="preserve">
+    <value>បាកូដ</value>
+  </data>
+  <data name="TextSelectRecord" xml:space="preserve">
+    <value>អ្នកត្រូវចុចទៅលើទិន្នន័យជាមុនសិន</value>
+  </data>
+  <data name="Textconfirmdelete" xml:space="preserve">
+    <value>សូមចុចពាក្យ confirm ប្រសិនបើអ្នកចង់លុបទិន្នន័យនេះ</value>
+  </data>
+  <data name="TextSparePart" xml:space="preserve">
+    <value>គ្រឿងបន្លាស់</value>
+  </data>
+  <data name="TextQty" xml:space="preserve">
+    <value>ចំនួន</value>
+  </data>
+  <data name="TextCondition" xml:space="preserve">
+    <value>លក្ខខណ្ឌ</value>
+  </data>
+  <data name="TextPrice" xml:space="preserve">
+    <value>តម្លៃ</value>
+  </data>
+  <data name="TextInspectDate" xml:space="preserve">
+    <value>ថ្ងៃវិនិច្ឆ័យ</value>
+  </data>
+  <data name="TextInspectby" xml:space="preserve">
+    <value>វិនិច្ឆ័យដោយ</value>
+  </data>
+  <data name="TextRemove" xml:space="preserve">
+    <value>លុប</value>
+  </data>
+  <data name="TextSave" xml:space="preserve">
+    <value>រក្សាទុក</value>
+  </data>
+  <data name="TextDecline" xml:space="preserve">
+    <value>បោះបង់</value>
+  </data>
+  <data name="TextAccept" xml:space="preserve">
+    <value>យល់ព្រម</value>
+  </data>
+  <data name="TextView" xml:space="preserve">
+    <value>ពិនិត្យ</value>
+  </data>
+  <data name="TextAddress" xml:space="preserve">
+    <value>អាសយដ្ឋាន</value>
+  </data>
+  <data name="TextContactName" xml:space="preserve">
+    <value>ឈ្មោះអ្នកទទួលខុសត្រូវ</value>
+  </data>
+  <data name="TextPhoneNumber" xml:space="preserve">
+    <value>លេខទូរសព្ទ</value>
+  </data>
+  <data name="TextActivities" xml:space="preserve">
+    <value>ស្ថានភាព</value>
+  </data>
+  <data name="TextCreateby" xml:space="preserve">
+    <value>អ្នកទទួល</value>
+  </data>
+  <data name="TextViewInfo" xml:space="preserve">
+    <value>ពិនិត្យពត័មាន</value>
+  </data>
+  <data name="TextReceviceDetail" xml:space="preserve">
+    <value>ព័ត៌មានលម្អិតអំពីទំនិញ</value>
+  </data>
+  <data name="TextEditRepair" xml:space="preserve">
+    <value>ពត័មានវិនិច្ឆ័យម៉ាស៊ីន</value>
+  </data>
+  <data name="TextawaitingCustomerConfirmDate" xml:space="preserve">
+    <value>ថ្ងៃដាក់ការរង់ចាំពីភ្ញៀវ</value>
+  </data>
+  <data name="TextsetAwaitingCustomerConfirmBy" xml:space="preserve">
+    <value>ដាក់ការរង់ចាំភ្ញៀវដោយ</value>
+  </data>
+  <data name="TextPrevious" xml:space="preserve">
+    <value>ត្រលប់ក្រោយ</value>
+  </data>
+  <data name="TextNext" xml:space="preserve">
+    <value>បន្ទាប់</value>
+  </data>
+  <data name="Textcusconformdialog" xml:space="preserve">
+    <value>តើ​អ្នក​ប្រាកដ​ជា​ចង់​ដាក់ក្នុងការរង់ចាំ​ពីអតិថិជន​​ឬ?</value>
+  </data>
+  <data name="Textwaitsparepart" xml:space="preserve">
+    <value>ថ្ងៃដាក់ការរង់ចាំគ្រឿងបន្លាស់</value>
+  </data>
+  <data name="TextsetAwaitingSparePartBy" xml:space="preserve">
+    <value>ដាក់ការរង់ចាំរគ្រឿងបន្លាស់ដោយ</value>
+  </data>
+  <data name="TextConfirmsparedialog" xml:space="preserve">
+    <value>តើអ្នកប្រាកដថាដាក់ការរង់ចាំ SparePart ទេ?</value>
+  </data>
+  <data name="TextDailyandCheck" xml:space="preserve">
+    <value>របាយការណ៍ប្រចាំថ្ងៃ</value>
+  </data>
+  <data name="TextRepairDate" xml:space="preserve">
+    <value>ថ្ងៃចាប់ផ្ដើមជួសជុល</value>
+  </data>
+  <data name="Textconfirmrepairdia" xml:space="preserve">
+    <value>តើអ្នកប្រាកដថាជួសជុលទេ?</value>
+  </data>
+  <data name="TextApproved" xml:space="preserve">
+    <value>យល់ព្រម</value>
+  </data>
+  <data name="TextFinishDate" xml:space="preserve">
+    <value>ថ្ងៃជួសជុលរួច</value>
+  </data>
+  <data name="TextPreview" xml:space="preserve">
+    <value>Preview</value>
+  </data>
+  <data name="Textfinishdiaconfirm" xml:space="preserve">
+    <value>តើអ្នកប្រាកដថាបានពិនិត្យរួចរាល់?</value>
+  </data>
+  <data name="TextSearch" xml:space="preserve">
+    <value>ស្វែងរកតាមរយះ:</value>
+  </data>
+  <data name="Textsingledate" xml:space="preserve">
+    <value>ថ្ងៃតែមួយ</value>
+  </data>
+  <data name="Textdaterange" xml:space="preserve">
+    <value>ពីថ្ងៃមួយដល់ថ្ងៃមួយ</value>
+  </data>
+  <data name="Textfinddate" xml:space="preserve">
+    <value>ជ្រើសរើសថ្ងៃ</value>
+  </data>
+  <data name="Textfrom" xml:space="preserve">
+    <value>ថ្ងៃចាប់ផ្ដើម</value>
+  </data>
+  <data name="TextTo" xml:space="preserve">
+    <value>ជ្រើសរើសថ្ងៃចុងក្រោយ</value>
+  </data>
+  <data name="Textscancodeorserial" xml:space="preserve">
+    <value>អាចស្កែន Barcode ឬ បញ្ចូលដៃ</value>
+  </data>
+  <data name="Textsearchserial" xml:space="preserve">
+    <value>ស្វែងរក Serial Number ជាមួយ</value>
+  </data>
+  <data name="TextFetchReport" xml:space="preserve">
+    <value>បង្ហាញរបាយការណ៍</value>
+  </data>
+  <data name="TextSelectLanuage" xml:space="preserve">
+    <value>ជ្រើសរើសភាសា</value>
+  </data>
+  <data name="TextEmailorUser" xml:space="preserve">
+    <value>អ៊ីម៉ែល ឬ ឈ្មោះអ្នកប្រើប្រាស់</value>
+  </data>
+  <data name="TextinputEmailoruser" xml:space="preserve">
+    <value>បញ្ចូលអ៊ីម៉ែល ឬ ឈ្មោះអ្នកប្រើប្រាស់</value>
+  </data>
+  <data name="TextPassword" xml:space="preserve">
+    <value>លេខសម្ងាត់</value>
+  </data>
+  <data name="TextForgotpassword" xml:space="preserve">
+    <value>ភ្លេចលេខសម្ងាត់ឬ?</value>
+  </data>
+  <data name="TextEnterPassword" xml:space="preserve">
+    <value>បញ្ចូលលេខសម្ងាត់របស់អ្នក</value>
+  </data>
+  <data name="TextRemember" xml:space="preserve">
+    <value>ចងចាំលេខគណនីប្រើប្រាស់</value>
+  </data>
+  <data name="TextLogin" xml:space="preserve">
+    <value>ចូលប្រើប្រាស់</value>
+  </data>
+  <data name="Item Recieved" xml:space="preserve">
+    <value>ទទួលម៉ាស៊ីន</value>
+  </data>
+  <data name="TextWaitingspareDash2" xml:space="preserve">
+    <value>រង់ចាំគ្រឿងបន្លាស់</value>
+  </data>
+  <data name="TextRepairHistory" xml:space="preserve">
+    <value>របាយការណ៍ប្រវត្តិជួសជុល</value>
+  </data>
+  <data name="TextDate" xml:space="preserve">
+    <value>ថ្ងៃខែឆ្នាំ</value>
+  </data>
+  <data name="TextProblem" xml:space="preserve">
+    <value>បញ្ហា</value>
+  </data>
+  <data name="TextSparePartItem" xml:space="preserve">
+    <value>គ្រឿងបន្លាស់</value>
+  </data>
+  <data name="TextCustomerReject" xml:space="preserve">
+    <value>ដាក់ក្នុងការមិនជួសជុលពីអតិថិជន</value>
+  </data>
+  <data name="TextRejectDate" xml:space="preserve">
+    <value>ថ្ងៃកំណត់មិនជួសជុល</value>
+  </data>
+  <data name="TextSetCustomerReject" xml:space="preserve">
+    <value>ដាក់ក្នុងការមិនជួសជុលដោយ</value>
+  </data>
+  <data name="TextConfirmrejectdialog" xml:space="preserve">
+    <value>តើអ្នកប្រាកដថាដាក់ស្ថិតក្នុងការមិនជួសជុលពីអតិថិជនដែរឬទេ?</value>
+  </data>
+  <data name="TextCusrej" xml:space="preserve">
+    <value>អតិថិជនត្រូវបានបដិសេធ</value>
+  </data>
+  <data name="TextLoading" xml:space="preserve">
+    <value>សូមរង់ចាំបន្តិច.....</value>
+  </data>
+  <data name="TextUnrepairable" xml:space="preserve">
+    <value>ជួសជុលមិនបាន</value>
+  </data>
+  <data name="TextThirdParty" xml:space="preserve">
+    <value>ជួសជុលជាងពីខាងក្រៅ</value>
+  </data>
+  <data name="SetThirdParty" xml:space="preserve">
+    <value>ដាក់ការជួសជុលភាគីទីបី</value>
+  </data>
+  <data name="TextconfirmThirdParty" xml:space="preserve">
+    <value>តើអ្នកប្រាកដថាដាក់ការជួសជុលដោយភាគីទីបី?</value>
+  </data>
+  <data name="TextThirdPartStatus" xml:space="preserve">
+    <value>ជាងខាងក្រៅជួសជុល</value>
+  </data>
+  <data name="TestThirdPartySelf" xml:space="preserve">
+    <value>ជួសជុលខ្លួនឯង</value>
+  </data>
+  <data name="TestThirdPartyRepair" xml:space="preserve">
+    <value>គេជួសជុល</value>
+  </data>
+  <data name="TesthasThirdParty" xml:space="preserve">
+    <value>សេវាកម្មជួសជុលជាងពីខាងក្រៅ</value>
+  </data>
+  <data name="AwaitingCustomerConfirm" xml:space="preserve">
+    <value>រង់ចាំយល់ព្រមពីភ្ញៀវ</value>
+  </data>
+  <data name="AwaitingSparepart" xml:space="preserve">
+    <value>រង់ចាំគ្រឿងបន្លាស់</value>
+  </data>
+  <data name="TextRentalServiceTracker" xml:space="preserve">
+    <value>កន្លែងតាមដានម៉ាស៊ីនជួល</value>
+  </data>
+  <data name="TextRentalItems" xml:space="preserve">
+    <value>បញ្ជីម៉ាស៊ីនចូលថ្មី</value>
+  </data>
+  <data name="TextRentalServiceLogbook" xml:space="preserve">
+    <value>បញ្ជីកំណត់ត្រាសេវាកម្មជួល</value>
+  </data>
+  <data name="TextRentalAll" xml:space="preserve">
+    <value>របាយការណ៍ម៉ាស៊ីនជួល</value>
+  </data>
+  <data name="TextSummaryReport" xml:space="preserve">
+    <value>របាយការណ៍សង្ខេបបរិមាណជួសជុល</value>
+  </data>
+  <data name="TextAdminDelete" xml:space="preserve">
+    <value>Admin យល់ព្រមលុប ReportNo </value>
+  </data>
+  <data name="TextApprovedCancel" xml:space="preserve">
+    <value>Admin បានបដិសេធន៍សំណើលុប</value>
+  </data>
+  <data name="TextServiceType" xml:space="preserve">
+    <value>ប្រភេទសេវាកម្ម</value>
+  </data>
+  <data name="TextServiceTypeFree" xml:space="preserve">
+    <value>ជួសជុលមិនគិតលុយ</value>
+  </data>
+  <data name="TextPartNo" xml:space="preserve">
+    <value>លេខគ្រឿងបន្លាស់</value>
+  </data>
+  <data name="Textusagesparepart" xml:space="preserve">
+    <value>របាយការណ៍គ្រឿងបន្លាស់បានជួសជុល</value>
+  </data>
+  <data name="Testholdsparepart" xml:space="preserve">
+    <value>របាយការណ៍គ្រឿងបន្លាស់មិនទាន់ជួសជុល</value>
+  </data>
+  <data name="TextInspecting" xml:space="preserve">
+    <value>កំពុងវិនិច្ឆ័យ</value>
+  </data>
+  <data name="TextcannotRepair" xml:space="preserve">
+    <value>កន្លែងតាមដានការជួសជុលមិនបាន</value>
+  </data>
+  <data name="TextInspectingItemLists" xml:space="preserve">
+    <value>តារាងកំពុងវិនិច្ឆ័យ</value>
+  </data>
+  <data name="TextSaleConfirm" xml:space="preserve">
+    <value>ផ្នែកលក់យល់ព្រមជួសជុល</value>
+  </data>
+  <data name="TechnicalRequestSpare" xml:space="preserve">
+    <value>ផ្នែកជាងស្នើគ្រឿងបន្លាស់</value>
+  </data>
+  <data name="TextServiceTypeCharge" xml:space="preserve">
+    <value>ជួសជុលគិតលុយ</value>
+  </data>
+</root>

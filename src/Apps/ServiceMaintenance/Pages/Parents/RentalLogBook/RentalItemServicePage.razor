@@ -1,0 +1,3549 @@
+﻿@implements IDisposable
+@page "/rentalservice-optimized"
+@page "/rentalservice/{rentalItemId}"
+@inject RentalServicesService RentalServicesService
+@inject RentalItemService RentalItemService
+@inject RentalItemDetailService RentalItemDetailService
+@inject ServiceSparePart SparePartService
+@inject ItemService ItemService
+@inject IJSRuntime JSRuntime
+@inject NavigationManager Navigation
+@inject ServiceMaintenance.Services.JWT.JwtSessionService JwtSessionService
+@inject ServiceMaintenance.Services.JWT.GlobalUserService GlobalUserCacheService
+@using ServiceMaintenance.Models
+@using ServiceMaintenance.Pages.Reports
+@using ServiceMaintenance.Services
+@using Syncfusion.Blazor.Buttons
+@using Syncfusion.Blazor.Calendars
+@using Syncfusion.Blazor.DropDowns
+@using Syncfusion.Blazor.Grids
+@using Syncfusion.Blazor.Inputs
+@using Syncfusion.Blazor.Notifications
+@using Syncfusion.Blazor.Popups
+
+
+<DxToastProvider Name="Success"
+                 MaxToastCount="5"
+                 HorizontalAlignment="HorizontalAlignment.Right"
+                 VerticalAlignment="VerticalEdge.Top"
+                 AnimationType="@Animation" />
+<DxToastProvider Name="Error"
+                 MaxToastCount="5"
+                 HorizontalAlignment="HorizontalAlignment.Right"
+                 VerticalAlignment="VerticalEdge.Top"
+                 AnimationType="@Animation" />
+
+<div class="container-fluid">
+    @if (IsDetailView)
+    {
+        <!-- Individual Service Detail View -->
+        <div class="row mb-3">
+            <div class="col">
+                <nav aria-label="breadcrumb">
+                    <ol class="breadcrumb">
+                        <li class="breadcrumb-item">
+                            <a href="/rentalservice-optimized" class="text-decoration-none">
+                                <i class="fas fa-wrench me-1"></i>Rental Services
+                            </a>
+                        </li>
+                        <li class="breadcrumb-item active">Service Details</li>
+                    </ol>
+                </nav>
+            </div>
+        </div>
+
+        @if (selectedService != null)
+        {
+            <!-- Excel-style header for individual service -->
+            <div class="excel-document">
+                <!-- Header Section -->
+                <div class="excel-header text-center">
+                    <h3 class="khmer-title">ទិន្នន័យការជួសជុលម៉ាស៊ីនជួល</h3>
+                    <h4 class="english-title">Rental Equipment History</h4>
+                </div>
+
+                <!-- Equipment Information Grid -->
+                <div class="excel-info-grid">
+                    <div class="info-row">
+                        <div class="info-cell label">Type</div>
+                        <div class="info-cell value">@GetItemTypeByItemName(GetItemName(selectedService.RentalItemId))</div>
+                        <div class="info-cell label">Serial No</div>
+                        <div class="info-cell value">@GetSerialNumber(selectedService.RentalItemId)</div>
+                    </div>
+                    <div class="info-row">
+                        <div class="info-cell label">Item</div>
+                        <div class="info-cell value">@GetItemName(selectedService.RentalItemId)</div>
+                        <div class="info-cell label">Condition</div>
+                        <div class="info-cell value">@GetCondition(selectedService.RentalItemId)</div>
+                    </div>
+                    <div class="info-row">
+                        <div class="info-cell label">Customer</div>
+                        <div class="info-cell value">@GetCustomerName(selectedService.RentalItemId)</div>
+                        <div class="info-cell label">Lease Duration</div>
+                        <div class="info-cell value">@GetLeaseDuration(selectedService.RentalItemId)</div>
+                    </div>
+                    <div class="info-row">
+                        <div class="info-cell label">Location</div>
+                        <div class="info-cell value full-width" colspan="3">@GetLocation(selectedService.RentalItemId)</div>
+                    </div>
+                </div>
+
+                <!-- Service History Table -->
+                <div class="excel-table-container">
+                    <table class="excel-table">
+                        <thead>
+                            <tr>
+                                <th class="col-no">No</th>
+                                <th class="col-date">Date</th>
+                                <th class="col-action">Action</th>
+                                <th class="col-sparepart">Sparepart</th>
+                                <th class="col-note">Note</th>
+                                <th class="col-technician">Technician</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            @{
+                                var allServicesForItem = allServices.Where(s => s.RentalItemId == selectedService.RentalItemId)
+                                .OrderBy(s => s.Date)
+                                .ToList();
+                                int rowNumber = 1;
+                            }
+                            @foreach (var service in allServicesForItem)
+                            {
+                                <tr class="@(rowNumber % 2 == 0 ? "even-row" : "")">
+                                    <td class="text-center">@rowNumber</td>
+                                    <td>@service.Date.ToString("dd/MM/yyyy")</td>
+                                    <td>@service.Action</td>
+                                    <td>
+                                        @if (service.SpareParts?.Any() == true)
+                                        {
+                                            @foreach (var part in service.SpareParts)
+                                            {
+                                                <div class="spare-part-item">
+                                                    @GetSparePartName(part.SparePartId) = @part.Quantity (@part.Condition)
+                                                </div>
+                                            }
+                                        }
+                                    </td>
+                                    <td>@service.Note</td>
+                                    <td>@GetUserNameById(service.UserId)</td>
+                                </tr>
+                                rowNumber++;
+                            }
+                        </tbody>
+                    </table>
+                </div>
+
+                <div class="mt-3">
+                    <button class="btn btn-primary me-2" @onclick="() => EditService(selectedService)">
+                        <i class="fas fa-edit me-1"></i>Edit
+                    </button>
+                    <button class="btn btn-outline-danger me-2" @onclick="() => ConfirmDelete(selectedService)">
+                        <i class="fas fa-trash me-1"></i>Delete
+                    </button>
+                    <button class="btn btn-success me-2" @onclick="() => PrintRentalReport(selectedService.RentalItemId)">
+                        <i class="fas fa-print me-1"></i>Print Report
+                    </button>
+                    <button class="btn btn-outline-secondary" @onclick="GoBackToList">
+                        <i class="fas fa-arrow-left me-1"></i>Back to List
+                    </button>
+                </div>
+            </div>
+        }
+        else if (isLoading)
+        {
+            <div class="text-center py-5">
+                <div class="spinner-border text-primary mb-3" role="status">
+                    <span class="visually-hidden">Loading...</span>
+                </div>
+                <p class="text-muted mb-0">Loading service details...</p>
+            </div>
+        }
+        else
+        {
+            <div class="alert alert-warning">
+                <i class="fas fa-exclamation-triangle me-2"></i>
+                Service record not found or failed to load.
+                <button class="btn btn-sm btn-outline-warning ms-2" @onclick="GoBackToList">
+                    <i class="fas fa-arrow-left me-1"></i>Back to List
+                </button>
+            </div>
+        }
+    }
+    else
+    {
+        <!-- List View Header -->
+        <div class="excel-header-section mb-4">
+            <div class="text-center mb-3">
+                <h3 class="text-primary fw-bold khmer-title">ទិន្នន័យការជួសជុលម៉ាស៊ីនជួល</h3>
+                <h4 class="text-dark english-title">Rental Equipment Service Management</h4>
+            </div>
+        </div>
+
+        <!-- Toolbar -->
+        <div class="card shadow-sm rounded-lg mb-3">
+            <div class="card-body py-2">
+                <DxToolbar ItemRenderStyleMode="ToolbarRenderStyleMode.Plain">
+                    <DxToolbarItem Text="@Loc[nameof(ResourceStrings.TextNew)]" Click="NewService_Click" IconCssClass="far fa-file" CssClass="toolbar-item" />
+                    <DxToolbarItem Text="@Loc[nameof(ResourceStrings.TextEdit)]" Click="EditService_Click" IconCssClass="far fa-edit" CssClass="toolbar-item" Enabled="@(!string.IsNullOrEmpty(selectedServiceId))" />
+                    <DxToolbarItem Text="@Loc[nameof(ResourceStrings.TextDelete)]" Click="DeleteService_Click" IconCssClass="fas fa-trash-alt" CssClass="toolbar-item" Enabled="@(!string.IsNullOrEmpty(selectedServiceId))" />
+                    <DxToolbarItem Text="@Loc[nameof(ResourceStrings.TextExport)]" IconCssClass="fas fa-download">
+                        <Items>
+                            <DxToolbarItem Text="@Loc[nameof(ResourceStrings.TextToExcel)]" Click="ExportToExcel" IconCssClass="fas fa-file-excel" />
+                            <DxToolbarItem Text="@Loc[nameof(ResourceStrings.TextToPdf)]" Click="ExportToPdf" IconCssClass="fas fa-file-pdf" />
+                        </Items>
+                    </DxToolbarItem>
+                    <DxToolbarItem Text="Print Report" Click="PrintRentalReportFromToolbar" CssClass="toolbar-item" IconCssClass="fas fa-print" Enabled="@(!string.IsNullOrEmpty(selectedServiceId))" />
+                    <DxToolbarItem Text="@Loc[nameof(ResourceStrings.TextCheckList)]" Click="Check_Click" CssClass="toolbar-item" IconCssClass="fas fa-check-circle" Enabled="@(!string.IsNullOrEmpty(selectedServiceId))" />
+                </DxToolbar>
+            </div>
+        </div>
+
+        <!-- Enhanced Filter Section -->
+        <!-- Enhanced Filter Section -->
+        <div class="card shadow-sm mb-3">
+            <div class="card-body py-3">
+                <div class="row g-3 align-items-end">
+
+                    <!-- Enhanced Item Search with Serial Number Detection -->
+                    <div class="col-md-3">
+                        <label class="form-label small fw-bold">
+                            <i class="fas fa-search me-1"></i>
+                            Smart Search (Name/Serial/Customer)
+                            <span class="text-danger">*</span>
+                        </label>
+                        <div class="input-group">
+                            <SfTextBox @bind-Value="searchItemNameOrSerial"
+                                       Placeholder="Enter item name, serial number, or customer"
+                                       ShowClearButton="true"
+                                       CssClass="form-control-sm"
+                                       @oninput="OnSearchInputChanged">
+                            </SfTextBox>
+                            @if (isSearchingBySerial)
+                            {
+                                <span class="input-group-text bg-info text-white">
+                                    <i class="fas fa-barcode"></i>
+                                </span>
+                            }
+                        </div>
+                        <small class="text-info">
+                            <i class="fas fa-lightbulb me-1"></i>
+                            @if (isSearchingBySerial)
+                            {
+                                <span class="text-success">Serial number detected - using optimized search</span>
+                            }
+                            else if (!string.IsNullOrWhiteSpace(searchItemNameOrSerial))
+                            {
+                                <span>Searching by name/customer - using smart filters</span>
+                            }
+                            else
+                            {
+                                <span>Services will only show after entering search criteria</span>
+                            }
+                        </small>
+                    </div>
+
+                    <!-- Action Filter -->
+                    <div class="col-md-2">
+                        <label class="form-label small fw-bold">
+                            <i class="fas fa-filter me-1"></i>Action Filter
+                        </label>
+                        <select class="form-select form-select-sm"
+                                value="@selectedAction"
+                                @onchange="OnActionFilterChanged">
+                            <option value="">All Actions</option>
+                            <option value="PreCheck">PreCheck</option>
+                            <option value="Install">Install</option>
+                            <option value="Check">Check</option>
+                            <option value="Repair">Repair</option>
+                        </select>
+                    </div>
+
+                    <!-- Enhanced Start Date with Optimization Indicator -->
+                    <div class="col-md-2">
+                        <label class="form-label small fw-bold">
+                            <i class="fas fa-calendar-alt me-1"></i>
+                            Start Date
+                            @if (filterStartDate.HasValue)
+                            {
+                                <small class="text-success">(Optimized)</small>
+                            }
+                        </label>
+                        <SfDatePicker TValue="DateTime?" @bind-Value="filterStartDate"
+                                      Placeholder="Select start date"
+                                      Format="dd/MM/yyyy"
+                                      ShowClearButton="true"
+                                      CssClass="form-control-sm">
+                        </SfDatePicker>
+                    </div>
+
+                    <!-- Enhanced End Date with Optimization Indicator -->
+                    <div class="col-md-2">
+                        <label class="form-label small fw-bold">
+                            <i class="fas fa-calendar-check me-1"></i>
+                            End Date
+                            @if (filterEndDate.HasValue)
+                            {
+                                <small class="text-success">(Optimized)</small>
+                            }
+                        </label>
+                        <SfDatePicker TValue="DateTime?" @bind-Value="filterEndDate"
+                                      Placeholder="Select end date"
+                                      Format="dd/MM/yyyy"
+                                      ShowClearButton="true"
+                                      CssClass="form-control-sm">
+                        </SfDatePicker>                    
+                    </div>
+
+                    <!-- Technician Filter -->
+                    <div class="col-md-2">
+                        <label class="form-label small fw-bold">
+                            <i class="fas fa-user-cog me-1"></i>
+                            Technician
+                        </label>
+                        <select class="form-select form-select-sm"
+                                value="@selectedUserId"
+                                @onchange="OnUserFilterChanged">
+                            <option value="">All Users</option>
+                            @foreach (var user in UserMap)
+                            {
+                                <option value="@user.Key">@user.Value</option>
+                            }
+                        </select>
+                    </div>
+
+                    <!-- Enhanced Action Buttons -->
+                    <div class="col-md-1">
+                        <div class="btn-group-vertical w-100">
+                            <button class="btn btn-primary btn-sm mb-1"
+                                    @onclick="ApplyFilters"
+                                    disabled="@isLoading"
+                                    title="Apply Smart Filters">
+                                @if (isLoading)
+                                {
+                                    <i class="fas fa-spinner fa-spin"></i>
+                                }
+                                else if (isSearchingBySerial)
+                                {
+                                    <i class="fas fa-barcode"></i>
+                                }
+                                else
+                                {
+                                    <i class="fas fa-search"></i>
+                                }
+                            </button>
+                            <button class="btn btn-outline-secondary btn-sm"
+                                    @onclick="ClearAllFilters"
+                                    title="Clear All Filters">
+                                <i class="fas fa-times"></i>
+                            </button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Enhanced Control Row with API Optimization Info -->
+                <div class="row mt-3">
+                    <div class="col-md-8">
+                        <div class="btn-group">
+                            <button class="btn btn-outline-primary btn-sm me-2"
+                                    @onclick="() => LoadServicesWithCache(false)"
+                                    disabled="@isLoading">
+                                <i class="fas fa-sync-alt @(isLoading ? "fa-spin" : "")"></i>
+                                @(isLoading ? "Loading..." : "Refresh Data")
+                            </button>
+                            <button class="btn btn-outline-secondary btn-sm me-2"
+                                    @onclick="() => LoadServicesWithCache(true)"
+                                    disabled="@isLoading"
+                                    title="Force Refresh All Data">
+                                <i class="fas fa-redo"></i>
+                                Force Refresh
+                            </button>
+                            <button class="btn btn-outline-info btn-sm"
+                                    @onclick="() => RefreshRentalItemDetails(true)"
+                                    disabled="@isLoading"
+                                    title="Refresh Rental Items from API">
+                                <i class="fas fa-database @(isLoading ? "fa-spin" : "")"></i>
+                                Refresh Items
+                            </button>
+                        </div>
+                    </div>
+                    <div class="col-md-4 text-end">
+                        <small class="text-muted">
+                            @if (allRentalItemDetails.Any())
+                            {
+                                <i class="fas fa-check-circle text-success me-1"></i>
+                                <span>@allRentalItemDetails.Count items cached</span>
+                            }
+                            else
+                            {
+                                <i class="fas fa-exclamation-circle text-warning me-1"></i>
+                                <span>No item cache</span>
+                            }
+                            @if (filterStartDate.HasValue || filterEndDate.HasValue)
+                            {
+                                <span class="badge bg-success ms-2">API Optimized</span>
+                            }
+                        </small>
+                    </div>
+                </div>
+
+                <!-- Search Status and Performance Info -->
+                @if (!string.IsNullOrWhiteSpace(searchItemNameOrSerial))
+                {
+                    <div class="row mt-2">
+                        <div class="col-12">
+                            <div class="alert alert-info py-2 mb-0">
+                                <div class="row align-items-center">
+                                    <div class="col-md-8">
+                                        <small>
+                                            <i class="fas fa-info-circle me-1"></i>
+                                            <strong>Search Strategy:</strong>
+                                            @if (isSearchingBySerial)
+                                            {
+                                                <span class="text-success">
+                                                    Serial Number API (/api/rentalitemdetail/{serialNo})
+                                                </span>
+                                            }
+                                            else if (filterStartDate.HasValue || filterEndDate.HasValue)
+                                            {
+                                                <span class="text-primary">
+                                                    Date-Filtered API (/api/rentalitemdetail?fromDate=...&toDate=...)
+                                                </span>
+                                            }
+                                            else
+                                            {
+                                                <span class="text-secondary">
+                                                    In-Memory Cache Search
+                                                </span>
+                                            }
+                                        </small>
+                                    </div>
+                                    <div class="col-md-4 text-end">
+                                        <small class="text-muted">
+                                            Found: @foundRentalItems.Count items,
+                                            @filteredServices.Count services
+                                        </small>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                }
+            </div>
+        </div>
+
+
+        <!-- UPDATED Item Details Display Section - Without Card Background -->
+        <div class="mb-3">
+            <div class="section-header @(string.IsNullOrEmpty(searchItemNameOrSerial) ? "bg-secondary" : foundRentalItems.Any() ? "bg-info" : "bg-warning") text-white">
+                <h6 class="mb-0">
+                    <i class="fas fa-info-circle me-2"></i>
+                    @if (string.IsNullOrEmpty(searchItemNameOrSerial))
+                    {
+                        <span>Rental Item Information (No search performed)</span>
+                    }
+                    else if (foundRentalItems.Any())
+                    {
+                        <span>Found Rental Items (@foundRentalItems.Count)</span>
+                    }
+                    else
+                    {
+                        <span>No items found for "@searchItemNameOrSerial"</span>
+                    }
+                </h6>
+            </div>
+            <div class="section-content">
+                @if (string.IsNullOrEmpty(searchItemNameOrSerial))
+                {
+                    <!-- Show default template when no search is performed -->
+                    <div class="rental-item-info-flat mb-3">
+                        <div class="row">
+                            <!-- Left Side - Item Info with null values -->
+                            <div class="col-md-6">
+                                <div class="info-section">
+                                    <!-- Always show Item Name label -->
+                                    <div class="info-item">
+                                        <span class="info-label">Item Name:</span>
+                                        <span class="info-value text-muted fst-italic">null</span>
+                                    </div>
+
+                                    <!-- Always show Customer Name label -->
+                                    <div class="info-item">
+                                        <span class="info-label">Customer Name:</span>
+                                        <span class="info-value text-muted fst-italic">null</span>
+                                    </div>
+
+                                    <!-- Always show Location label -->
+                                    <div class="info-item">
+                                        <span class="info-label">Location:</span>
+                                        <span class="info-value text-muted fst-italic">null</span>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- Right Side - Technical Info with null values -->
+                            <div class="col-md-6">
+                                <div class="info-section">
+                                    <!-- Always show Serial Number label -->
+                                    <div class="info-item">
+                                        <span class="info-label">Serial Number:</span>
+                                        <span class="info-value text-muted fst-italic">null</span>
+                                    </div>
+
+                                    <!-- Always show Condition label -->
+                                    <div class="info-item">
+                                        <span class="info-label">Condition:</span>
+                                        <span class="info-value text-muted fst-italic">null</span>
+                                    </div>
+
+                                    <!-- Always show Duration label -->
+                                    <div class="info-item">
+                                        <span class="info-label">Duration:</span>
+                                        <span class="info-value text-muted fst-italic">null</span>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Instruction message -->
+                        <div class="mt-3 text-center">
+                            <small class="text-muted">
+                                <i class="fas fa-search me-1"></i>
+                                Start typing in the search box above to find rental items
+                            </small>
+                        </div>
+                    </div>
+                }
+                else if (foundRentalItems.Any())
+                {
+                    <!-- Show actual found items -->
+                    @foreach (var item in foundRentalItems)
+                    {
+                        <div class="rental-item-info-flat mb-3">
+                            <div class="row">
+                                <!-- Left Side - Item Info -->
+                                <div class="col-md-6">
+                                    <div class="info-section">
+                                        <!-- Always show Item Name label -->
+                                        <div class="info-item">
+                                            <span class="info-label">Item Name:</span>
+                                            <span class="info-value @(!string.IsNullOrWhiteSpace(item.ItemName) ? "fw-bold text-primary" : "text-muted fst-italic")">
+                                                @(!string.IsNullOrWhiteSpace(item.ItemName) ? item.ItemName : "null")
+                                            </span>
+                                        </div>
+
+                                        <!-- Always show Customer Name label -->
+                                        <div class="info-item">
+                                            <span class="info-label">Customer Name:</span>
+                                            <span class="info-value @(!string.IsNullOrWhiteSpace(item.CustomerName) ? "" : "text-muted fst-italic")">
+                                                @(!string.IsNullOrWhiteSpace(item.CustomerName) ? item.CustomerName : "null")
+                                            </span>
+                                        </div>
+
+                                        <!-- Always show Location label -->
+                                        <div class="info-item">
+                                            <span class="info-label">Location:</span>
+                                            <span class="info-value @(!string.IsNullOrWhiteSpace(item.Location) ? "" : "text-muted fst-italic")">
+                                                @(!string.IsNullOrWhiteSpace(item.Location) ? item.Location : "null")
+                                            </span>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <!-- Right Side - Technical Info -->
+                                <div class="col-md-6">
+                                    <div class="info-section">
+                                        <!-- Always show Serial Number label -->
+                                        <div class="info-item">
+                                            <span class="info-label">Serial Number:</span>
+                                            <span class="info-value @(!string.IsNullOrWhiteSpace(item.SerialNumber) ? "fw-bold text-success" : "text-muted fst-italic")">
+                                                @(!string.IsNullOrWhiteSpace(item.SerialNumber) ? item.SerialNumber : "null")
+                                            </span>
+                                        </div>
+
+                                        <!-- Always show Condition label -->
+                                        <div class="info-item">
+                                            <span class="info-label">Condition:</span>
+                                            <span class="info-value">
+                                                @if (!string.IsNullOrWhiteSpace(item.Condition))
+                                                {
+                                                    <span>@item.Condition</span>
+                                                }
+                                                else
+                                                {
+                                                    <span class="text-muted fst-italic">null</span>
+                                                }
+                                            </span>
+                                        </div>
+                                        <!-- Always show Duration label -->
+                                      <div class="info-item">
+                                            <span class="info-label">Duration:</span>
+                                            <span class="info-value @(item.Duration >= 0 ? "" : "text-muted fst-italic")">
+                                                @(item.Duration >= 0 ? $"{item.Duration} month{(item.Duration != 1 ? "s" : "")}" : "null")
+                                            </span>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- View Services Button -->
+                            <div class="mt-3 text-end">
+                                <button class="btn btn-outline-primary btn-sm me-2" @onclick="() => ViewServicesForItem(item.Id.ToString())">
+                                    <i class="fas fa-eye me-1"></i>View Services
+                                </button>
+                                <button class="btn btn-success btn-sm" @onclick="() => PrintRentalReportFromFoundItem(item)" disabled="@isLoading">
+                                    @if (isLoading)
+                                    {
+                                        <i class="fas fa-spinner fa-spin me-1"></i>
+                                    }
+                                    else
+                                    {
+                                        <i class="fas fa-print me-1"></i>
+                                    }
+                                    Print Report
+                                </button>
+                            </div>
+                        </div>
+                    }
+                }
+                else
+                {
+                    <!-- Show template when search returns no results -->
+                    <div class="rental-item-info-flat mb-3">
+                        <div class="row">
+                            <!-- Left Side - Item Info with null values -->
+                            <div class="col-md-6">
+                                <div class="info-section">
+                                    <!-- Always show Item Name label -->
+                                    <div class="info-item">
+                                        <span class="info-label">Item Name:</span>
+                                        <span class="info-value text-muted fst-italic">null</span>
+                                    </div>
+
+                                    <!-- Always show Customer Name label -->
+                                    <div class="info-item">
+                                        <span class="info-label">Customer Name:</span>
+                                        <span class="info-value text-muted fst-italic">null</span>
+                                    </div>
+
+                                    <!-- Always show Location label -->
+                                    <div class="info-item">
+                                        <span class="info-label">Location:</span>
+                                        <span class="info-value text-muted fst-italic">null</span>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- Right Side - Technical Info with null values -->
+                            <div class="col-md-6">
+                                <div class="info-section">
+                                    <!-- Always show Serial Number label -->
+                                    <div class="info-item">
+                                        <span class="info-label">Serial Number:</span>
+                                        <span class="info-value text-muted fst-italic">null</span>
+                                    </div>
+
+                                    <!-- Always show Condition label -->
+                                    <div class="info-item">
+                                        <span class="info-label">Condition:</span>
+                                        <span class="info-value text-muted fst-italic">null</span>
+                                    </div>
+
+                                    <!-- Always show Duration label -->
+                                    <div class="info-item">
+                                        <span class="info-label">Duration:</span>
+                                        <span class="info-value text-muted fst-italic">null</span>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Clear Search Button -->
+                        <div class="mt-3 text-end">
+                            <button class="btn btn-outline-warning btn-sm" @onclick="ClearSearchInput">
+                                <i class="fas fa-times me-1"></i>Clear Search
+                            </button>
+                        </div>
+                    </div>
+                }
+            </div>
+        </div>
+
+
+
+        <!-- Data Grid -->
+        <div class="card shadow-sm">
+            <div class="card-header bg-light">
+                <div class="row align-items-center">
+                    <div class="col">
+                        <h5 class="card-title mb-0">Rental Services</h5>
+                    </div>
+                    <div class="col-auto">
+                        <small class="text-muted">
+                            @if (!string.IsNullOrWhiteSpace(searchItemNameOrSerial))
+                            {
+                                if (filteredServices?.Any() == true)
+                                {
+                                    <span>
+                                        Found @filteredServices.Count() service record@(filteredServices.Count() != 1 ? "s" : "")
+                                        for "@searchItemNameOrSerial"
+                                    </span>
+                                }
+                                else
+                                {
+                                    <span>No services found for "@searchItemNameOrSerial"</span>
+                                }
+                            }
+                            else
+                            {
+                                <span>Enter search term to view services</span>
+                            }
+                        </small>
+                    </div>
+                </div>
+            </div>
+
+            <div class="card-body p-0">
+                @if (isLoading)
+                {
+                    <div class="text-center py-5">
+                        <div class="spinner-border text-primary mb-3" role="status">
+                            <span class="visually-hidden">Loading...</span>
+                        </div>
+
+                        <p class="text-muted mb-0">
+                            @if (isInitialLoad)
+                            {
+                                <span>Loading rental services...</span>
+                            }
+                            else
+                            {
+                                <span>Refreshing data...</span>
+                            }
+                        </p>
+                    </div>
+                }
+                else if (filteredServices == null || !filteredServices.Any())
+                {
+                    <div class="text-center py-5">
+                        <i class="fas fa-search fa-3x text-muted mb-3"></i>
+
+                        @if (string.IsNullOrWhiteSpace(searchItemNameOrSerial))
+                        {
+                            <h5 class="text-muted">Ready to search</h5>
+                            <p class="text-muted">
+                                Start typing in the search box to find rental items and their service records.
+                            </p>
+                        }
+                    </div>
+                }
+                else
+                {
+                    <div class="excel-grid-container">
+                        <SfGrid DataSource="@filteredServices"
+                                AllowPaging="true"
+                                AllowSorting="true"
+                                AllowSearching="true"
+                                Height="420"
+                                Toolbar="@(new List<string>() { "Search" })"
+                                @ref="Grid"
+                                CssClass="excel-style-grid">
+                            <GridPageSettings PageSize="@pageSize"
+                                              PageCount="5"
+                                              PageSizes="new int[] { 25, 50, 100, 200 }"></GridPageSettings>
+                            <GridSearchSettings Fields="@(new string[] { "RentalItemId", "Action", "Note", "UserId" })"
+                                                IgnoreCase="true"
+                                                Key="@searchKey"
+                                                Operator="Syncfusion.Blazor.Operator.Contains"></GridSearchSettings>
+                            <GridEvents RowSelected="RowSelectHandler" TValue="RentalServices" />
+                            <GridColumns>
+                                <GridColumn Field=@nameof(RentalServices.RentalItemId)
+                                            HeaderText="RENTAL ITEM ID"
+                                            Width="200"
+                                            AllowSorting="true"
+                                            AllowFiltering="true"
+                                            TextAlign="Syncfusion.Blazor.Grids.TextAlign.Left">
+                                    <Template>
+                                        @{
+                                            var service = context as RentalServices;
+                                        }
+                                        <div class="excel-cell">
+                                            <code class="rental-id">@service.RentalItemId</code>
+                                        </div>
+                                    </Template>
+                                </GridColumn>
+                                <GridColumn Field=@nameof(RentalServices.Date)
+                                            HeaderText="SERVICE DATE"
+                                            Width="120"
+                                            AllowSorting="true"
+                                            AllowFiltering="true"
+                                            Type="ColumnType.Date"
+                                            TextAlign="Syncfusion.Blazor.Grids.TextAlign.Center">
+                                    <Template>
+                                        @{
+                                            var service = context as RentalServices;
+                                        }
+                                        <div class="excel-cell">
+                                            <i class="fas fa-calendar text-muted me-1"></i>
+                                            @service.Date.ToString("dd/MM/yyyy")
+                                        </div>
+                                    </Template>
+                                </GridColumn>
+                                <GridColumn Field=@nameof(RentalServices.Action)
+                                            HeaderText="ACTION"
+                                            Width="100"
+                                            AllowFiltering="true"
+                                            AllowSorting="true"
+                                            TextAlign="Syncfusion.Blazor.Grids.TextAlign.Center">
+                                    <Template>
+                                        @{
+                                            var service = context as RentalServices;
+                                        }
+                                        <span>
+                                            @service.Action
+                                        </span>
+                                    </Template>
+                                </GridColumn>
+                                <GridColumn HeaderText="SPARE PARTS"
+                                            Width="100"
+                                            AllowFiltering="false"
+                                            AllowSorting="false"
+                                            TextAlign="Syncfusion.Blazor.Grids.TextAlign.Center">
+                                    <Template>
+                                        @{
+                                            var service = context as RentalServices;
+                                            var partCount = service.SpareParts?.Count ?? 0;
+                                        }
+                                        @if (partCount > 0)
+                                        {
+                                            <span>
+                                                @partCount
+                                            </span>
+                                        }
+                                        else
+                                        {
+                                            <span>-</span>
+                                        }
+                                    </Template>
+                                </GridColumn>
+                                <GridColumn Field=@nameof(RentalServices.Note)
+                                            HeaderText="NOTE"
+                                            Width="250"
+                                            AllowFiltering="true">
+                                    <Template>
+                                        @{
+                                            var service = context as RentalServices;
+                                        }
+                                        <div class="excel-cell text-truncate" title="@service.Note">
+                                            @if (!string.IsNullOrWhiteSpace(service.Note))
+                                            {
+                                                @service.Note
+                                            }
+                                            else
+                                            {
+                                                <span class="text-muted fst-italic">-</span>
+                                            }
+                                        </div>
+                                    </Template>
+                                </GridColumn>
+                                <GridColumn Field=@nameof(RentalServices.UserId)
+                                            HeaderText="USER"
+                                            Width="150"
+                                            AllowFiltering="true">
+                                    <Template>
+                                        @{
+                                            var service = context as RentalServices;
+                                        }
+                                        <div class="excel-cell">
+                                            <i class="fas fa-user text-muted me-1"></i>
+                                            @GetUserNameById(service.UserId)
+                                        </div>
+                                    </Template>
+                                </GridColumn>
+                                <GridColumn HeaderText="ACTIONS" Width="120" AllowFiltering="false" AllowSorting="false">
+                                    <Template>
+                                        @{
+                                            var service = context as RentalServices;
+                                        }
+                                        <button type="button" class="btn btn-outline-primary btn-sm"
+                                                @onclick="() => ViewService2(service)"
+                                                title="View Details">
+                                            <i class="fas fa-eye"></i>
+                                        </button>
+                                    </Template>
+                                </GridColumn>
+                            </GridColumns>
+                        </SfGrid>
+                    </div>
+                }
+            </div>
+        </div>
+    }
+</div>
+
+<!-- All dialogs and forms remain the same... -->
+<SfDialog IsModal="true" Width="900px" ShowCloseIcon="true" Visible="@isAddDialogVisible">
+    <DialogTemplates>
+        <Header>
+            <div class="dialog-header">
+                <i class="fas @(string.IsNullOrEmpty(currentService.RentalItemId) ? "fa-plus" : "fa-edit") me-2"></i>
+                <h4 class="mb-0">@pageTitle</h4>
+            </div>
+        </Header>
+    </DialogTemplates>
+    <EditForm Model="@currentService" OnValidSubmit="SaveService">
+        <DataAnnotationsValidator />
+        <!-- Form content remains the same... -->
+        <div class="container-fluid">
+            <!-- First Row: Rental Item ID and Date -->
+            <div class="row mb-3">
+                <div class="col-md-6">
+                    <div class="form-group">
+                        <SfComboBox @ref="rentalItemComboBox"
+                                    @onclick="OnRentalItemComboBoxClick"
+                                    TValue="string"
+                                    TItem="RentalItemOption"
+                                    Placeholder="Search by Name, Customer, or Serial Number"
+                                    FloatLabelType="FloatLabelType.Always"
+                                    FilterType="Syncfusion.Blazor.DropDowns.FilterType.Contains"
+                                    AllowFiltering="true"
+                                    AllowCustom="false"
+                                    @bind-Value="currentService.RentalItemId"
+                                    DataSource="@RentalItemOptions"
+                                    Width="100%"
+                                    PopupHeight="250px"
+                                    PopupWidth="100%">
+
+                            <ComboBoxFieldSettings Value="Id" Text="SearchableText"></ComboBoxFieldSettings>
+
+                            <ComboBoxTemplates TItem="RentalItemOption">
+                                <ItemTemplate Context="item">
+                                    <!-- Reduced padding and more compact layout -->
+                                    <div class="dropdown-item-template-compact" style="padding: 6px 8px; border-bottom: 1px solid #eee;">
+                                        <div class="d-flex justify-content-between align-items-center">
+                                            <div class="item-details-compact">
+                                                <div class="fw-bold text-primary mb-1 small">@item.ItemName</div>
+                                                <div class="text-muted" style="font-size: 0.75rem;">
+                                                    <i class="fas fa-user me-1"></i>@item.CustomerName
+                                                    <span class="ms-2">
+                                                        <i class="fas fa-barcode me-1"></i>@item.SerialNumber
+                                                    </span>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </ItemTemplate>
+
+                                <NoRecordsTemplate>
+                                    <div class="text-center py-2 text-muted small">
+                                        <i class="fas fa-search me-1"></i>
+                                        No matching rental items found.
+                                    </div>
+                                </NoRecordsTemplate>
+                            </ComboBoxTemplates>
+
+                            <ComboBoxEvents TValue="string" TItem="RentalItemOption"
+                                            Filtering="OnRentalItemFiltering"
+                                            ValueChange="OnRentalItemValueChanged">
+                            </ComboBoxEvents>
+                        </SfComboBox>
+
+                        <ValidationMessage For="@(() => currentService.RentalItemId)" class="text-danger small" />
+
+                        @if (!string.IsNullOrEmpty(rentalItemIdErrorMessage))
+                        {
+                            <div class="text-danger small">
+                                @rentalItemIdErrorMessage
+                            </div>
+                        }
+
+                        <!-- Optional: Show search hint -->
+                        <small class="text-info">
+                            <i class="fas fa-lightbulb me-1"></i>
+                            Search by item name, customer name, or serial number
+                        </small>
+                    </div>
+                </div>
+
+                <div class="col-md-6">
+                    <div class="form-group">
+                        <SfDateTimePicker @bind-Value="currentService.Date"
+                                          Placeholder="Service Date & Time"
+                                          FloatLabelType="FloatLabelType.Always"
+                                          Format="MMM dd, yyyy hh:mm tt">
+                        </SfDateTimePicker>
+                        <ValidationMessage For="@(() => currentService.Date)" class="text-danger small" />
+                    </div>
+                </div>
+            </div>
+
+            <!-- Second Row: Action and Current User Display -->
+            <div class="row mb-3">
+                <div class="col-md-6">
+                    <div class="form-group">
+                        <SfComboBox @ref="actionComboBox"
+                                    @onclick="OnActionComboBoxClick"
+                                    TValue="string"
+                                    TItem="ActionOption"
+                                    Placeholder="Action Type"
+                                    FloatLabelType="FloatLabelType.Always"
+                                    @bind-Value="currentService.Action"
+                                    DataSource="@ActionOptions"
+                                    Width="100%">
+                            <ComboBoxFieldSettings Value="Value" Text="Text"></ComboBoxFieldSettings>
+                        </SfComboBox>
+                        <ValidationMessage For="@(() => currentService.Action)" class="text-danger small" />
+                    </div>
+                </div>
+                <div class="col-md-6">
+                    <div class="form-group">
+                        <div class="form-floating">
+                            <input type="text"
+                                   class="form-control bg-light"
+                                   value="@currentUserDisplayName"
+                                   readonly
+                                   placeholder="Current User"
+                                   id="currentUserDisplay" />
+                            <label for="currentUserDisplay">
+                                <i class="fas fa-user me-1"></i>Current User
+                            </label>
+                        </div>
+                        <small class="form-text text-muted">
+                            <i class="fas fa-info-circle me-1"></i>
+                            Automatically set to your user account
+                        </small>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Third Row: Note -->
+            <div class="row mb-3">
+                <div class="col-12">
+                    <div class="form-group">
+                        <SfTextBox @bind-Value="currentService.Note"
+                                   Placeholder="Service Notes (Optional)"
+                                   FloatLabelType="FloatLabelType.Always"
+                                   Multiline="true"
+                                   RowsCount="3">
+                        </SfTextBox>
+                        <ValidationMessage For="@(() => currentService.Note)" class="text-danger small" />
+                    </div>
+                </div>
+            </div>
+
+            <!-- Spare Parts Section -->
+          <!-- Spare Parts Section - FIXED VERSION -->
+<div class="row mb-3">
+    <div class="col-12">
+        <div class="card">
+            <div class="card-header">
+                <div class="d-flex justify-content-between align-items-center">
+                    <h6 class="mb-0">
+                        <i class="fas fa-cog me-2"></i>Spare Parts Used
+                    </h6>
+                    <button type="button"
+                            class="btn btn-sm btn-outline-primary"
+                            @onclick="AddSparePart">
+                        <i class="fas fa-plus me-1"></i>Add Part
+                    </button>
+                </div>
+            </div>
+            <div class="card-body">
+                @if (currentService.SpareParts?.Any() == true)
+                {
+                    <!-- REMOVED table-responsive wrapper that was causing scrollbars -->
+                    <table class="table table-sm table-bordered spare-parts-table">
+                        <thead class="table-light">
+                            <tr>
+                                <th style="width: 35%; min-width: 280px;">Spare Part</th>
+                                <th style="width: 25%; min-width: 180px;">Description</th>
+                                <th style="width: 15%; min-width: 120px;">Quantity</th>
+                                <th style="width: 15%; min-width: 130px;">Condition</th>
+                                <th style="width: 10%; min-width: 80px; text-align: center;">Action</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            @for (int i = 0; i < currentService.SpareParts.Count; i++)
+                            {
+                                var index = i; // Capture for lambda
+                                var currentPart = currentService.SpareParts[index];
+
+                                <tr>
+                                    <td style="vertical-align: middle; padding: 8px;">
+                                        <SfComboBox TValue="Guid?"
+                                                    TItem="SparePartObject"
+                                                    Placeholder="Select Spare Part"
+                                                    @bind-Value="currentPart.SparePartId"
+                                                    DataSource="@filteredSpareParts"
+                                                    AllowFiltering="true"
+                                                    AllowCustom="false"
+                                                    FilterType="Syncfusion.Blazor.DropDowns.FilterType.Contains"
+                                                    PopupWidth="450px"
+                                                    PopupHeight="250px"
+                                                    Width="100%"
+                                                    @onclick="@(() => OnComboBoxClick(index))"
+                                                    Enabled="@(!isSaving)">
+
+                                            <ComboBoxEvents Filtering="OnFilteringSparePart"
+                                                            ValueChange="@((args) => OnSparePartValueChanged(args, index))"
+                                                            TValue="Guid?"
+                                                            TItem="SparePartObject">
+                                            </ComboBoxEvents>
+
+                                            <ComboBoxFieldSettings Value="Id"
+                                                                   Text="ItemName">
+                                            </ComboBoxFieldSettings>
+
+                                            <ComboBoxTemplates TItem="SparePartObject">
+                                                <ItemTemplate Context="sparePartTemplate">
+                                                    <div style="display: flex; align-items: center; padding: 8px; min-height: 60px; width: 100%;">
+                                                        <img src="@sparePartTemplate.PictureUrl"
+                                                             alt="@sparePartTemplate.ItemName"
+                                                             style="width: 50px; height: 50px; border-radius: 4px; object-fit: cover; margin-right: 12px; flex-shrink: 0;"
+                                                             onerror="this.src='data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iNTAiIGhlaWdodD0iNTAiIHZpZXdCb3g9IjAgMCA1MCA1MCIgZmlsbD0ibm9uZSIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj4KPHJlY3Qgd2lkdGg9IjUwIiBoZWlnaHQ9IjUwIiBmaWxsPSIjRjVGNUY1Ii8+CjxwYXRoIGQ9Ik0xNSAxNUgzNUgzNUgxNVYxNVoiIGZpbGw9IiNEREREREQiLz4KPC9zdmc+Cg=='" />
+                                                        <div style="flex-grow: 1; min-width: 0; margin-right: 8px;">
+                                                            <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 2px;">
+                                                                <strong style="font-size: 12px; color: #333; font-weight: 600; line-height: 1.2;">
+                                                                    @sparePartTemplate.ItemName
+                                                                </strong>
+                                                                <strong style="font-size: 9px; color: #666; font-weight: 600; margin-left: 8px;">
+                                                                    @sparePartTemplate.SerialNumber
+                                                                </strong>
+                                                            </div>
+                                                            <div style="font-size: 11px; color: #666; line-height: 1.3; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">
+                                                                Description: @sparePartTemplate.Description
+                                                                <span style="margin: 0 4px;">|</span>
+                                                                Use For: @sparePartTemplate.UseFor
+                                                            </div>
+                                                        </div>
+                                                        <button type="button"
+                                                                class="btn btn-link p-1"
+                                                                style="flex-shrink: 0; border: none; background: none;"
+                                                                @onclick="() => ShowFullDetails(sparePartTemplate)"
+                                                                title="View Details">
+                                                            <i class="fa fa-eye" style="font-size: 16px; color: #007bff;"></i>
+                                                        </button>
+                                                    </div>
+                                                </ItemTemplate>
+                                                <NoRecordsTemplate>
+                                                    @if (isSparePartLoading)
+                                                    {
+                                                        <div style="text-align: center; padding: 10px; color: #6c757d;">
+                                                            <span class="spinner-border spinner-border-sm text-primary me-2"></span>
+                                                            <span>Searching spare parts...</span>
+                                                        </div>
+                                                    }
+                                                    else
+                                                    {
+                                                        <div style="text-align: center; padding: 15px; color: #6c757d; font-style: italic;">
+                                                            No matching spare parts found.
+                                                        </div>
+                                                    }
+                                                </NoRecordsTemplate>
+                                            </ComboBoxTemplates>
+                                        </SfComboBox>
+                                    </td>
+
+                                    <td style="vertical-align: middle; padding: 8px;">
+                                        <SfTextBox @bind-Value="currentPart.Description"
+                                                   Placeholder="Description"
+                                                   Width="100%"
+                                                   Readonly="@(!string.IsNullOrEmpty(currentPart.SparePartId?.ToString()))"
+                                                   Enabled="@(!isSaving)">
+                                        </SfTextBox>
+                                    </td>
+
+                                    <td style="vertical-align: middle; padding: 8px;">
+                                        <SfNumericTextBox @bind-Value="currentPart.Quantity"
+                                                          Placeholder="Qty"
+                                                          Min="1"
+                                                          Max="999"
+                                                          Format="0"
+                                                          Width="100%"
+                                                          ShowSpinButton="true"
+                                                          Enabled="@(!isSaving)">
+                                        </SfNumericTextBox>
+                                    </td>
+
+                                    <td style="vertical-align: middle; padding: 8px;">
+                                        <SfComboBox TValue="string"
+                                                    TItem="ConditionOption"
+                                                    @bind-Value="currentPart.Condition"
+                                                    DataSource="@ConditionOptions"
+                                                    Placeholder="Condition"
+                                                    Width="100%"
+                                                    Enabled="@(!isSaving)">
+                                            <ComboBoxFieldSettings Value="Value" Text="Text"></ComboBoxFieldSettings>
+                                        </SfComboBox>
+                                    </td>
+
+                                    <td style="vertical-align: middle; padding: 8px; text-align: center;">
+                                        <button type="button"
+                                                class="btn btn-outline-danger btn-sm"
+                                                style="width: 100%; max-width: 60px;"
+                                                @onclick="() => RemoveSparePart(index)"
+                                                title="Remove Part"
+                                                disabled="@isSaving">
+                                            <i class="fas fa-trash"></i>
+                                        </button>
+                                    </td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                }
+                else
+                {
+                    <div class="no-spare-parts-message">
+                        <i class="fas fa-info-circle me-2"></i>
+                        No spare parts added yet. Click "Add Part" to add spare parts.
+                    </div>
+                }
+            </div>
+        </div>
+    </div>
+</div></div>
+
+
+        <!-- Validation Summary -->
+        <ValidationSummary class="text-danger mb-3" />
+
+        <!-- Action Buttons -->
+        <div class="row">
+            <div class="col-12">
+                <div class="d-flex justify-content-end gap-2">
+                    <button type="button" class="btn btn-secondary" @onclick="CancelDialog">
+                        <i class="fas fa-times me-1"></i>Cancel
+                    </button>
+                    <button type="submit" class="btn btn-primary" disabled="@isSaving">
+                        @if (isSaving)
+                        {
+                            <i class="fas fa-spinner fa-spin me-1"></i>
+                        }
+                        else
+                        {
+                            <i class="fas @(string.IsNullOrEmpty(originalRentalItemId) ? "fa-plus" : "fa-save") me-1"></i>
+                        }
+                        @(string.IsNullOrEmpty(originalRentalItemId) ? "Create" : "Update")
+                    </button>
+                </div>
+            </div>
+        </div>
+    </EditForm>
+</SfDialog>
+
+<!-- Delete Confirmation Dialog -->
+<SfDialog @ref="DialogDelete" IsModal="true" Width="400px" ShowCloseIcon="true" Visible="false">
+    <DialogTemplates>
+        <Header>
+            <i class="fas fa-exclamation-triangle text-warning me-2"></i>
+            Confirm Delete
+        </Header>
+        <Content>
+            <div class="text-center">
+                <p>Are you sure you want to delete this service record?</p>
+                @if (currentService != null)
+                {
+                    <div class="alert alert-warning">
+                        <strong>Item ID:</strong> @currentService.RentalItemId<br />
+                        <small>Date: @currentService.Date.ToString("MMM dd, yyyy")</small>
+                    </div>
+                }
+                <p class="text-muted">This action cannot be undone.</p>
+            </div>
+        </Content>
+    </DialogTemplates>
+    <DialogButtons>
+        <DialogButton Content="Delete" IsPrimary="true" CssClass="e-danger" OnClick="ConfirmDeleteYes" />
+        <DialogButton Content="Cancel" OnClick="ConfirmDeleteNo" />
+    </DialogButtons>
+</SfDialog>
+
+<SfDialog @ref="DialogEdit" IsModal="true" Width="800px" ShowCloseIcon="true" @bind-Visible="@isViewDialogVisible">
+    <DialogTemplates>
+        <Header>
+            <i class="fas fa-eye me-2"></i>
+            Service Details
+        </Header>
+        <Content>
+            @if (selectedViewService != null)
+            {
+                <div class="container-fluid">
+                    <div class="row mb-3">
+                        <div class="col-md-6">
+                            <dl class="row">
+                                <dt class="col-sm-5">Rental Item ID:</dt>
+                                <dd class="col-sm-7">
+                                    <code>@selectedViewService.RentalItemId</code>
+                                </dd>
+                                <dt class="col-sm-5">Service Date:</dt>
+                                <dd class="col-sm-7">
+                                    <i class="fas fa-calendar text-muted me-1"></i>
+                                    @selectedViewService.Date.ToString("MMM dd, yyyy hh:mm tt")
+                                </dd>
+                                <dt class="col-sm-5">Action:</dt>
+                                <dd class="col-sm-7">
+                                    <span>
+                                        @selectedViewService.Action
+                                    </span>
+                                </dd>
+                            </dl>
+                        </div>
+                        <div class="col-md-6">
+                            <dl class="row">
+                                <dt class="col-sm-5">User:</dt>
+                                <dd class="col-sm-7">
+                                    <i class="fas fa-user text-muted me-1"></i>
+                                    @GetUserNameById(selectedViewService.UserId)
+                                </dd>
+                                <dt class="col-sm-5">Note:</dt>
+                                <dd class="col-sm-7">
+                                    @if (!string.IsNullOrWhiteSpace(selectedViewService.Note))
+                                    {
+                                        @selectedViewService.Note
+                                    }
+                                    else
+                                    {
+                                        <span class="text-muted fst-italic">No notes</span>
+                                    }
+                                </dd>
+                            </dl>
+                        </div>
+                    </div>
+
+                    @if (selectedViewService.SpareParts?.Any() == true)
+                    {
+                        <hr class="my-4">
+                        <h6><i class="fas fa-cog me-2"></i>Spare Parts Used (@selectedViewService.SpareParts.Count)</h6>
+                        <div class="table-responsive">
+                            <table class="table table-sm">
+                                <thead class="table-light">
+                                    <tr>
+                                        <th>Image</th>
+                                        <th>Description</th>
+                                        <th>Serial Number</th>
+                                        <th>Use For</th>
+                                        <th>Quantity</th>
+                                        <th>Condition</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    @foreach (var part in selectedViewService.SpareParts)
+                                    {
+                                        var partObj = _spareParts.FirstOrDefault(sp => sp.Id == part.SparePartId);
+                                        <tr>
+                                            <td>
+                                                @if (partObj != null && !string.IsNullOrEmpty(partObj.PictureUrl))
+                                                {
+                                                    <img src="@partObj.PictureUrl" alt="Spare Part Image" style="width:40px;height:40px;border-radius:4px;" />
+                                                }
+                                                else
+                                                {
+                                                    <span class="text-muted fst-italic">No Image</span>
+                                                }
+                                            </td>
+                                            <td>@part.Description</td>
+                                            <td>@(partObj?.SerialNumber ?? "-")</td>
+                                            <td>@(partObj?.UseFor ?? "-")</td>
+                                            <td>@part.Quantity</td>
+
+                                            <td>@part.Condition</td>
+
+                                        </tr>
+                                    }
+                                </tbody>
+                            </table>
+                        </div>
+                    }
+                    else
+                    {
+                        <hr class="my-4">
+                        <div class="text-center text-muted">
+                            <i class="fas fa-info-circle me-2"></i>
+                            No spare parts used in this service
+                        </div>
+                    }
+                </div>
+            }
+        </Content>
+    </DialogTemplates>
+    <DialogButtons>
+        <DialogButton Content="Edit" CssClass="e-primary e-outline" OnClick="() => EditServiceFromView()" />
+        <DialogButton Content="Close" IsPrimary="true" OnClick="CloseViewDialog" />
+    </DialogButtons>
+</SfDialog>
+
+<!-- No Record Selected Dialog -->
+<SfDialog @ref="DialogNoRecordSelected" IsModal="true" Width="350px" ShowCloseIcon="true" Visible="false">
+    <DialogTemplates>
+        <Header>
+            <i class="fas fa-exclamation-triangle text-warning me-2"></i>
+            Warning
+        </Header>
+        <Content>
+            <div class="text-center">
+                <p>Please select a record from the grid first.</p>
+            </div>
+        </Content>
+    </DialogTemplates>
+    <DialogButtons>
+        <DialogButton Content="OK" IsPrimary="true" OnClick="CloseDialogNoRecordSelected" />
+    </DialogButtons>
+</SfDialog>
+
+<!-- Excel-style CSS -->
+
+
+
+
+@code {
+    public void Dispose()
+    {
+        _searchTimer?.Dispose();
+    }
+
+    [Parameter] public string RentalItemId { get; set; }
+
+    private IEnumerable<SparePartObject> _spareParts = Enumerable.Empty<SparePartObject>();
+    private List<Repairs> allItems = new();
+    private List<SparePartObject> allSpareParts = new();
+    private List<SparePartObject> filteredSpareParts = new();
+
+    // Properties to determine view mode
+    private bool IsDetailView => !string.IsNullOrEmpty(RentalItemId);
+    private RentalServices selectedService = null;
+    private SparePartObject selectedSparePart;
+    private bool isSparePartLoading = false;
+
+    // ✅ CHANGED: User management properties - now using JWT
+    private Dictionary<string, string> UserMap = new();
+    private string currentUserId = string.Empty;
+    private string currentUserDisplayName = string.Empty;
+
+    // All your existing Syncfusion references
+    private SfGrid<RentalServices> Grid;
+    private SfDialog DialogDelete;
+    private SfDialog DialogNoRecordSelected;
+    private SfDialog DialogEdit;
+    private SfComboBox<string, RentalItemOption> rentalItemComboBox;
+    private SfComboBox<string, ActionOption> actionComboBox;
+
+    // All your existing data properties
+    private List<RentalServices> allServices = new();
+    private List<RentalServices> filteredServices = new();
+    private List<RentalItemOption> RentalItemOptions = new();
+    private List<RentalItem> allRentalItems = new();
+    private List<RentalItem> foundRentalItems = new();
+    private List<ActionOption> ActionOptions = new();
+    private List<ConditionOption> ConditionOptions = new();
+    private List<SparePartOption> SparePartOptions = new();
+
+    // Dialog and form properties
+    private bool isAddDialogVisible = false;
+    private bool isViewDialogVisible = false;
+    private bool isSaving = false;
+    private string pageTitle = "Add Service Record";
+    private RentalServices currentService = new RentalServices();
+    private string originalRentalItemId = string.Empty;
+    private RentalServices selectedViewService = null;
+    private string selectedServiceId;
+
+    // Grid configuration
+    private int pageSize = 50;
+
+    // Enhanced search and filter properties
+    private string searchKey = string.Empty;
+    private string selectedAction = string.Empty;
+    private string selectedUserId = string.Empty;
+    private string searchItemNameOrSerial = string.Empty;
+    private DateTime? filterStartDate = null;
+    private DateTime? filterEndDate = null;
+    private bool isDialogVisible = false;
+
+    // State management
+    private bool isLoading = false;
+    private bool isInitialLoad = true;
+    private string errorMessage = string.Empty;
+    private string successMessage = string.Empty;
+    private string rentalItemIdErrorMessage = string.Empty;
+
+    // Toast animation
+    ToastAnimationType Animation { get; set; } = ToastAnimationType.Slide;
+
+    // Search timer for debouncing
+    private Timer _searchTimer;
+
+    // RentalDetails
+    private List<RentalItemDetailResponse> allRentalItemDetails = new();
+    private bool isSearchingBySerial = false;
+    private string lastSearchTerm = string.Empty;
+
+    // All your existing supporting classes remain the same
+    public class RentalItemOption
+    {
+        public string Id { get; set; } = string.Empty;
+        public string ItemName { get; set; } = string.Empty;
+        public string CustomerName { get; set; } = string.Empty;
+        public string SerialNumber { get; set; } = string.Empty;
+        public string SearchableText => $"{ItemName} {CustomerName} {SerialNumber} {Id}";
+    }
+
+    public class SparePartOption
+    {
+        public string Id { get; set; } = string.Empty;
+        public string ItemName { get; set; } = string.Empty;
+        public string SerialNumber { get; set; } = string.Empty;
+        public string Description { get; set; } = string.Empty;
+        public string UseFor { get; set; } = string.Empty;
+        public string DisplayText => $"{ItemName} - {SerialNumber}";
+    }
+
+    public class ActionOption
+    {
+        public string Value { get; set; } = string.Empty;
+        public string Text { get; set; } = string.Empty;
+    }
+
+    public class ConditionOption
+    {
+        public string Value { get; set; } = string.Empty;
+        public string Text { get; set; } = string.Empty;
+    }
+    private async Task PrintRentalReport(string rentalItemId)
+    {
+        try
+        {
+            isLoading = true;
+            StateHasChanged();
+
+            Console.WriteLine($"PrintRentalReport called with ID: {rentalItemId}");
+
+            // Get the rental item details first
+            var rentalItemDetail = await GetRentalItemDetailByIdOptimized(rentalItemId);
+            if (rentalItemDetail == null)
+            {
+                errorMessage = "Rental item details not found.";
+                return;
+            }
+
+            // Get all services for this rental item from the current filtered/displayed data
+            var servicesForItem = filteredServices
+                .Where(s => s.RentalItemId == rentalItemId)
+                .OrderBy(s => s.Date)
+                .ToList();
+
+            // If no services in filtered view, fall back to all services
+            if (!servicesForItem.Any())
+            {
+                servicesForItem = allServices
+                    .Where(s => s.RentalItemId == rentalItemId)
+                    .OrderBy(s => s.Date)
+                    .ToList();
+            }
+
+            Console.WriteLine($"Found {servicesForItem.Count} services for item {rentalItemId}");
+
+            if (!servicesForItem.Any())
+            {
+                errorMessage = $"No service records found for rental item {rentalItemId}";
+                return;
+            }
+
+            // Create the rental report
+            var report = new RentalReport();
+
+            // Create enhanced spare part mapping
+            var sparePartMap = new Dictionary<Guid, string>();
+            if (_spareParts?.Any() == true)
+            {
+                foreach (var sparePart in _spareParts)
+                {
+                    sparePartMap[sparePart.Id] = sparePart.ItemName ?? "Unknown Part";
+                }
+                Console.WriteLine($"Created spare part map with {sparePartMap.Count} items");
+            }
+
+            // Prepare service history with proper formatting using actual grid data
+            var serviceHistory = PrepareRentalReportDataFromGridData(servicesForItem, sparePartMap);
+
+            Console.WriteLine($"Prepared {serviceHistory.Count} service history records from grid data");
+
+            // Use the rental item details from API
+            report.SetParameters(
+                rentalItemDetail.Id,
+                GetItemTypeByRentalItemDetail(rentalItemDetail),
+                rentalItemDetail.SerialNumber ?? "N/A",
+                rentalItemDetail.ItemName ?? "N/A",
+                rentalItemDetail.Condition ?? "N/A",
+                rentalItemDetail.CustomerName ?? "N/A",
+                rentalItemDetail.Duration >= 0 ? $"{rentalItemDetail.Duration} month{(rentalItemDetail.Duration != 1 ? "s" : "")}" : "N/A",
+                rentalItemDetail.Location ?? "N/A",
+                serviceHistory,
+                currentUserDisplayName,
+                DateTime.Now
+            );
+
+            // Validate the report setup
+            report.ValidateReportSetup();
+
+            // Generate and show the report
+            byte[] reportDataBytes;
+            using (var ms = new MemoryStream())
+            {
+                report.ExportToPdf(ms);
+                reportDataBytes = ms.ToArray();
+            }
+
+            // Convert byte array to base64 string for JavaScript
+            string base64Report = Convert.ToBase64String(reportDataBytes);
+
+            var filename = $"RentalReport_{rentalItemDetail.CustomerName?.Replace(" ", "_")}_{rentalItemDetail.SerialNumber}_{DateTime.Now:yyyyMMdd}.pdf";
+
+            // Use the existing blazorReportsPrint.printReport function
+            await JSRuntime.InvokeVoidAsync("blazorReportsPrint.printReport", base64Report, filename);
+
+            successMessage = $"Report generated for {rentalItemDetail.ItemName} - {rentalItemDetail.CustomerName}";
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Error generating rental report: {ex}");
+            errorMessage = $"Failed to generate report: {ex.Message}";
+        }
+        finally
+        {
+            isLoading = false;
+            StateHasChanged();
+        }
+    }
+
+
+    private string GetItemTypeByRentalItemDetail(RentalItemDetailResponse rentalItemDetail)
+    {
+        if (rentalItemDetail?.ItemName == null) return "Unknown Type";
+
+        var repair = allItems.FirstOrDefault(r =>
+            r.ItemName.Equals(rentalItemDetail.ItemName, StringComparison.OrdinalIgnoreCase));
+        return repair?.ItemType ?? "Equipment"; // Default to "Equipment" instead of "Unknown Type"
+    }
+
+    private List<RentalReportData> PrepareRentalReportDataFromGridData(List<RentalServices> services, Dictionary<Guid, string> sparePartMap)
+    {
+        var reportData = new List<RentalReportData>();
+        int rowNumber = 1;
+
+        foreach (var service in services.OrderBy(s => s.Date))
+        {
+            var sparePartsText = string.Empty;
+
+            if (service.SpareParts?.Any() == true)
+            {
+                var formattedParts = new List<string>();
+
+                foreach (var part in service.SpareParts)
+                {
+                    string partName = "Unknown Part";
+
+                    // Try to get part name from spare part map
+                    if (part.SparePartId.HasValue && sparePartMap.ContainsKey(part.SparePartId.Value))
+                    {
+                        partName = sparePartMap[part.SparePartId.Value];
+                    }
+                    else if (!string.IsNullOrWhiteSpace(part.Description))
+                    {
+                        // Use description if part name not found
+                        partName = part.Description;
+                    }
+
+                    // Format exactly as shown in the grid: ItemName=Quantity(Condition)
+                    var formattedPart = $"{partName}={part.Quantity}({part.Condition ?? "N/A"})";
+                    formattedParts.Add(formattedPart);
+
+                    Console.WriteLine($"Formatted spare part for report: {formattedPart}");
+                }
+
+                // Join multiple parts with line breaks for better PDF formatting
+                sparePartsText = string.Join(Environment.NewLine, formattedParts);
+            }
+
+            var reportItem = new RentalReportData
+            {
+                RowNumber = rowNumber,
+                Date = service.Date.ToString("dd/MM/yyyy"),
+                Action = service.Action ?? "N/A",
+                SparePart = sparePartsText,
+                Note = service.Note ?? string.Empty,
+                Technician = GetUserNameById(service.UserId)
+            };
+
+            reportData.Add(reportItem);
+            Console.WriteLine($"Added report data row {rowNumber}: {reportItem.Date} - {reportItem.Action}");
+            rowNumber++;
+        }
+
+        Console.WriteLine($"Total report data rows created: {reportData.Count}");
+        return reportData;
+    }
+    private List<RentalReportData> PrepareRentalReportDataFromServices(List<RentalServices> services)
+    {
+        var reportData = new List<RentalReportData>();
+        int rowNumber = 1;
+
+        foreach (var service in services.OrderBy(s => s.Date))
+        {
+            var sparePartsText = string.Empty;
+            if (service.SpareParts?.Any() == true)
+            {
+                sparePartsText = string.Join(", ", service.SpareParts.Select(sp =>
+                {
+                    var partName = GetSparePartName(sp.SparePartId);
+                    return $"{partName} x{sp.Quantity} ({sp.Condition})";
+                }));
+            }
+
+            reportData.Add(new RentalReportData
+            {
+                RowNumber = rowNumber,
+                Date = service.Date.ToString("dd/MM/yyyy"),
+                Action = service.Action ?? "N/A",
+                SparePart = sparePartsText,
+                Note = service.Note ?? string.Empty,
+                Technician = GetUserNameById(service.UserId)
+            });
+
+            rowNumber++;
+        }
+
+        return reportData;
+    }
+    private async Task PrintRentalReportFromFoundItem(RentalItem item)
+    {
+        await PrintRentalReport(item.Id.ToString());
+    }
+
+    private async Task PrintRentalReportFromToolbar()
+    {
+        if (!string.IsNullOrEmpty(selectedServiceId))
+        {
+            // Use the selected service's rental item ID
+            var selectedService = filteredServices?.FirstOrDefault(s => s.RentalItemId == selectedServiceId) ??
+                                 allServices.FirstOrDefault(s => s.RentalItemId == selectedServiceId);
+
+            if (selectedService != null)
+            {
+                await PrintRentalReport(selectedService.RentalItemId);
+            }
+            else
+            {
+                errorMessage = "Selected service not found.";
+            }
+        }
+        else
+        {
+            await DialogNoRecordSelected.ShowAsync();
+        }
+    }
+
+
+    // Alternative method for printing from detail view
+    private async Task PrintCurrentServiceReport()
+    {
+        if (selectedService != null && !string.IsNullOrEmpty(selectedService.RentalItemId))
+        {
+            await PrintRentalReport(selectedService.RentalItemId);
+        }
+        else
+        {
+            errorMessage = "No service selected for printing.";
+        }
+    }
+
+  
+
+    // Method to print multiple rental items (if needed)
+    private async Task PrintMultipleRentalReports(List<string> rentalItemIds)
+    {
+        try
+        {
+            isLoading = true;
+            StateHasChanged();
+
+            foreach (var itemId in rentalItemIds)
+            {
+                await PrintRentalReport(itemId);
+                // Add a small delay between reports to prevent overwhelming the browser
+                await Task.Delay(500);
+            }
+
+            successMessage = $"Generated {rentalItemIds.Count} rental reports successfully.";
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Error generating multiple reports: {ex.Message}");
+            errorMessage = $"Failed to generate reports: {ex.Message}";
+        }
+        finally
+        {
+            isLoading = false;
+            StateHasChanged();
+        }
+    }
+
+    // Method for generating report with custom date range (if needed)
+    private async Task PrintRentalReportWithDateRange(string rentalItemId, DateTime? startDate, DateTime? endDate)
+    {
+        try
+        {
+            isLoading = true;
+            StateHasChanged();
+
+            // Get filtered services for this rental item within date range
+            var query = allServices.Where(s => s.RentalItemId == rentalItemId);
+
+            if (startDate.HasValue)
+                query = query.Where(s => s.Date.Date >= startDate.Value.Date);
+
+            if (endDate.HasValue)
+                query = query.Where(s => s.Date.Date <= endDate.Value.Date);
+
+            var servicesForItem = query.OrderBy(s => s.Date).ToList();
+
+            if (!servicesForItem.Any())
+            {
+                errorMessage = $"No service records found for the specified date range.";
+                return;
+            }
+
+            // Get rental item details
+            var rentalItem = allRentalItems.FirstOrDefault(r => r.Id.ToString() == rentalItemId);
+
+            if (rentalItem == null)
+            {
+                errorMessage = "Rental item not found.";
+                return;
+            }
+
+            // Create and configure the report
+            var report = new RentalReport();
+            var sparePartMap = _spareParts.ToDictionary(sp => sp.Id, sp => sp.ItemName);
+
+            report.SetRentalReportData(
+                rentalItem,
+                servicesForItem,
+                currentUserDisplayName,
+                UserMap,
+                sparePartMap
+            );
+
+            // Generate and show the report
+            byte[] reportDataBytes;
+            using (var ms = new MemoryStream())
+            {
+                report.ExportToPdf(ms);
+                reportDataBytes = ms.ToArray();
+            }
+
+            await JSRuntime.InvokeVoidAsync("printReport", reportDataBytes);
+
+            successMessage = $"Report generated for {rentalItem.ItemName} ({startDate?.ToString("dd/MM/yyyy")} - {endDate?.ToString("dd/MM/yyyy")})";
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Error generating date-filtered rental report: {ex.Message}");
+            errorMessage = $"Failed to generate report: {ex.Message}";
+        }
+        finally
+        {
+            isLoading = false;
+            StateHasChanged();
+        }
+    }
+
+    private void SetRentalReportParameters(RentalReport report, RentalItem rentalItem, List<RentalServices> services)
+    {
+        // Set equipment information parameters
+        if (rentalItem != null)
+        {
+            report.Parameters["pType"].Value = GetItemTypeByItemName(rentalItem.ItemName);
+            report.Parameters["pSerialNumber"].Value = rentalItem.SerialNumber ?? "N/A";
+            report.Parameters["pItemName"].Value = rentalItem.ItemName ?? "N/A";
+            report.Parameters["pCondition"].Value = rentalItem.Condition ?? "N/A";
+            report.Parameters["pCompanyName"].Value = rentalItem.CustomerName ?? "N/A";
+            report.Parameters["pDuration"].Value = rentalItem.Duration > 0 ?
+                $"{rentalItem.Duration} month{(rentalItem.Duration != 1 ? "s" : "")}" : "N/A";
+            report.Parameters["pAddress"].Value = rentalItem.Location ?? "N/A";
+        }
+        else
+        {
+            // Set default values if rental item not found
+            report.Parameters["pType"].Value = "Unknown";
+            report.Parameters["pSerialNumber"].Value = "N/A";
+            report.Parameters["pItemName"].Value = "Unknown";
+            report.Parameters["pCondition"].Value = "N/A";
+            report.Parameters["pCompanyName"].Value = "Unknown";
+            report.Parameters["pDuration"].Value = "N/A";
+            report.Parameters["pAddress"].Value = "N/A";
+        }
+
+        // Set other parameters
+        report.Parameters["pGeneratedDate"].Value = DateTime.Now.ToString("dd/MM/yyyy");
+        report.Parameters["pUser"].Value = currentUserDisplayName;
+
+        // Set data source
+        var reportData = PrepareRentalReportData(services, rentalItem);
+        report.DataSource = reportData;
+    }
+    private List<RentalReportData> PrepareRentalReportData(List<RentalServices> services, RentalItem rentalItem)
+    {
+        var reportData = new List<RentalReportData>();
+        int rowNumber = 1;
+
+        foreach (var service in services.OrderBy(s => s.Date))
+        {
+            var sparePartsText = string.Empty;
+            if (service.SpareParts?.Any() == true)
+            {
+                sparePartsText = string.Join(", ", service.SpareParts.Select(sp =>
+                    $"{GetSparePartName(sp.SparePartId)} x{sp.Quantity} ({sp.Condition})"));
+            }
+
+            reportData.Add(new RentalReportData
+            {
+                RowNumber = rowNumber,
+                Date = service.Date.ToString("dd/MM/yyyy"),
+                Action = service.Action,
+                SparePart = sparePartsText,
+                Note = service.Note ?? string.Empty,
+                Technician = GetUserNameById(service.UserId)
+            });
+
+            rowNumber++;
+        }
+
+        return reportData;
+    }
+
+  
+
+    protected override async Task OnInitializedAsync()
+    {
+        try
+        {
+            // ✅ Check JWT authentication first
+            if (JwtSessionService.IsTokenExpired())
+            {
+                errorMessage = "Your session has expired. Please log in again.";
+                Navigation.NavigateTo("/login");
+                return;
+            }
+
+            // ✅ Load user data from JWT cache service
+            await LoadUsersFromJwtAsync();
+            await LoadCurrentUserFromJwtAsync();
+
+            // Initialize action options
+            ActionOptions = Enum.GetValues<ActionType>()
+                .Select(e => new ActionOption
+                {
+                    Value = e.ToString(),
+                    Text = e.ToString()
+                })
+                .ToList();
+
+            ConditionOptions = Enum.GetValues<SparePartCondition>()
+                .Select(e => new ConditionOption
+                {
+                    Value = e.ToString(),
+                    Text = e.ToString()
+                })
+                .ToList();
+
+            // Load rental items and spare parts
+            await LoadRentalItemsFromService();
+            await LoadSparePartsFromService();
+
+            allItems = (await ItemService.GetItemsAsync()).ToList();
+
+            if (IsDetailView && !string.IsNullOrEmpty(RentalItemId))
+            {
+                await LoadSingleService(RentalItemId);
+            }
+            else
+            {
+                await LoadServicesWithCache();
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"❌ Error in OnInitializedAsync: {ex.Message}");
+            errorMessage = $"Failed to initialize: {ex.Message}";
+        }
+    }
+    private async Task LoadUsersFromJwtAsync()
+    {
+        try
+        {
+            Console.WriteLine("📥 Loading users from JWT cache service...");
+
+            // Get users from the global cache service
+            UserMap = await GlobalUserCacheService.GetUsersAsync();
+
+            if (UserMap.Any())
+            {
+                Console.WriteLine($"✅ Loaded {UserMap.Count} users from JWT cache");
+            }
+            else
+            {
+                Console.WriteLine("⚠️ No users loaded from JWT cache");
+                errorMessage = "Failed to load users. Please refresh the page.";
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"❌ Failed to load users from JWT: {ex.Message}");
+            errorMessage = $"Failed to load users: {ex.Message}";
+            UserMap = new Dictionary<string, string>();
+        }
+    }
+
+    // ✅ NEW: Load current user from JWT session
+    private async Task LoadCurrentUserFromJwtAsync()
+    {
+        try
+        {
+            Console.WriteLine("📥 Loading current user from JWT...");
+
+            // Get user ID from JWT token
+            var userId = JwtSessionService.GetCurrentUserId();
+
+            if (userId.HasValue && userId.Value != Guid.Empty)
+            {
+                currentUserId = userId.Value.ToString();
+
+                // Get username from JWT token
+                var username = JwtSessionService.GetCurrentUsername();
+
+                // Try to get full name from cache, fallback to username
+                if (UserMap.TryGetValue(currentUserId, out var fullName))
+                {
+                    currentUserDisplayName = fullName;
+                }
+                else
+                {
+                    currentUserDisplayName = username ?? "Unknown User";
+                }
+
+                Console.WriteLine($"✅ Current user: {currentUserDisplayName} (ID: {currentUserId})");
+            }
+            else
+            {
+                Console.WriteLine("⚠️ No user ID found in JWT token");
+                currentUserDisplayName = "Unknown User";
+                currentUserId = string.Empty;
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"❌ Failed to load current user: {ex.Message}");
+            currentUserDisplayName = "Unknown User";
+            currentUserId = string.Empty;
+        }
+    }
+    // ENHANCED SEARCH METHODS - FIXED VERSION
+    private void SearchRentalItemsSmart()
+    {
+        if (string.IsNullOrWhiteSpace(searchItemNameOrSerial))
+        {
+            foundRentalItems.Clear();
+            return;
+        }
+
+        var searchTerm = searchItemNameOrSerial.Trim();
+        bool isNumericSearch = searchTerm.All(char.IsDigit);
+
+        foundRentalItems = allRentalItems.Where(item =>
+        {
+            // For serial numbers, use exact match for numbers, contains for text
+            if (!string.IsNullOrWhiteSpace(item.SerialNumber))
+            {
+                if (isNumericSearch)
+                {
+                    return item.SerialNumber.Equals(searchTerm, StringComparison.OrdinalIgnoreCase);
+                }
+                else
+                {
+                    return item.SerialNumber.Contains(searchTerm, StringComparison.OrdinalIgnoreCase);
+                }
+            }
+
+            // For names, always use contains for flexibility
+            return (!string.IsNullOrWhiteSpace(item.ItemName) &&
+                    item.ItemName.Contains(searchTerm, StringComparison.OrdinalIgnoreCase)) ||
+                   (!string.IsNullOrWhiteSpace(item.CustomerName) &&
+                    item.CustomerName.Contains(searchTerm, StringComparison.OrdinalIgnoreCase));
+        })
+        .OrderBy(item =>
+            (!string.IsNullOrWhiteSpace(item.SerialNumber) &&
+             item.SerialNumber.Equals(searchTerm, StringComparison.OrdinalIgnoreCase)) ? 0 : 1
+        )
+        .ToList();
+    }
+
+    private async Task OnActionComboBoxClick(MouseEventArgs args)
+    {
+        if (actionComboBox != null)
+        {
+            await actionComboBox.ShowPopupAsync();
+        }
+    }
+
+    // Method to clear search input
+    private void ClearSearchInput()
+    {
+        searchItemNameOrSerial = string.Empty;
+        foundRentalItems.Clear();
+        filteredServices = new List<RentalServices>(); // Clear table when clearing search
+        StateHasChanged();
+    }
+
+    // Enhanced search input change handler with debouncing
+    private void OnSearchInputChanged(ChangeEventArgs e)
+    {
+        searchItemNameOrSerial = e.Value?.ToString() ?? string.Empty;
+
+        // Clear previous timer
+        _searchTimer?.Dispose();
+
+        // Add debouncing to avoid excessive searches while typing
+        _searchTimer = new Timer(async _ =>  // ✅ Add async here
+        {
+            await InvokeAsync(async () =>  // ✅ Add await and async here
+            {
+                await ApplyFilters();  // ✅ Add await here
+                StateHasChanged();
+            });
+        }, null, 300, Timeout.Infinite); // Wait 300ms after user stops typing
+    }
+
+    // Enhanced filtering methods
+    private async Task OnActionFilterChanged(ChangeEventArgs e)
+    {
+        selectedAction = e.Value?.ToString() ?? string.Empty;
+       await ApplyFilters();
+    }
+
+    private async Task OnUserFilterChanged(ChangeEventArgs e)
+    {
+        selectedUserId = e.Value?.ToString() ?? string.Empty;
+      await ApplyFilters();
+    }
+
+    private async Task ApplyFilters()
+    {
+        // Start with empty query if no search input
+        if (string.IsNullOrWhiteSpace(searchItemNameOrSerial))
+        {
+            filteredServices = new List<RentalServices>();
+            foundRentalItems.Clear();
+            StateHasChanged();
+            return;
+        }
+
+        try
+        {
+            isLoading = true;
+            StateHasChanged();
+
+            // Use the optimized search
+            await SearchRentalItemsOptimized();
+
+            // Filter services based on found rental items
+            if (foundRentalItems.Any())
+            {
+                var foundItemIds = foundRentalItems.Select(item => item.Id.ToString()).ToList();
+
+                IEnumerable<RentalServices> query = allServices.Where(service =>
+                    foundItemIds.Contains(service.RentalItemId)
+                );
+
+                // Apply additional filters
+                if (!string.IsNullOrWhiteSpace(selectedAction))
+                {
+                    query = query.Where(service => service.Action.Equals(selectedAction, StringComparison.OrdinalIgnoreCase));
+                }
+
+                if (filterStartDate.HasValue)
+                {
+                    query = query.Where(service => service.Date.Date >= filterStartDate.Value.Date);
+                }
+
+                if (filterEndDate.HasValue)
+                {
+                    query = query.Where(service => service.Date.Date <= filterEndDate.Value.Date);
+                }
+
+                if (!string.IsNullOrWhiteSpace(selectedUserId))
+                {
+                    query = query.Where(service => service.UserId == selectedUserId);
+                }
+
+                filteredServices = query.OrderByDescending(s => s.Date).ToList();
+
+                Console.WriteLine($"Applied filters: {filteredServices.Count} services found for {foundRentalItems.Count} items");
+            }
+            else
+            {
+                filteredServices = new List<RentalServices>();
+                Console.WriteLine("No items found, clearing services");
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Error applying filters: {ex.Message}");
+            errorMessage = $"Filter error: {ex.Message}";
+            filteredServices = new List<RentalServices>();
+        }
+        finally
+        {
+            isLoading = false;
+            StateHasChanged();
+        }
+    }
+    private async Task RefreshRentalItemDetails(bool forceRefresh = false)
+    {
+        try
+        {
+            isLoading = true;
+            Console.WriteLine($"Refreshing rental item details (force: {forceRefresh})");
+
+            // Use date filters if available for optimized loading
+            var details = await RentalItemDetailService.GetRentalItemDetailsAsync(
+                forceRefresh ? null : filterStartDate,
+                forceRefresh ? null : filterEndDate
+            );
+
+            if (details?.Any() == true)
+            {
+                allRentalItemDetails = details.ToList();
+
+                // Update rental item options
+                RentalItemOptions = allRentalItemDetails.Select(detail => new RentalItemOption
+                {
+                    Id = detail.Id,
+                    ItemName = detail.ItemName ?? string.Empty,
+                    CustomerName = detail.CustomerName ?? string.Empty,
+                    SerialNumber = detail.SerialNumber ?? string.Empty
+                }).ToList();
+
+                // Refresh current search if active
+                if (!string.IsNullOrWhiteSpace(searchItemNameOrSerial))
+                {
+                    lastSearchTerm = string.Empty; // Force refresh search
+                    await ApplyFilters();
+                }
+
+                successMessage = $"Refreshed {allRentalItemDetails.Count} rental item details";
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Error refreshing rental item details: {ex.Message}");
+            errorMessage = $"Failed to refresh rental item details: {ex.Message}";
+        }
+        finally
+        {
+            isLoading = false;
+            StateHasChanged();
+        }
+    }
+    private void ViewServicesForItem(string itemId)
+    {
+        Navigation.NavigateTo($"/rentalservice/{itemId}");
+    }
+
+    private bool HasActiveFilters()
+    {
+        return !string.IsNullOrWhiteSpace(selectedAction) ||
+               !string.IsNullOrWhiteSpace(selectedUserId) ||
+               !string.IsNullOrWhiteSpace(searchItemNameOrSerial) ||
+               filterStartDate.HasValue ||
+               filterEndDate.HasValue;
+    }
+
+    private void ClearAllFilters()
+    {
+        selectedAction = string.Empty;
+        selectedUserId = string.Empty;
+        searchItemNameOrSerial = string.Empty;
+        filterStartDate = null;
+        filterEndDate = null;
+        searchKey = string.Empty;
+        foundRentalItems.Clear();
+        filteredServices = new List<RentalServices>(); // Explicitly clear the table
+        StateHasChanged();
+    }
+
+    // Helper methods for Excel-style detail view
+    private string GetItemTypeByItemName(string itemName)
+    {
+        var repair = allItems.FirstOrDefault(r => r.ItemName.Equals(itemName, StringComparison.OrdinalIgnoreCase));
+        return repair?.ItemType ?? "Unknown Type";
+    }
+
+    private string GetSerialNumber(string rentalItemId)
+    {
+        var item = RentalItemOptions.FirstOrDefault(r => r.Id == rentalItemId);
+        return item?.SerialNumber ?? "941520";
+    }
+
+    private string GetItemName(string rentalItemId)
+    {
+        var item = RentalItemOptions.FirstOrDefault(r => r.Id == rentalItemId);
+        return item?.ItemName ?? "Fuji";
+    }
+
+    private string GetCustomerName(string rentalItemId)
+    {
+        var item = RentalItemOptions.FirstOrDefault(r => r.Id == rentalItemId);
+        return item?.CustomerName ?? "Chipmong Bank";
+    }
+
+    private string GetCondition(string rentalItemId)
+    {
+        var item = allRentalItems.FirstOrDefault(r => r.Id.ToString() == rentalItemId);
+        return item?.Condition ?? "Second-hand";
+    }
+
+    private string GetLeaseDuration(string rentalItemId)
+    {
+        var item = allRentalItems.FirstOrDefault(r => r.Id.ToString() == rentalItemId);
+        return item != null ? $"{item.Duration} month{(item.Duration != 1 ? "s" : "")}" : "12 month";
+    }
+
+    private string GetLocation(string rentalItemId)
+    {
+        var item = allRentalItems.FirstOrDefault(r => r.Id.ToString() == rentalItemId);
+        return item?.Location ?? "16th Floor";
+    }
+
+    private string GetSparePartName(Guid? sparePartId)
+    {
+        if (!sparePartId.HasValue) return "Unknown Part";
+        var part = _spareParts.FirstOrDefault(sp => sp.Id == sparePartId.Value);
+        return part?.ItemName ?? "Unknown Part";
+    }
+
+    private string GetActionBadgeClass(string action)
+    {
+        return action?.ToLower() switch
+        {
+            "precheck" => "bg-precheck",
+            "pre-check" => "bg-precheck",
+            "install" => "bg-install",
+            "check" => "bg-check",
+            "repair" => "bg-repair",
+            _ => "bg-secondary"
+        };
+    }
+
+    // Enhanced condition badge class method with null safety
+    private string GetConditionBadgeClass(string condition)
+    {
+        if (string.IsNullOrWhiteSpace(condition))
+            return "bg-secondary";
+
+        return condition.ToLower().Trim() switch
+        {
+            "new" => "bg-success",
+            "used" => "bg-warning text-dark",
+            "refurbished" => "bg-info",
+            "second-hand" => "bg-secondary",
+            "good" => "bg-success",
+            "fair" => "bg-warning text-dark",
+            "poor" => "bg-danger",
+            _ => "bg-secondary"
+        };
+    }
+
+    
+
+
+   
+    private string GetUserNameById(string userId)
+    {
+        if (!string.IsNullOrEmpty(userId) && UserMap.ContainsKey(userId))
+        {
+            return UserMap[userId];
+        }
+        return "Unknown User";
+    }
+
+    private async Task LoadRentalItemsFromService()
+    {
+        try
+        {
+            isLoading = true;
+
+            // Load both regular rental items and detailed rental items
+            var rentalItemsTask = RentalItemService.GetRentalItemsAsync();
+            var rentalItemDetailsTask = RentalItemDetailService.GetRentalItemDetailsAsync();
+
+            await Task.WhenAll(rentalItemsTask, rentalItemDetailsTask);
+
+            var rentalItems = await rentalItemsTask;
+            var rentalItemDetails = await rentalItemDetailsTask;
+
+            // Store full rental item details for enhanced searching
+            allRentalItemDetails = rentalItemDetails?.ToList() ?? new List<RentalItemDetailResponse>();
+
+            // Store full rental items for detailed display
+            allRentalItems = rentalItems?.ToList() ?? new List<RentalItem>();
+
+            // Create enhanced rental item options from detailed data
+            RentalItemOptions = allRentalItemDetails.Select(detail => new RentalItemOption
+            {
+                Id = detail.Id,
+                ItemName = detail.ItemName ?? string.Empty,
+                CustomerName = detail.CustomerName ?? string.Empty,
+                SerialNumber = detail.SerialNumber ?? string.Empty
+            }).ToList();
+
+            if (!RentalItemOptions.Any())
+            {
+                errorMessage = "No rental items found. Please add rental items first.";
+            }
+            else
+            {
+                Console.WriteLine($"Loaded {RentalItemOptions.Count} rental items with enhanced search capability");
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Failed to load rental items: {ex.Message}");
+            errorMessage = $"Failed to load rental items: {ex.Message}";
+            RentalItemOptions = new List<RentalItemOption>();
+            allRentalItems = new List<RentalItem>();
+            allRentalItemDetails = new List<RentalItemDetailResponse>();
+        }
+        finally
+        {
+            isLoading = false;
+            StateHasChanged();
+        }
+    }
+   private async Task SearchRentalItemsOptimized()
+{
+    if (string.IsNullOrWhiteSpace(searchItemNameOrSerial))
+    {
+        foundRentalItems.Clear();
+        return;
+    }
+
+    try
+    {
+        isLoading = true;
+        var searchTerm = searchItemNameOrSerial.Trim();
+
+        // Avoid duplicate searches
+        if (searchTerm == lastSearchTerm)
+        {
+            return;
+        }
+        lastSearchTerm = searchTerm;
+
+        Console.WriteLine($"Searching for: '{searchTerm}'");
+        Console.WriteLine($"Available rental items in cache: {allRentalItemDetails.Count}");
+
+        // Debug: Log some serial numbers to see what we have
+        foreach (var item in allRentalItemDetails.Take(5))
+        {
+            Console.WriteLine($"Sample item - Serial: '{item.SerialNumber}', Name: '{item.ItemName}'");
+        }
+
+        List<RentalItemDetailResponse> searchResults = new();
+
+        // Try API search for exact serial number
+        try
+        {
+            var serialResult = await RentalItemDetailService.GetRentalItemDetailBySerialNoAsync(searchTerm);
+            if (serialResult != null)
+            {
+                searchResults.Add(serialResult);
+                Console.WriteLine($"Found via API: {serialResult.SerialNumber}");
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"API search failed: {ex.Message}");
+        }
+
+        // Search in cached data with flexible serial matching
+        var cachedMatches = allRentalItemDetails.Where(item => 
+            SerialNumberMatches(item.SerialNumber, searchTerm) ||
+            (!string.IsNullOrWhiteSpace(item.ItemName) && 
+             item.ItemName.Contains(searchTerm, StringComparison.OrdinalIgnoreCase)) ||
+            (!string.IsNullOrWhiteSpace(item.CustomerName) && 
+             item.CustomerName.Contains(searchTerm, StringComparison.OrdinalIgnoreCase))
+        ).ToList();
+
+        Console.WriteLine($"Found {cachedMatches.Count} matches in cache");
+
+        // Add cached results if not already present
+        foreach (var match in cachedMatches)
+        {
+            if (!searchResults.Any(r => r.Id == match.Id))
+            {
+                searchResults.Add(match);
+                Console.WriteLine($"Added from cache: Serial='{match.SerialNumber}', Name='{match.ItemName}'");
+            }
+        }
+
+        // Convert to RentalItem objects for display
+        foundRentalItems = searchResults.Select(detail => new RentalItem
+        {
+            Id = Guid.TryParse(detail.Id, out var id) ? id : Guid.Empty,
+            ItemName = detail.ItemName,
+            CustomerName = detail.CustomerName,
+            SerialNumber = detail.SerialNumber,
+            Condition = detail.Condition,
+            Location = detail.Location,
+            Duration = detail.Duration,
+            CreatedBy = Guid.TryParse(detail.CreatedBy, out var createdBy) ? createdBy : Guid.Empty,
+            CustomerId = Guid.TryParse(detail.CustomerId, out var customerId) ? customerId : Guid.Empty
+        })
+        .OrderByDescending(item =>
+            // Highest priority: EXACT serial number matches
+            SerialNumberMatches(item.SerialNumber, searchTerm)
+        )
+        .ToList();
+
+        Console.WriteLine($"Final results: {foundRentalItems.Count} items");
+
+    }
+    catch (Exception ex)
+    {
+        Console.WriteLine($"Search error: {ex.Message}");
+        errorMessage = $"Search failed: {ex.Message}";
+        foundRentalItems.Clear();
+    }
+    finally
+    {
+        isLoading = false;
+        isSearchingBySerial = false;
+        StateHasChanged();
+    }
+}
+
+    private bool SerialNumberMatches(string serialNumber, string searchTerm)
+    {
+        if (string.IsNullOrWhiteSpace(serialNumber) || string.IsNullOrWhiteSpace(searchTerm))
+            return false;
+
+        var cleanSerial = serialNumber.Trim();
+        var cleanSearch = searchTerm.Trim();
+
+        // 1. EXACT MATCH - Highest Priority
+        if (cleanSerial.Equals(cleanSearch, StringComparison.OrdinalIgnoreCase))
+        {
+            Console.WriteLine($"Exact match: '{cleanSerial}' == '{cleanSearch}'");
+            return true;
+        }
+
+        // 2. For NUMERIC searches (like "123"), be more precise
+        bool isNumericSearch = cleanSearch.All(char.IsDigit);
+
+        if (isNumericSearch)
+        {
+            // 2a. Check if serial number IS the search term (handles cases like "123" matching "123")
+            if (cleanSerial == cleanSearch)
+            {
+                Console.WriteLine($"Direct numeric match: '{cleanSerial}' == '{cleanSearch}'");
+                return true;
+            }
+
+            // 2b. Check if serial starts with the search term followed by non-digit
+            // This handles cases like "123ABC" or "123 (something)" matching "123"
+            if (cleanSerial.StartsWith(cleanSearch, StringComparison.OrdinalIgnoreCase))
+            {
+                var remaining = cleanSerial.Substring(cleanSearch.Length);
+                // Only match if what follows is NOT another digit (to avoid partial matches like "123" matching "1234")
+                if (remaining.Length == 0 || !char.IsDigit(remaining[0]))
+                {
+                    Console.WriteLine($"Numeric prefix match: '{cleanSerial}' starts with '{cleanSearch}' followed by non-digit");
+                    return true;
+                }
+            }
+
+            // 2c. Check content in parentheses/brackets for numeric searches
+            var parenthesesContent = ExtractParenthesesContent(cleanSerial);
+            if (!string.IsNullOrWhiteSpace(parenthesesContent))
+            {
+                // For numeric searches, check if the parentheses content equals or starts with the search term
+                if (parenthesesContent.Equals(cleanSearch, StringComparison.OrdinalIgnoreCase) ||
+                    (parenthesesContent.StartsWith(cleanSearch, StringComparison.OrdinalIgnoreCase) &&
+                     (parenthesesContent.Length == cleanSearch.Length ||
+                      !char.IsDigit(parenthesesContent[cleanSearch.Length]))))
+                {
+                    Console.WriteLine($"Numeric parentheses match: '{parenthesesContent}' matches '{cleanSearch}'");
+                    return true;
+                }
+            }
+
+            // 2d. For numeric searches, also check if it appears as a complete number anywhere in the serial
+            // Use word boundary logic to find complete number matches
+            if (IsCompleteNumberMatch(cleanSerial, cleanSearch))
+            {
+                Console.WriteLine($"Complete number match found: '{cleanSerial}' contains complete number '{cleanSearch}'");
+                return true;
+            }
+
+            // For numeric searches, don't do general "contains" matching to avoid false positives
+            return false;
+        }
+
+        // 3. For TEXT searches (non-numeric)
+        if (cleanSerial.StartsWith(cleanSearch, StringComparison.OrdinalIgnoreCase))
+        {
+            Console.WriteLine($"Text prefix match: '{cleanSerial}' starts with '{cleanSearch}'");
+            return true;
+        }
+
+        // 4. Search inside parentheses/brackets content for text searches
+        var parenthesesContentText = ExtractParenthesesContent(cleanSerial);
+        if (!string.IsNullOrWhiteSpace(parenthesesContentText) &&
+            parenthesesContentText.Contains(cleanSearch, StringComparison.OrdinalIgnoreCase))
+        {
+            Console.WriteLine($"Text parentheses match: '{parenthesesContentText}' contains '{cleanSearch}'");
+            return true;
+        }
+
+        // 5. General contains search for text (last resort)
+        if (cleanSerial.Contains(cleanSearch, StringComparison.OrdinalIgnoreCase))
+        {
+            Console.WriteLine($"Text general contains match: '{cleanSerial}' contains '{cleanSearch}'");
+            return true;
+        }
+
+        return false;
+    }
+    private bool IsCompleteNumberMatch(string text, string number)
+    {
+        if (string.IsNullOrWhiteSpace(text) || string.IsNullOrWhiteSpace(number))
+            return false;
+
+        // Find all occurrences of the number in the text
+        int index = 0;
+        while ((index = text.IndexOf(number, index, StringComparison.OrdinalIgnoreCase)) != -1)
+        {
+            // Check if this is a complete number (not part of a larger number)
+            bool isCompleteMatch = true;
+
+            // Check character before
+            if (index > 0 && char.IsDigit(text[index - 1]))
+            {
+                isCompleteMatch = false;
+            }
+
+            // Check character after
+            if (isCompleteMatch && (index + number.Length < text.Length) && char.IsDigit(text[index + number.Length]))
+            {
+                isCompleteMatch = false;
+            }
+
+            if (isCompleteMatch)
+            {
+                return true;
+            }
+
+            index++;
+        }
+
+        return false;
+    }
+    private string ExtractParenthesesContent(string serialNumber)
+    {
+        if (string.IsNullOrWhiteSpace(serialNumber))
+            return string.Empty;
+
+        // Extract content from parentheses like "(BTB)" or "(Noromall 4515)"
+        var parenStart = serialNumber.IndexOf('(');
+        var parenEnd = serialNumber.IndexOf(')', parenStart + 1);
+
+        if (parenStart >= 0 && parenEnd > parenStart)
+        {
+            return serialNumber.Substring(parenStart + 1, parenEnd - parenStart - 1).Trim();
+        }
+
+        // Extract content from brackets like "[BTB]" or "[Noromall 4515]"
+        var bracketStart = serialNumber.IndexOf('[');
+        var bracketEnd = serialNumber.IndexOf(']', bracketStart + 1);
+
+        if (bracketStart >= 0 && bracketEnd > bracketStart)
+        {
+            return serialNumber.Substring(bracketStart + 1, bracketEnd - bracketStart - 1).Trim();
+        }
+
+        return string.Empty;
+    }
+
+
+    private bool IsExactSerialNumber(string searchTerm)
+    {
+        if (string.IsNullOrWhiteSpace(searchTerm)) return false;
+
+        var term = searchTerm.Trim();
+
+        // Consider it a serial number if:
+        // 1. It's all digits (like "123", "4513")
+        // 2. It matches common serial patterns exactly
+        return term.All(char.IsDigit) || // Pure numbers like "4513", "123"
+               (term.Length >= 3 && term.All(c => char.IsLetterOrDigit(c) || c == '-' || c == '_')); // Alphanumeric serials
+    }
+    private bool IsExactMatch(RentalItemDetailResponse item, string searchTerm)
+    {
+        if (item == null || string.IsNullOrWhiteSpace(searchTerm)) return false;
+
+        // Only exact matches - no partial matching
+        return (!string.IsNullOrWhiteSpace(item.SerialNumber) &&
+                item.SerialNumber.Equals(searchTerm, StringComparison.OrdinalIgnoreCase)) ||
+               (!string.IsNullOrWhiteSpace(item.ItemName) &&
+                item.ItemName.Equals(searchTerm, StringComparison.OrdinalIgnoreCase)) ||
+               (!string.IsNullOrWhiteSpace(item.CustomerName) &&
+                item.CustomerName.Equals(searchTerm, StringComparison.OrdinalIgnoreCase));
+    }
+
+
+    private bool IsLikelySerialNumber(string searchTerm)
+    {
+        if (string.IsNullOrWhiteSpace(searchTerm)) return false;
+
+        var term = searchTerm.Trim();
+
+        // Consider it a serial number if:
+        // 1. It's all digits (like "123", "4513")
+        // 2. It's all uppercase letters (like "CNDRQBK5KC")
+        // 3. It's alphanumeric and looks like a serial pattern (mix of letters and numbers)
+        // 4. It has common serial number patterns
+
+        return term.All(char.IsDigit) || // Pure numbers like "4513"
+               term.All(char.IsLetter) || // Pure letters like "CNDRQBK5KC"
+               (term.All(c => char.IsLetterOrDigit(c) || c == '-' || c == '_') &&
+                term.Length >= 3 &&
+                (term.Any(char.IsDigit) || term.Any(char.IsLetter))); // Mixed alphanumeric
+    }
+
+
+    private bool ContainsSearchTerm(RentalItemDetailResponse item, string searchTerm)
+    {
+        if (item == null || string.IsNullOrWhiteSpace(searchTerm)) return false;
+
+        // For serial number matching with flexible patterns
+        if (!string.IsNullOrWhiteSpace(item.SerialNumber))
+        {
+            // Check exact match first
+            if (item.SerialNumber.Equals(searchTerm, StringComparison.OrdinalIgnoreCase))
+                return true;
+
+            // Check if serial number starts with search term (for cases like "002016 (BTB)" matching "002016")
+            if (item.SerialNumber.StartsWith(searchTerm, StringComparison.OrdinalIgnoreCase))
+                return true;
+
+            // Extract base serial number and compare
+            var baseSerial = ExtractBaseSerialNumber(item.SerialNumber);
+            if (!string.IsNullOrWhiteSpace(baseSerial) &&
+                baseSerial.Equals(searchTerm, StringComparison.OrdinalIgnoreCase))
+                return true;
+
+            // If it's a numeric search, prioritize serial number matching
+            if (searchTerm.All(char.IsDigit))
+                return false; // For numeric searches, only match serial numbers as handled above
+        }
+
+        // For non-numeric searches or when no serial match, check other fields
+        if (!searchTerm.All(char.IsDigit))
+        {
+            // Exact matches first
+            if ((!string.IsNullOrWhiteSpace(item.ItemName) &&
+                 item.ItemName.Equals(searchTerm, StringComparison.OrdinalIgnoreCase)) ||
+                (!string.IsNullOrWhiteSpace(item.CustomerName) &&
+                 item.CustomerName.Equals(searchTerm, StringComparison.OrdinalIgnoreCase)))
+                return true;
+
+            // Then partial matches for text searches only
+            return (!string.IsNullOrWhiteSpace(item.ItemName) &&
+                    item.ItemName.Contains(searchTerm, StringComparison.OrdinalIgnoreCase)) ||
+                   (!string.IsNullOrWhiteSpace(item.CustomerName) &&
+                    item.CustomerName.Contains(searchTerm, StringComparison.OrdinalIgnoreCase));
+        }
+
+        return false;
+    }
+    // Add these methods to your @code section
+
+    // Helper method to extract base serial number from patterns like "002016 (BTB)"
+    private string ExtractBaseSerialNumber(string serialNumber)
+    {
+        if (string.IsNullOrWhiteSpace(serialNumber))
+            return string.Empty;
+
+        // Remove parenthetical suffixes like "(BTB)", "(OLD)", etc.
+        var parenIndex = serialNumber.IndexOf('(');
+        if (parenIndex > 0)
+        {
+            return serialNumber.Substring(0, parenIndex).Trim();
+        }
+
+        // Remove bracket suffixes like "[BTB]", "[OLD]", etc.
+        var bracketIndex = serialNumber.IndexOf('[');
+        if (bracketIndex > 0)
+        {
+            return serialNumber.Substring(0, bracketIndex).Trim();
+        }
+
+        return serialNumber.Trim();
+    }
+    // Enhanced method to get rental item by ID with caching
+    private async Task<RentalItemDetailResponse> GetRentalItemDetailByIdOptimized(string id)
+    {
+        try
+        {
+            // First check cache
+            var cachedItem = allRentalItemDetails.FirstOrDefault(item => item.Id == id);
+            if (cachedItem != null)
+            {
+                Console.WriteLine($"Found rental item {id} in cache");
+                return cachedItem;
+            }
+
+            // If not in cache, fetch from API
+            Console.WriteLine($"Fetching rental item {id} from API");
+            var item = await RentalItemDetailService.GetRentalItemDetailByIdAsync(id);
+
+            // Add to cache for future use
+            if (item != null && !allRentalItemDetails.Any(existing => existing.Id == item.Id))
+            {
+                allRentalItemDetails.Add(item);
+            }
+
+            return item;
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Error getting rental item detail by ID {id}: {ex.Message}");
+            return null;
+        }
+    }
+    private async Task LoadSparePartsFromService()
+    {
+        try
+        {
+            var spareParts = await SparePartService.GetAllSparePartsAsync();
+            _spareParts = spareParts ?? new List<SparePartObject>();
+
+            SparePartOptions = spareParts?.Select(part => new SparePartOption
+            {
+                Id = part.Id.ToString(),
+                ItemName = part.ItemName,
+                SerialNumber = part.SerialNumber,
+                Description = part.Description,
+                UseFor = part.UseFor
+            }).ToList() ?? new List<SparePartOption>();
+
+            if (!_spareParts.Any())
+            {
+                Console.WriteLine("No spare parts found in the system.");
+            }
+            else
+            {
+                Console.WriteLine($"Loaded {_spareParts.Count()} spare parts successfully.");
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Failed to load spare parts: {ex.Message}");
+            errorMessage = $"Failed to load spare parts: {ex.Message}";
+            _spareParts = new List<SparePartObject>();
+            SparePartOptions = new List<SparePartOption>();
+        }
+    }
+
+    private async Task LoadSingleService(string rentalItemId)
+    {
+        try
+        {
+            isLoading = true;
+            errorMessage = string.Empty;
+            StateHasChanged();
+
+            // Load all services first
+            await LoadServicesWithCache(false);
+
+            // Find the service for this rental item
+            selectedService = allServices.FirstOrDefault(s => s.RentalItemId == rentalItemId);
+
+            if (selectedService == null)
+            {
+                errorMessage = $"Service record for rental item {rentalItemId} not found.";
+            }
+        }
+        catch (Exception ex)
+        {
+            errorMessage = $"Failed to load service record: {ex.Message}";
+            selectedService = null;
+        }
+        finally
+        {
+            isLoading = false;
+            StateHasChanged();
+        }
+    }
+
+    protected override async Task OnParametersSetAsync()
+    {
+        if (!string.IsNullOrEmpty(RentalItemId))
+        {
+            // Ensure we load the service when route parameter changes
+            await LoadSingleService(RentalItemId);
+        }
+        await base.OnParametersSetAsync();
+    }
+
+    private async Task LoadServicesWithCache(bool forceRefresh = false)
+    {
+        if (isLoading && !forceRefresh) return;
+
+        try
+        {
+            isLoading = true;
+            errorMessage = string.Empty;
+            StateHasChanged();
+
+            var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+
+            // Load both services and rental item details in parallel
+            var servicesTask = RentalServicesService.GetRentalServicesAsync(forceRefresh);
+            var detailsTask = forceRefresh ?
+                RefreshRentalItemDetails(true) :
+                Task.CompletedTask;
+
+            await Task.WhenAll(servicesTask, detailsTask);
+
+            var services = await servicesTask;
+            stopwatch.Stop();
+
+            allServices = services?.ToList() ?? new List<RentalServices>();
+
+            // Apply filters if there's a search term
+            if (!string.IsNullOrWhiteSpace(searchItemNameOrSerial))
+            {
+                await ApplyFilters();
+            }
+            else
+            {
+                filteredServices = new List<RentalServices>();
+            }
+
+            var loadMessage = isInitialLoad
+                ? $"Loaded {allServices.Count} service records in {stopwatch.ElapsedMilliseconds}ms"
+                : forceRefresh
+                    ? $"Force-refreshed {allServices.Count} service records in {stopwatch.ElapsedMilliseconds}ms"
+                    : $"Refreshed {allServices.Count} service records in {stopwatch.ElapsedMilliseconds}ms";
+
+            successMessage = loadMessage;
+
+            if (isInitialLoad)
+            {
+                isInitialLoad = false;
+            }
+        }
+        catch (Exception ex)
+        {
+            errorMessage = $"Failed to load service records: {ex.Message}";
+            allServices = new List<RentalServices>();
+            filteredServices = new List<RentalServices>();
+            Console.WriteLine($"Error loading services: {ex}");
+        }
+        finally
+        {
+            isLoading = false;
+            StateHasChanged();
+        }
+    }
+
+    private async Task OnRentalItemFiltering(Syncfusion.Blazor.DropDowns.FilteringEventArgs args)
+    {
+        try
+        {
+            args.PreventDefaultAction = true;
+
+            if (string.IsNullOrWhiteSpace(args.Text))
+            {
+                // Show all items when no filter text
+                await rentalItemComboBox.FilterAsync(RentalItemOptions);
+            }
+            else
+            {
+                var searchTerm = args.Text.Trim().ToLower();
+
+                var filteredItems = RentalItemOptions.Where(item =>
+                    // Search in item name
+                    (!string.IsNullOrWhiteSpace(item.ItemName) &&
+                     item.ItemName.Contains(searchTerm, StringComparison.OrdinalIgnoreCase)) ||
+
+                    // Search in customer name
+                    (!string.IsNullOrWhiteSpace(item.CustomerName) &&
+                     item.CustomerName.Contains(searchTerm, StringComparison.OrdinalIgnoreCase)) ||
+
+                    // Search in serial number
+                    (!string.IsNullOrWhiteSpace(item.SerialNumber) &&
+                     item.SerialNumber.Contains(searchTerm, StringComparison.OrdinalIgnoreCase)) ||
+
+                    // Search in ID
+                    item.Id.Contains(searchTerm, StringComparison.OrdinalIgnoreCase)
+                )
+                .OrderBy(item =>
+                {
+                    // Prioritize exact matches in serial number
+                    if (!string.IsNullOrWhiteSpace(item.SerialNumber) &&
+                        item.SerialNumber.Equals(searchTerm, StringComparison.OrdinalIgnoreCase))
+                        return 0;
+
+                    // Then prioritize starts with matches in item name
+                    if (!string.IsNullOrWhiteSpace(item.ItemName) &&
+                        item.ItemName.StartsWith(searchTerm, StringComparison.OrdinalIgnoreCase))
+                        return 1;
+
+                    // Then customer name starts with
+                    if (!string.IsNullOrWhiteSpace(item.CustomerName) &&
+                        item.CustomerName.StartsWith(searchTerm, StringComparison.OrdinalIgnoreCase))
+                        return 2;
+
+                    // Everything else
+                    return 3;
+                })
+                .ThenBy(item => item.ItemName)
+                .ToList();
+
+                await rentalItemComboBox.FilterAsync(filteredItems);
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Error filtering rental items: {ex.Message}");
+        }
+    }
+
+    private void OnRentalItemValueChanged(Syncfusion.Blazor.DropDowns.ChangeEventArgs<string, RentalItemOption> args)
+    {
+        // Clear any previous error messages when a valid item is selected
+        if (!string.IsNullOrEmpty(args.Value))
+        {
+            rentalItemIdErrorMessage = string.Empty;
+
+            // Optional: You can add additional logic here when an item is selected
+            var selectedItem = RentalItemOptions.FirstOrDefault(r => r.Id == args.Value);
+            if (selectedItem != null)
+            {
+                Console.WriteLine($"Selected rental item: {selectedItem.ItemName} (Serial: {selectedItem.SerialNumber})");
+            }
+        }
+
+        StateHasChanged();
+    }
+
+    private void ViewService2(RentalServices service)
+    {
+        selectedViewService = service;
+        isViewDialogVisible = true;
+        DialogEdit.ShowAsync();
+    }
+
+    private void ViewService(RentalServices service)
+    {
+        try
+        {
+            var encodedId = Uri.EscapeDataString(service.RentalItemId);
+            Console.WriteLine($"Navigating to: /rentalservice/{encodedId}");
+            Navigation.NavigateTo($"/rentalservice/{encodedId}");
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Navigation error: {ex}");
+            errorMessage = $"Failed to navigate to service details: {ex.Message}";
+        }
+    }
+
+    private void GoBackToList()
+    {
+        Navigation.NavigateTo("/rentalservice-optimized");
+    }
+
+    // Grid event handlers
+    private void RowSelectHandler(RowSelectEventArgs<RentalServices> args)
+    {
+        selectedServiceId = args.Data.RentalItemId;
+        selectedViewService = args.Data;
+    }
+
+    private Guid selectedSparePartId; // Variable to hold the selected SparePartId
+
+    private async Task OnFilteringSparePart(Syncfusion.Blazor.DropDowns.FilteringEventArgs args)
+    {
+        try
+        {
+            args.PreventDefaultAction = true;
+            isSparePartLoading = true;
+            filteredSpareParts = new List<SparePartObject>();
+            StateHasChanged();
+
+            if (!allSpareParts.Any())
+            {
+                allSpareParts = (await SparePartService.GetAllSparePartsAsync())?.ToList() ?? new List<SparePartObject>();
+            }
+
+            List<SparePartObject> filtered;
+
+            if (string.IsNullOrWhiteSpace(args.Text))
+            {
+                filtered = allSpareParts.Take(10).ToList();
+            }
+            else
+            {
+                var search = args.Text.Trim().ToLower();
+                await Task.Delay(500);
+
+                filtered = allSpareParts
+                    .Where(sp => (sp.ItemName ?? "").ToLower().Contains(search)
+                              || (sp.SerialNumber ?? "").ToLower().Contains(search)
+                              || (sp.UseFor ?? "").ToLower().Contains(search)
+                              || (sp.Description ?? "").ToLower().Contains(search))
+                    .ToList();
+            }
+
+            if (currentService.SpareParts != null)
+            {
+                foreach (var part in currentService.SpareParts)
+                {
+                    if (part.SparePartId.HasValue)
+                    {
+                        var selected = allSpareParts.FirstOrDefault(sp => sp.Id == part.SparePartId.Value);
+                        if (selected != null && !filtered.Any(sp => sp.Id == selected.Id))
+                        {
+                            filtered.Insert(0, selected);
+                        }
+                    }
+                }
+            }
+
+            filteredSpareParts = filtered;
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Error in filtering spare parts: {ex.Message}");
+        }
+        finally
+        {
+            isSparePartLoading = false;
+            StateHasChanged();
+        }
+    }
+
+    // Toolbar event handlers
+    private void NewService_Click()
+    {
+        currentService = new RentalServices
+        {
+            RentalItemId = string.Empty,
+            Date = DateTime.Now,
+            Action = ActionOptions.FirstOrDefault()?.Value ?? "Check", // Set default action
+            Note = string.Empty,
+            UserId = currentUserId ?? string.Empty,
+            SpareParts = new List<SparePartOb>()
+        };
+        originalRentalItemId = string.Empty;
+        pageTitle = "Add Service Record";
+        rentalItemIdErrorMessage = string.Empty;
+        errorMessage = string.Empty; // Clear any previous errors
+        isAddDialogVisible = true;
+    }
+
+   private void RemoveSparePart(int index)
+    {
+        if (currentService.SpareParts != null && index >= 0 && index < currentService.SpareParts.Count)
+        {
+            currentService.SpareParts.RemoveAt(index);
+            StateHasChanged();
+        }
+    }
+
+   private void OnSparePartValueChanged(
+        Syncfusion.Blazor.DropDowns.ChangeEventArgs<Guid?, SparePartObject> args, int index)
+    {
+        if (args.Value.HasValue && currentService.SpareParts != null && index < currentService.SpareParts.Count)
+        {
+            var selectedSparePart = allSpareParts.FirstOrDefault(sp => sp.Id == args.Value.Value);
+            if (selectedSparePart != null)
+            {
+                currentService.SpareParts[index].SparePartId = args.Value;
+                currentService.SpareParts[index].Description = selectedSparePart.Description ?? selectedSparePart.ItemName;
+                StateHasChanged();
+            }
+        }
+    }
+
+    private async Task OnRentalItemComboBoxClick(MouseEventArgs args)
+    {
+        if (rentalItemComboBox != null)
+        {
+            await rentalItemComboBox.ShowPopupAsync();
+        }
+    }
+
+    private async Task SaveService()
+    {
+        try
+        {
+            isSaving = true;
+            rentalItemIdErrorMessage = string.Empty;
+            errorMessage = string.Empty;
+            StateHasChanged();
+
+            // Primary validation
+            if (string.IsNullOrWhiteSpace(currentService.RentalItemId))
+            {
+                rentalItemIdErrorMessage = "Rental Item is required";
+                isSaving = false;
+                StateHasChanged();
+                return;
+            }
+
+            // ✅ CHANGED: Auto-set current user from JWT
+            if (!string.IsNullOrEmpty(currentUserId))
+            {
+                currentService.UserId = currentUserId;
+            }
+            else
+            {
+                errorMessage = "Unable to determine current user. Please refresh and try again.";
+                isSaving = false;
+                StateHasChanged();
+                return;
+            }
+
+            // Validate rental item exists
+            if (!RentalItemOptions.Any(r => r.Id == currentService.RentalItemId))
+            {
+                rentalItemIdErrorMessage = "Please select a valid rental item from the dropdown";
+                return;
+            }
+
+            // Handle spare parts
+            if (currentService.SpareParts != null && currentService.SpareParts.Any())
+            {
+                currentService.SpareParts = currentService.SpareParts
+                    .Where(sp => sp.SparePartId.HasValue)
+                    .ToList();
+
+                foreach (var part in currentService.SpareParts)
+                {
+                    if (part.SparePartId.HasValue &&
+                        !string.IsNullOrEmpty(part.SparePartId.Value.ToString()) &&
+                        !SparePartOptions.Any(sp => sp.Id == part.SparePartId.Value.ToString()))
+                    {
+                        errorMessage = $"Invalid spare part selected: {part.SparePartId}";
+                        return;
+                    }
+
+                    if (part.Quantity <= 0)
+                        part.Quantity = 1;
+
+                    if (string.IsNullOrWhiteSpace(part.Condition))
+                        part.Condition = ConditionOptions.FirstOrDefault()?.Value ?? "New";
+                }
+            }
+            else
+            {
+                currentService.SpareParts = new List<SparePartOb>();
+            }
+
+            if (string.IsNullOrWhiteSpace(currentService.Action))
+            {
+                currentService.Action = ActionOptions.FirstOrDefault()?.Value ?? "Check";
+            }
+
+            // Create service
+            await RentalServicesService.CreateRentalServiceAsync(currentService);
+
+            // Add to local collection
+            var newService = new RentalServices
+            {
+                RentalItemId = currentService.RentalItemId,
+                Date = currentService.Date,
+                Action = currentService.Action,
+                Note = currentService.Note,
+                UserId = currentService.UserId,
+                SpareParts = currentService.SpareParts?.Select(sp => new SparePartOb
+                {
+                    SparePartId = sp.SparePartId,
+                    Description = sp.Description,
+                    Quantity = sp.Quantity,
+                    Condition = sp.Condition
+                }).ToList() ?? new List<SparePartOb>()
+            };
+
+            allServices.Add(newService);
+
+            if (!string.IsNullOrWhiteSpace(searchItemNameOrSerial))
+            {
+                await ApplyFilters();
+            }
+
+            successMessage = $"Successfully created service record for {currentService.RentalItemId}";
+
+            isAddDialogVisible = false;
+            selectedServiceId = null;
+            selectedViewService = null;
+
+            currentService = new RentalServices
+            {
+                Date = DateTime.Now,
+                SpareParts = new List<SparePartOb>()
+            };
+            originalRentalItemId = string.Empty;
+
+            errorMessage = string.Empty;
+            rentalItemIdErrorMessage = string.Empty;
+
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"❌ Error saving service: {ex}");
+            errorMessage = $"Failed to save service record: {ex.Message}";
+        }
+        finally
+        {
+            isSaving = false;
+            StateHasChanged();
+        }
+    }
+    private void AddSparePart()
+    {
+        currentService.SpareParts ??= new List<SparePartOb>();
+        currentService.SpareParts.Add(new SparePartOb
+        {
+            SparePartId = null,
+            Description = string.Empty,
+            Quantity = 1,
+            Condition = ConditionOptions.FirstOrDefault()?.Value ?? "New"
+        });
+        StateHasChanged();
+    }
+
+
+    private void EditService_Click()
+    {
+        if (!string.IsNullOrEmpty(selectedServiceId) && selectedViewService != null)
+        {
+            EditService(selectedViewService);
+        }
+        else
+        {
+            DialogNoRecordSelected.ShowAsync();
+        }
+    }
+
+    private void EditService(RentalServices service)
+    {
+        currentService = new RentalServices
+        {
+            RentalItemId = service.RentalItemId,
+            Date = service.Date,
+            Action = service.Action,
+            Note = service.Note,
+            UserId = service.UserId,
+            SpareParts = service.SpareParts?.Select(sp => new SparePartOb
+            {
+                SparePartId = sp.SparePartId,
+                Description = sp.Description,
+                Quantity = sp.Quantity,
+                Condition = sp.Condition
+            }).ToList() ?? new List<SparePartOb>()
+        };
+        originalRentalItemId = service.RentalItemId;
+        pageTitle = "Edit Service Record";
+        rentalItemIdErrorMessage = string.Empty;
+        isAddDialogVisible = true;
+    }
+
+    private void DeleteService_Click()
+    {
+        if (!string.IsNullOrEmpty(selectedServiceId) && selectedViewService != null)
+        {
+            currentService = selectedViewService;
+            DialogDelete.ShowAsync();
+        }
+        else
+        {
+            DialogNoRecordSelected.ShowAsync();
+        }
+    }
+
+    private async Task ConfirmDelete(RentalServices service)
+    {
+        currentService = service;
+        await DialogDelete.ShowAsync();
+    }
+
+    private async Task ConfirmDeleteYes()
+    {
+        if (currentService != null)
+        {
+            await DeleteService(currentService);
+        }
+        await DialogDelete.HideAsync();
+    }
+
+    private void ConfirmDeleteNo()
+    {
+        DialogDelete.HideAsync();
+    }
+
+    private void ShowFullDetails(SparePartObject sparePart)
+    {
+        selectedSparePart = sparePart;
+        isDialogVisible = true;
+    }
+
+    private async Task OnComboBoxClick(int index)
+    {
+        if (!allSpareParts.Any())
+        {
+            // This is correct - it already has await
+            allSpareParts = (await SparePartService.GetAllSparePartsAsync())?.ToList() ?? new List<SparePartObject>();
+            filteredSpareParts = allSpareParts.Take(10).ToList();
+            StateHasChanged();
+        }
+    }
+
+    private void CancelDialog()
+    {
+        isAddDialogVisible = false;
+        rentalItemIdErrorMessage = string.Empty;
+    }
+
+    private async Task DeleteService(RentalServices service)
+    {
+        try
+        {
+            isLoading = true;
+            await RentalServicesService.DeleteRentalServiceAsync(service.RentalItemId);
+
+            allServices.RemoveAll(s => s.RentalItemId == service.RentalItemId && s.Date == service.Date);
+            await ApplyFilters();
+
+            successMessage = $"Successfully deleted service record for {service.RentalItemId}";
+
+            if (IsDetailView && selectedService?.RentalItemId == service.RentalItemId)
+            {
+                Navigation.NavigateTo("/rentalservice-optimized");
+            }
+        }
+        catch (Exception ex)
+        {
+            errorMessage = $"Failed to delete service record: {ex.Message}";
+        }
+        finally
+        {
+            isLoading = false;
+            selectedServiceId = null;
+            selectedViewService = null;
+            StateHasChanged();
+        }
+    }
+
+    private void CloseDialogNoRecordSelected()
+    {
+        DialogNoRecordSelected.HideAsync();
+    }
+
+    private void Check_Click()
+    {
+        if (selectedViewService != null)
+        {
+            isViewDialogVisible = true;
+            DialogEdit.ShowAsync();
+        }
+        else
+        {
+            DialogNoRecordSelected.ShowAsync();
+        }
+    }
+
+    // Export functions
+    public async Task ExportToExcel()
+    {
+        if (Grid != null)
+        {
+            await Grid.ExportToExcelAsync();
+        }
+    }
+
+    public async Task ExportToPdf()
+    {
+        if (Grid != null)
+        {
+            // PDF export functionality can be implemented here
+            await JSRuntime.InvokeVoidAsync("window.print");
+        }
+    }
+
+    private void CloseViewDialog()
+    {
+        isViewDialogVisible = false;
+    }
+
+    private void EditServiceFromView()
+    {
+        if (selectedViewService != null)
+        {
+            isViewDialogVisible = false;
+            EditService(selectedViewService);
+        }
+    }
+}
+
+<script>
+    window.downloadOrPrintReport = function(data, filename) {
+        try {
+            console.log('downloadOrPrintReport called with data length:', data.length);
+
+            // Convert byte array to blob
+            const blob = new Blob([new Uint8Array(data)], { type: 'application/pdf' });
+            const url = URL.createObjectURL(blob);
+
+            // Option 1: Download the file
+            const link = document.createElement('a');
+            link.href = url;
+            link.download = filename || 'RentalReport.pdf';
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+
+            // Option 2: Open in new tab for printing (uncomment if preferred)
+            // window.open(url, '_blank');
+
+            // Clean up
+            setTimeout(() => URL.revokeObjectURL(url), 1000);
+
+            console.log('Report processed successfully');
+            return true;
+        } catch (error) {
+            console.error('Error processing report:', error);
+            return false;
+        }
+    };
+
+    // Fallback function if the above doesn't work
+    window.printReport = function(data) {
+        return window.downloadOrPrintReport(data, 'RentalReport.pdf');
+    };
+</script>

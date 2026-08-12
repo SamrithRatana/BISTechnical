@@ -1,0 +1,3426 @@
+﻿
+<style>
+    .image-head {
+        width: 100px;
+        height: 100px;
+        overflow: hidden;
+        border-radius: 8px;
+        border: 1px solid #ddd;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background-color: #f9f9f9;
+    }
+
+        .image-head img {
+            width: 100px;
+            height: 100px;
+            object-fit: cover;
+        }
+
+    .card {
+        border: none;
+        border-radius: 8px;
+        box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
+        margin-bottom: 20px;
+    }
+
+    .form-group {
+        display: grid;
+        grid-template-columns: repeat(2, 1fr);
+        gap: 1rem;
+        padding: 0;
+        margin: 0;
+    }
+
+        /* Ensure full-width elements span both columns */
+        .form-group > .image-container,
+        .form-group > h2,
+        .form-group > .image-upload-instructions,
+        .form-group > .e-footer-content {
+            grid-column: span 2;
+        }
+
+        /* Single column items stay in their grid position */
+        .form-group > div:not(.image-container):not(.e-footer-content):not(.image-upload-instructions),
+        .form-group > .e-textbox,
+        .form-group > .e-ddl,
+        .form-group > .e-input-group,
+        .form-group > .e-float-input {
+            grid-column: span 1;
+        }
+
+    .image-container {
+        grid-column: span 2;
+        position: relative;
+        text-align: center;
+        border: 2px dashed #ddd;
+        border-radius: 8px;
+        padding: 1rem;
+        background-color: #fafafa;
+        min-height: 250px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        flex-direction: column;
+    }
+
+        .image-container img {
+            max-width: 100%;
+            width: 300px;
+            height: 200px;
+            object-fit: cover;
+            border-radius: 8px;
+            box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
+        }
+
+    .image-preview {
+        width: 300px;
+        height: 200px;
+        object-fit: cover;
+        border-radius: 8px;
+        box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
+        margin: 0 auto;
+        display: block;
+    }
+
+    .image-filename {
+        position: absolute;
+        bottom: 8px;
+        left: 50%;
+        transform: translateX(-50%);
+        background-color: rgba(0, 0, 0, 0.7);
+        color: white;
+        padding: 5px 10px;
+        border-radius: 5px;
+        opacity: 0;
+        transition: opacity 0.3s ease;
+        pointer-events: none;
+        font-size: 0.75rem;
+        max-width: 90%;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+    }
+
+    .image-container:hover .image-filename {
+        opacity: 1;
+    }
+
+    .default-image {
+        max-width: 100%;
+        height: auto;
+        border: 2px dashed #ccc;
+        border-radius: 8px;
+        padding: 1rem;
+    }
+
+    /* Image placeholder styling */
+    .image-placeholder {
+        width: 300px;
+        height: 200px;
+        border: 2px dashed #ccc;
+        border-radius: 8px;
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
+        align-items: center;
+        margin: 0 auto;
+        background-color: #f8f9fa;
+    }
+
+        .image-placeholder .fas.fa-image {
+            font-size: 48px;
+            color: #ccc;
+            margin-bottom: 10px;
+        }
+
+    .placeholder-text {
+        margin: 0;
+        color: #666;
+        font-size: 1rem;
+    }
+
+    .placeholder-subtext {
+        margin: 5px 0 0 0;
+        font-size: 0.875rem;
+        color: #888;
+    }
+
+    /* Mobile-friendly file input styling */
+    .file-input-mobile {
+        width: 100%;
+        height: 100%;
+        cursor: pointer;
+        opacity: 0;
+        position: absolute;
+        top: 0;
+        left: 0;
+        z-index: 15;
+    }
+
+    .file-upload-label {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 10px;
+        color: white;
+        background: linear-gradient(135deg, rgba(0, 123, 255, 0.9), rgba(0, 86, 179, 0.9));
+        padding: 1.2rem 1.5rem;
+        border-radius: 12px;
+        cursor: pointer;
+        pointer-events: none;
+        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+        transition: all 0.3s ease;
+        min-width: 200px;
+    }
+
+    .upload-icon-wrapper {
+        display: flex;
+        gap: 15px;
+        font-size: 1.8rem;
+    }
+
+    .upload-text {
+        font-size: 1rem;
+        font-weight: 500;
+        text-align: center;
+    }
+
+    /* Better touch targets for mobile */
+    .file-upload-overlay {
+        position: absolute;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        opacity: 0;
+        transition: opacity 0.3s ease;
+        z-index: 10;
+        min-height: 44px;
+    }
+
+        .file-upload-overlay:hover {
+            opacity: 1;
+            background: rgba(0, 0, 0, 0.3);
+        }
+
+            .file-upload-overlay:hover .file-upload-label {
+                transform: scale(1.05);
+                box-shadow: 0 6px 16px rgba(0, 0, 0, 0.2);
+            }
+
+    .e-footer-content {
+        grid-column: span 2;
+        display: flex;
+        justify-content: flex-end;
+        margin-top: 1rem;
+    }
+
+    .filter-card-slider {
+        display: flex;
+        overflow-x: auto;
+        gap: 18px;
+        padding: 10px 0;
+        margin-bottom: 10px;
+        scrollbar-width: thin;
+        scroll-behavior: smooth;
+        max-width: 420px;
+    }
+
+        .filter-card-slider::-webkit-scrollbar {
+            height: 8px;
+        }
+
+        .filter-card-slider::-webkit-scrollbar-thumb {
+            background: #eee;
+            border-radius: 4px;
+        }
+
+    .filter-card {
+        background: #fff;
+        border-radius: 10px;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.07);
+        padding: 12px 8px 8px 8px;
+        width: 110px;
+        height: 110px;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        cursor: pointer;
+        transition: box-shadow 0.2s, border 0.2s;
+        border: 2px solid transparent;
+        flex: 0 0 auto;
+    }
+
+        .filter-card:hover {
+            box-shadow: 0 4px 16px rgba(0,0,0,0.13);
+            border: 2px solid #007bff;
+        }
+
+        .filter-card img {
+            width: 70px;
+            height: 70px;
+            object-fit: cover;
+            border-radius: 7px;
+            margin-bottom: 6px;
+            box-shadow: 0 1px 4px #ccc;
+        }
+
+        .filter-card div {
+            font-size: 0.95rem;
+            color: #333;
+            font-weight: 500;
+            text-align: center;
+            margin-top: 2px;
+        }
+
+    .slider-arrow {
+        background: #fff;
+        border: 1px solid #ddd;
+        border-radius: 50%;
+        width: 36px;
+        height: 36px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 1.2rem;
+        color: #007bff;
+        cursor: pointer;
+        margin: 0 8px;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.07);
+        transition: background 0.2s, border 0.2s;
+    }
+
+        .slider-arrow:hover {
+            background: #007bff;
+            color: #fff;
+            border: 1px solid #007bff;
+        }
+
+    .button-container {
+        display: flex;
+        gap: 0.5rem;
+    }
+
+    .part-number-box {
+        max-width: 300px;
+        width: 100%;
+    }
+
+    .dialog-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+    }
+
+    .dialog-title {
+        margin: 0;
+    }
+
+    .custom-close-btn {
+        background: none;
+        border: none;
+        font-size: 1rem;
+        cursor: pointer;
+    }
+
+    .popup-body-content {
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        height: 100%;
+    }
+
+    .image-upload-instructions {
+        color: #dc3545;
+        font-size: 0.7rem;
+        font-weight: 500;
+        margin-bottom: 10px;
+        text-align: center;
+        background-color: #f8f9fa;
+        padding: 8px;
+        border-radius: 4px;
+        border-left: 4px solid #dc3545;
+        width: 100%;
+    }
+
+    .crop-icon {
+        position: absolute;
+        top: 8px;
+        right: 8px;
+        width: 32px;
+        height: 32px;
+        border-radius: 50%;
+        background-color: #007bff;
+        color: white;
+        border: none;
+        cursor: pointer;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 14px;
+        z-index: 20;
+        box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
+        transition: background-color 0.3s ease;
+    }
+
+        .crop-icon:hover {
+            background-color: #0056b3;
+        }
+
+    /* Search box styling */
+    .input-group-text {
+        background-color: #f8f9fa;
+        border-right: none;
+    }
+
+    .input-group .form-control {
+        border-left: none;
+    }
+
+        .input-group .form-control:focus {
+            border-color: #ced4da;
+            box-shadow: none;
+        }
+
+            .input-group .form-control:focus + .input-group-text {
+                border-color: #80bdff;
+            }
+
+    /* Pagination styling */
+    .pagination-controls {
+        padding: 10px;
+        background-color: #f8f9fa;
+        border-radius: 4px;
+    }
+
+    .pagination-buttons button {
+        margin: 0 2px;
+    }
+
+    .pagination-info {
+        font-weight: 500;
+        color: #495057;
+    }
+
+    .page-size-selector label {
+        margin-right: 8px;
+        font-weight: 500;
+    }
+
+    /* Mobile specific adjustments */
+    @@media (max-width: 768px) {
+        /* Make form single column on mobile */
+        .form-group {
+            grid-template-columns: 1fr;
+        }
+
+            .form-group > div,
+            .form-group > .e-textbox,
+            .form-group > .e-ddl,
+            .form-group > .e-input-group,
+            .form-group > .e-float-input {
+                grid-column: span 1;
+            }
+
+        .image-container {
+            min-height: 220px;
+            padding: 0.5rem;
+        }
+
+        .image-placeholder {
+            width: 100%;
+            max-width: 300px;
+            height: 180px;
+        }
+
+            .image-placeholder .fas.fa-image {
+                font-size: 36px;
+            }
+
+        .placeholder-text {
+            font-size: 0.9rem;
+        }
+
+        .placeholder-subtext {
+            font-size: 0.8rem;
+        }
+        /* Always show upload button on mobile - CENTERED */
+        .file-upload-overlay {
+            opacity: 1;
+            background: transparent;
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            width: auto;
+            height: auto;
+        }
+
+        .file-upload-label {
+            background: linear-gradient(135deg, #007bff, #0056b3);
+            padding: 1rem 1.2rem;
+            border-radius: 10px;
+            min-width: 180px;
+            box-shadow: 0 3px 10px rgba(0, 0, 0, 0.2);
+        }
+
+        .upload-icon-wrapper {
+            gap: 12px;
+            font-size: 1.5rem;
+        }
+
+        .upload-text {
+            font-size: 0.9rem;
+            font-weight: 600;
+        }
+
+        .file-upload-overlay:active .file-upload-label {
+            transform: scale(0.95);
+            background: linear-gradient(135deg, #0056b3, #003d82);
+        }
+
+        .crop-icon {
+            width: 40px !important;
+            height: 40px !important;
+            font-size: 16px !important;
+        }
+        /* Make clear button more prominent on mobile */
+        .btn-outline-danger.w-100 {
+            padding: 0.6rem;
+            font-size: 0.95rem;
+        }
+    }
+
+    /* Extra small screens (phones in portrait) */
+    @@media (max-width: 576px) {
+        .image-placeholder {
+            height: 160px;
+        }
+
+        .file-upload-label {
+            padding: 0.9rem 1rem;
+            min-width: 160px;
+        }
+
+        .upload-icon-wrapper {
+            font-size: 1.3rem;
+        }
+
+        .upload-text {
+            font-size: 0.85rem;
+        }
+    }
+
+    /* Touch device detection */
+    @@media (hover: none) and (pointer: coarse) {
+        .file-upload-overlay {
+            opacity: 1;
+        }
+
+        .file-upload-label {
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.25);
+        }
+    }
+
+    /* Landscape mode adjustments */
+    @@media (max-width: 768px) and (orientation: landscape) {
+        .image-container {
+            min-height: 180px;
+        }
+
+        .image-placeholder {
+            height: 140px;
+        }
+
+        .file-upload-label {
+            padding: 0.7rem 1rem;
+        }
+
+        .upload-icon-wrapper {
+            font-size: 1.2rem;
+        }
+    }
+    /* Stock Level Badge */
+    .stock-level-container {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 8px;
+        padding: 8px;
+    }
+
+    .stock-level-badge {
+        display: flex;
+        align-items: center;
+        justify-content: center; /* Added to center content */
+        gap: 10px;
+        padding: 8px 16px;
+        border-radius: 20px;
+        color: white;
+        font-weight: 600;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+        min-width: 140px;
+        transition: transform 0.2s ease;
+    }
+
+        .stock-level-badge:hover {
+            transform: scale(1.05);
+        }
+
+        .stock-level-badge i {
+            font-size: 1.2rem;
+        }
+
+    .stock-details {
+        display: flex;
+        flex-direction: column;
+        align-items: center; /* Changed from flex-start to center */
+    }
+
+    .stock-quantity {
+        font-size: 1.1rem;
+        font-weight: 700;
+        line-height: 1;
+        text-align: center; /* Added for extra centering */
+    }
+
+
+    .stock-status {
+        font-size: 0.7rem;
+        opacity: 0.9;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+        text-align: center; /* Added for extra centering */
+    }
+
+    /* Progress Bar */
+    .stock-progress-bar {
+        width: 100%;
+        height: 6px;
+        background-color: #e9ecef;
+        border-radius: 3px;
+        overflow: hidden;
+    }
+
+    .stock-progress-fill {
+        height: 100%;
+        transition: width 0.3s ease;
+        border-radius: 3px;
+    }
+
+    /* Stock Summary Cards */
+    .stock-summary-card {
+        display: flex;
+        align-items: center;
+        gap: 15px;
+        padding: 15px;
+        border-radius: 12px;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+        transition: transform 0.2s ease, box-shadow 0.2s ease;
+        background: white;
+        border-left: 4px solid;
+    }
+
+        .stock-summary-card:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+        }
+
+    .stock-summary-icon {
+        font-size: 2rem;
+        width: 50px;
+        height: 50px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        border-radius: 50%;
+        color: white;
+    }
+
+    .stock-summary-details h3 {
+        margin: 0;
+        font-size: 1.8rem;
+        font-weight: 700;
+        color: #333;
+    }
+
+    .stock-summary-details p {
+        margin: 0;
+        font-size: 0.85rem;
+        color: #666;
+    }
+
+    /* Color variants for summary cards */
+    .out-of-stock {
+        border-left-color: #dc3545;
+    }
+
+        .out-of-stock .stock-summary-icon {
+            background-color: #dc3545;
+        }
+
+    .critical-stock {
+        border-left-color: #ff6b6b;
+    }
+
+        .critical-stock .stock-summary-icon {
+            background-color: #ff6b6b;
+        }
+
+    .low-stock {
+        border-left-color: #ffc107;
+    }
+
+        .low-stock .stock-summary-icon {
+            background-color: #ffc107;
+        }
+
+    .good-stock {
+        border-left-color: #28a745;
+    }
+
+        .good-stock .stock-summary-icon {
+            background-color: #28a745;
+        }
+
+    /* Pulsing animation for critical items */
+    @@keyframes pulse-critical {
+        0%, 100% {
+            opacity: 1;
+        }
+
+        50% {
+            opacity: 0.8;
+        }
+    }
+
+    .stock-level-badge[style*="#dc3545"],
+    .stock-level-badge[style*="#ff6b6b"] {
+        animation: pulse-critical 2s infinite;
+    }
+
+    /* Mobile responsiveness */
+    @@media (max-width: 768px) {
+        .stock-level-badge {
+            padding: 6px 12px;
+            min-width: 110px;
+            font-size: 0.85rem;
+        }
+
+            .stock-level-badge i {
+                font-size: 1rem;
+            }
+
+        .stock-quantity {
+            font-size: 0.95rem;
+        }
+
+        .stock-status {
+            font-size: 0.6rem;
+        }
+
+        .stock-summary-card {
+            padding: 12px;
+        }
+
+        .stock-summary-icon {
+            font-size: 1.5rem;
+            width: 40px;
+            height: 40px;
+        }
+
+        .stock-summary-details h3 {
+            font-size: 1.4rem;
+        }
+
+        .stock-summary-details p {
+            font-size: 0.75rem;
+        }
+    }
+
+    /* Print styles */
+    @@media print {
+        .stock-progress-bar {
+            display: none;
+        }
+
+        .stock-summary-card {
+            break-inside: avoid;
+        }
+    }
+
+    .stock-level-badge[style*="cursor: pointer"]:hover {
+        opacity: 0.8;
+        transform: scale(1.02);
+    }
+
+    .stock-level-badge[style*="cursor: pointer"]:active {
+        transform: scale(0.98);
+    }
+    /* Minimal Set Stock Button - Like dropdown menu item */
+    .btn-set-stock-minimal {
+        background: transparent;
+        border: 1px solid #dee2e6;
+        color: black;
+        padding: 6px 12px;
+        border-radius: 4px;
+        font-size: 0.875rem;
+        font-weight: 400;
+        cursor: pointer;
+        transition: all 0.2s ease;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 8px;
+        width: 100%;
+        white-space: nowrap;
+    }
+
+        .btn-set-stock-minimal:hover {
+            background-color: #f8f9fa;
+            border-color: #adb5bd;
+            color: #212529;
+        }
+
+        .btn-set-stock-minimal:active {
+            background-color: #e9ecef;
+            border-color: #6c757d;
+        }
+
+        .btn-set-stock-minimal i {
+            font-size: 0.85rem;
+            color: #6c757d;
+        }
+
+        .btn-set-stock-minimal span {
+            font-size: 0.875rem;
+        }
+
+    /* Mobile responsiveness */
+    @@media (max-width: 768px) {
+        .btn-set-stock-minimal {
+            padding: 5px 10px;
+            font-size: 0.8rem;
+        }
+
+            .btn-set-stock-minimal i {
+                font-size: 0.75rem;
+            }
+
+            .btn-set-stock-minimal span {
+                font-size: 0.8rem;
+            }
+    }
+    /* Stock Text Display - Simple text without badge */
+    .stock-text-display {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 4px;
+        padding: 8px;
+        cursor: pointer;
+        transition: opacity 0.2s ease;
+    }
+
+        .stock-text-display:hover {
+            opacity: 0.7;
+        }
+
+    .stock-quantity-text {
+        font-size: 1rem;
+        font-weight: 700;
+        color: #000000;
+        line-height: 1;
+    }
+
+    .stock-status-text {
+        font-size: 0.85rem;
+        font-weight: 500;
+        color: #000000;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+    }
+
+    @@media (max-width: 768px) {
+        .stock-quantity-text {
+            font-size: 1.1rem;
+        }
+
+        .stock-status-text {
+            font-size: 0.75rem;
+        }
+    }
+    /* Upload status bar — shown inside the dialog above the Save button */
+    .upload-status-bar {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        padding: 10px 14px;
+        border-radius: 8px;
+        background-color: #f8f9fa;
+        border: 1px solid #dee2e6;
+        margin-bottom: 10px;
+        transition: all 0.3s ease;
+    }
+
+        .upload-status-bar.busy {
+            background-color: #fff3cd;
+            border-color: #ffc107;
+        }
+
+        .upload-status-bar.success {
+            background-color: #d4edda;
+            border-color: #28a745;
+        }
+
+        .upload-status-bar.failed {
+            background-color: #f8d7da;
+            border-color: #dc3545;
+        }
+
+    .upload-status-spinner {
+        width: 18px;
+        height: 18px;
+        border: 3px solid rgba(0,0,0,0.1);
+        border-top-color: #007bff;
+        border-radius: 50%;
+        animation: spin 0.8s linear infinite;
+        flex-shrink: 0;
+    }
+
+    @@keyframes spin {
+        to {
+            transform: rotate(360deg);
+        }
+    }
+
+    .upload-status-text {
+        font-size: 0.9rem;
+        font-weight: 500;
+    }
+
+    /* Step indicators — shows all 3 steps like the test page */
+    .upload-steps {
+        display: flex;
+        gap: 6px;
+        align-items: center;
+        flex-wrap: wrap;
+        margin-top: 6px;
+    }
+
+    .upload-step-pill {
+        font-size: 0.75rem;
+        padding: 2px 10px;
+        border-radius: 12px;
+        background: #e9ecef;
+        color: #6c757d;
+        border: 1px solid #dee2e6;
+    }
+
+        .upload-step-pill.active {
+            background: #cce5ff;
+            color: #004085;
+            border-color: #b8daff;
+            font-weight: 600;
+        }
+
+        .upload-step-pill.done {
+            background: #d4edda;
+            color: #155724;
+            border-color: #c3e6cb;
+        }
+    /* Stock Out Button */
+    .btn-stock-out-minimal {
+        background: transparent;
+        border: 1px solid #f5c6cb;
+        color: #dc3545;
+        padding: 6px 12px;
+        border-radius: 4px;
+        font-size: 0.875rem;
+        font-weight: 400;
+        cursor: pointer;
+        transition: all 0.2s ease;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 8px;
+        width: 100%;
+        white-space: nowrap;
+    }
+
+        .btn-stock-out-minimal:hover:not(:disabled) {
+            background-color: #f8d7da;
+            border-color: #dc3545;
+            color: #721c24;
+        }
+
+        .btn-stock-out-minimal:disabled {
+            opacity: 0.4;
+            cursor: not-allowed;
+        }
+
+        .btn-stock-out-minimal i {
+            font-size: 0.85rem;
+        }
+</style>
+
+
+@page "/SparePart Inventory Page";
+@using BarcodeStandard
+@using Microsoft.JSInterop
+@using Microsoft.AspNetCore.SignalR.Client
+@using ServiceMaintenance.Models
+@using ServiceMaintenance.Services
+@using ServiceMaintenance.Services.KoompiCloudStorage
+@using ServiceMaintenance.Services.KoompiCloudStorage.Helpers
+@using Syncfusion.Blazor.Navigations
+@using Syncfusion.Blazor.Grids
+@using Syncfusion.Blazor.Inputs
+@using Syncfusion.Blazor.BarcodeGenerator
+@using System.Drawing.Imaging;
+@using System.Drawing
+@using static ServiceMaintenance.Services.KoompiCloudStorage.CloudModels.KoompiStorageModels
+@inject KoompiStorageService KoompiStorage
+@inject ServiceSparePart sparePartService
+@inject StateManagementAction StateManagementAction
+@inject Microsoft.AspNetCore.Components.NavigationManager UriHelper
+@inherits PermissionBase
+
+<DxToastProvider Name="Customization"
+                 MaxToastCount="5"
+                 HorizontalAlignment="HorizontalAlignment.Right"
+                 VerticalAlignment="VerticalEdge.Top"
+                 AnimationType="@Animation" />
+<DxToastProvider Name="Error"
+                 MaxToastCount="5"
+                 HorizontalAlignment="HorizontalAlignment.Right"
+                 VerticalAlignment="VerticalEdge.Top"
+                 AnimationType="@Animation" />
+
+<div class="card shadow-sm rounded-lg">
+    <div class="card-body">
+        <DxToolbar ItemRenderStyleMode="ToolbarRenderStyleMode.Plain">
+            @if (CanCreate)
+            {
+                <DxToolbarItem Text="@Loc[nameof(ResourceStrings.TextNew)]" Click="NewItem_Click" IconCssClass="far fa-file" CssClass="toolbar-item" />
+            }
+            @if (CanEdit)
+            {
+                <DxToolbarItem Text="@Loc[nameof(ResourceStrings.TextEdit)]" Click="EditItem_Click" IconCssClass="fas fa-edit" CssClass="toolbar-item" />
+            }
+            @if (CanDelete)
+            {
+                <DxToolbarItem Text="@Loc[nameof(ResourceStrings.TextDelete)]" Click="DeleteItem_Click" IconCssClass="fas fa-trash-alt" CssClass="toolbar-item" Enabled="false" />
+            }
+            @if (CanExport)
+            {
+                <DxToolbarItem Text="@Loc[nameof(ResourceStrings.TextExport)]" IconCssClass="fas fa-download">
+                    <Items>
+                        <DxToolbarItem Text="@Loc[nameof(ResourceStrings.TextToExcel)]" Click="ExportToExcel" IconCssClass="fas fa-file-excel" />
+                        <DxToolbarItem Text="@Loc[nameof(ResourceStrings.TextToPdf)]" Click="ExportToPdf" IconCssClass="fas fa-file-pdf" />
+                    </Items>
+                </DxToolbarItem>
+            }
+            @if (CanPrint)
+            {
+                <DxToolbarItem Text="Print Report" CssClass="toolbar-item" IconCssClass="fas fa-print" Enabled="false" />
+            }
+            @if (CanView)
+            {
+                <DxToolbarItem Text="@Loc[nameof(ResourceStrings.TextCheckList)]" CssClass="toolbar-item" IconCssClass="fas fa-check-circle" />
+            }
+        </DxToolbar>
+    </div>
+</div>
+
+<DxLayoutBreakpoint DeviceSize="DeviceSize.XSmall" @bind-IsActive="@isXSmallScreen" />
+<hr>
+
+@if (CanAccess)
+{
+    @if (CanView)
+    {
+        <!-- Custom Search Box -->
+        <div class="card shadow-sm rounded-lg mb-3">
+            <div class="card-body">
+                <div class="btn-group mb-3" role="group">
+                    <button type="button"
+                            class="btn @(stockFilter == "all" ? "btn-primary" : "btn-outline-primary")"
+                            @onclick='() => FilterByStock("all")'>
+                        <i class="fas fa-list"></i> All Items
+                    </button>
+                    <button type="button"
+                            class="btn @(stockFilter == "out" ? "btn-danger" : "btn-outline-danger")"
+                            @onclick='() => FilterByStock("out")'>
+                        <i class="fas fa-exclamation-triangle"></i> Out of Stock
+                    </button>
+                    <button type="button"
+                            class="btn @(stockFilter == "low" ? "btn-warning" : "btn-outline-warning")"
+                            @onclick='() => FilterByStock("low")'>
+                        <i class="fas fa-exclamation-circle"></i> Low Stock
+                    </button>
+                    <button type="button"
+                            class="btn @(stockFilter == "good" ? "btn-success" : "btn-outline-success")"
+                            @onclick='() => FilterByStock("good")'>
+                        <i class="fas fa-check-circle"></i> Good Stock
+                    </button>
+                </div>
+                <div class="row align-items-center">
+                    <div class="col-md-8">
+                        <div class="input-group">
+                            <span class="input-group-text">
+                                <i class="fas fa-search"></i>
+                            </span>
+                            <input type="text"
+                                   class="form-control"
+                                   placeholder="Search by Item Name, Serial Number, Description, or Use For..."
+                                   @bind="searchQuery"
+                                   @bind:event="oninput"
+                                   @onkeyup="OnSearchKeyUp" />
+                            @if (!string.IsNullOrEmpty(searchQuery))
+                            {
+                                <button class="btn btn-outline-secondary" type="button" @onclick="ClearSearch">
+                                    <i class="fas fa-times"></i>
+                                </button>
+                            }
+                        </div>
+                    </div>
+                    <div class="col-md-4 text-end">
+                        @if (isSearching)
+                        {
+                            <span class="text-muted">
+                                <i class="fas fa-spinner fa-spin"></i> Searching...
+                            </span>
+                        }
+                        else if (!string.IsNullOrEmpty(searchQuery))
+                        {
+                            <span class="text-success">
+                                <i class="fas fa-check-circle"></i> Found @totalCount results
+                            </span>
+                        }
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="h-100 grid-wrapper">
+            @if (spareParts == null)
+            {
+                <div class="card-body w-100">
+                    <div class="card-header border-0 p-2 rounded">
+                        <DxLoadingPanel IndicatorAnimationType="WaitIndicatorAnimationType.Pulse"
+                                        CssClass="w-100"
+                                        IndicatorVisible="@indicatorVisible"
+                                        IndicatorAreaVisible="@indicatorAreaVisible"
+                                        Visible="true"
+                                        Text="Processing..."
+                                        TextAlignment="LoadingPanelTextAlignment.Right">
+                            <div style="min-height: 250px;"></div>
+                        </DxLoadingPanel>
+                    </div>
+                </div>
+            }
+            else
+            {
+                <div class="card shadow-sm rounded-lg mb-3">
+                    <div class="card-body">
+                        <h5 class="mb-3">
+                            <i class="fas fa-chart-bar"></i> Stock Overview
+                        </h5>
+                        <div class="row">
+                            <div class="col-md-3 col-6 mb-3">
+                                <div class="stock-summary-card out-of-stock">
+                                    <div class="stock-summary-icon">
+                                        <i class="fas fa-exclamation-triangle"></i>
+                                    </div>
+                                    <div class="stock-summary-details">
+                                        <h3>@GetStockCount(0, 0)</h3>
+                                        <p>Out of Stock</p>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div class="col-md-3 col-6 mb-3">
+                                <div class="stock-summary-card critical-stock">
+                                    <div class="stock-summary-icon">
+                                        <i class="fas fa-exclamation-circle"></i>
+                                    </div>
+                                    <div class="stock-summary-details">
+                                        <h3>@GetStockCount(1, CRITICAL_STOCK)</h3>
+                                        <p>Critical (≤@CRITICAL_STOCK)</p>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div class="col-md-3 col-6 mb-3">
+                                <div class="stock-summary-card low-stock">
+                                    <div class="stock-summary-icon">
+                                        <i class="fas fa-info-circle"></i>
+                                    </div>
+                                    <div class="stock-summary-details">
+                                        <h3>@GetStockCount(CRITICAL_STOCK + 1, LOW_STOCK)</h3>
+                                        <p>Low (@(CRITICAL_STOCK + 1)-@LOW_STOCK)</p>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div class="col-md-3 col-6 mb-3">
+                                <div class="stock-summary-card good-stock">
+                                    <div class="stock-summary-icon">
+                                        <i class="fas fa-check-circle"></i>
+                                    </div>
+                                    <div class="stock-summary-details">
+                                        <h3>@GetStockCount(LOW_STOCK + 1, int.MaxValue)</h3>
+                                        <p>Good Stock (>@LOW_STOCK)</p>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>nth
+                </div>
+
+                <SfGrid @ref="MyGrid"
+                        DataSource="@spareParts"
+                        AllowPaging="false"
+                        AllowSorting="true"
+                        AllowExcelExport="true"
+                        AllowPdfExport="true"
+                        AllowResizing="true"
+                        AllowFiltering="true"
+                        OnRowSelected="RowSelectHandler"
+                        OnActionBegin="ActionBeginHandler">
+                    <GridFilterSettings Type="Syncfusion.Blazor.Grids.FilterType.Excel"></GridFilterSettings>
+
+                    <GridEditSettings AllowEditing="true"
+                                      Mode="EditMode.Normal"
+                                      ShowDeleteConfirmDialog="true">
+                    </GridEditSettings>
+
+                    <GridEvents RowSelected="RowSelectHandler"
+                                OnToolbarClick="ToolbarClickHandler"
+                                PdfQueryCellInfoEvent="OnPdfQueryCellInfo"
+                                ExcelQueryCellInfoEvent="OnExcelQueryCellInfo"
+                                TValue="SparePartObject">
+                    </GridEvents>
+
+                    <GridColumns>
+                        <GridColumn Field="Id" HeaderText="ID" Width="50" IsPrimaryKey="true" TextAlign="Syncfusion.Blazor.Grids.TextAlign.Center" Visible="false"></GridColumn>
+                        <GridColumn HeaderText="@Loc[nameof(ResourceStrings.TextImage)]" Width="100" TextAlign="Syncfusion.Blazor.Grids.TextAlign.Center">
+                            <Template>
+                                @{
+                                    var partInfo = (context as SparePartObject);
+                                    <div class="image-head">
+                                        <img src="@UriHelper.ToAbsoluteUri($"{partInfo.PictureUrl}")" alt="Spare Part Image" />
+                                    </div>
+                                }
+                            </Template>
+                        </GridColumn>
+
+                        <GridColumn Field="ItemName" HeaderText="@Loc[nameof(ResourceStrings.TextItemName)]" Width="150"></GridColumn>
+                        <GridColumn Field="SerialNumber" HeaderText="@Loc[nameof(ResourceStrings.TextPartNo)]" Width="150"></GridColumn>
+                        <GridColumn Field="Description" HeaderText="@Loc[nameof(ResourceStrings.textDescription)]" Width="200" Visible="false"></GridColumn>
+                        <GridColumn Field="UseFor" HeaderText="@Loc[nameof(ResourceStrings.TextUsefor)]" Width="150"></GridColumn>
+                        <GridColumn Field="Quantity" HeaderText="Quantity" Width="180" TextAlign="Syncfusion.Blazor.Grids.TextAlign.Center">
+                            <Template>
+                                @{
+                                    var sparePart = context as SparePartObject;
+                                    var stockLevel = sparePart.Quantity;
+                                    var stockColor = GetStockLevelColor(stockLevel);
+                                    var stockStatus = GetStockStatus(stockLevel);
+                                }
+                                <div class="stock-level-container">
+                                    <div class="stock-text-display" @onclick="@(() => StartEditQuantity(sparePart))">
+                                        <span class="stock-quantity-text">@stockLevel</span>
+                                        <span class="stock-status-text">@stockStatus</span>
+                                    </div>
+
+                                    @* Progress bar *@
+                                    <div class="stock-progress-bar">
+                                        <div class="stock-progress-fill"
+                                             style="width: @GetStockProgressWidth(stockLevel)%; background-color: @stockColor">
+                                        </div>
+                                    </div>
+                                </div>
+                            </Template>
+                            <EditTemplate>
+                                @{
+                                    var sparePart = context as SparePartObject;
+                                }
+                                <SfNumericTextBox @bind-Value="@sparePart.Quantity"
+                                                  TValue="int"
+                                                  Min="0"
+                                                  Step="1"
+                                                  Format="n0"
+                                                  ShowSpinButton="true"
+                                                  Width="100%">
+                                </SfNumericTextBox>
+                            </EditTemplate>
+                        </GridColumn>
+                        <GridColumn HeaderText="@Loc[nameof(ResourceStrings.TextBarcode)]" Width="200">
+                            <Template>
+                                @{
+                                    var sparePart = context as SparePartObject;
+                                    var serialNumber = string.IsNullOrEmpty(sparePart.SerialNumber) ? "0" : sparePart.SerialNumber;
+                                }
+                                <SfBarcodeGenerator Width="200px" Height="100px"
+                                                    Type="@BarcodeType.Code128"
+                                                    ForeColor="black"
+                                                    Value="@serialNumber">
+                                </SfBarcodeGenerator>
+                            </Template>
+                        </GridColumn>
+                        @* Set Stock Action Column *@
+                        <GridColumn HeaderText="SET STOCK" Width="120" TextAlign="Syncfusion.Blazor.Grids.TextAlign.Center">
+                            <Template>
+                                @{
+                                    var sparePart = context as SparePartObject;
+                                }
+                                <button type="button"
+                                        class="btn-set-stock-minimal"
+                                        @onclick="@(() => StartEditQuantity(sparePart))"
+                                        title="Set Stock">
+                                    <i class="fas fa-boxes"></i>
+                                    <span>Stock In</span>
+                                </button>
+                            </Template>
+                        </GridColumn>
+                        @* បន្ថែមក្រោម SET STOCK column *@
+                        <GridColumn HeaderText="STOCK OUT" Width="130" TextAlign="Syncfusion.Blazor.Grids.TextAlign.Center">
+                            <Template>
+                                @{
+                                    var sparePart = context as SparePartObject;
+                                }
+                                <button type="button"
+                                        class="btn-stock-out-minimal"
+                                        @onclick="@(() => StartManualStockOut(sparePart))"
+                                        title="Manual Stock Out"
+                                        disabled="@(sparePart.Quantity <= 0)">
+                                    <i class="fas fa-minus-circle"></i>
+                                    <span>Stock Out</span>
+                                </button>
+                            </Template>
+                        </GridColumn>
+
+                    </GridColumns>
+                </SfGrid>
+
+                <div class="card shadow-sm rounded-lg mt-3">
+                    <div class="card-body">
+                        <div class="pagination-controls d-flex justify-content-between align-items-center">
+                            <div class="pagination-info">
+                                <span>Showing @GetStartRecord() to @GetEndRecord() of @totalCount items</span>
+                            </div>
+                            <div class="pagination-buttons">
+                                <button class="btn btn-sm btn-outline-primary" @onclick="FirstPage" disabled="@IsFirstPage()">
+                                    <i class="fas fa-angle-double-left"></i> First
+                                </button>
+                                <button class="btn btn-sm btn-outline-primary" @onclick="PreviousPage" disabled="@IsFirstPage()">
+                                    <i class="fas fa-angle-left"></i> Previous
+                                </button>
+                                <span class="mx-3">Page @currentPage of @totalPages</span>
+                                <button class="btn btn-sm btn-outline-primary" @onclick="NextPage" disabled="@IsLastPage()">
+                                    Next <i class="fas fa-angle-right"></i>
+                                </button>
+                                <button class="btn btn-sm btn-outline-primary" @onclick="LastPage" disabled="@IsLastPage()">
+                                    Last <i class="fas fa-angle-double-right"></i>
+                                </button>
+                            </div>
+                            <div class="page-size-selector">
+                                <label>Items per page:</label>
+                                <select class="form-select form-select-sm" @onchange="OnPageSizeChanged" style="width: 80px; display: inline-block;">
+                                    <option value="5" selected="@(pageSize == 5)">5</option>
+                                    <option value="10" selected="@(pageSize == 10)">10</option>
+                                    <option value="20" selected="@(pageSize == 20)">20</option>
+                                    <option value="50" selected="@(pageSize == 50)">50</option>
+                                </select>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <SfDialog @ref="DialogDelete" IsModal="true" Width="250px" ShowCloseIcon="true" Visible="false">
+                    <DialogTemplates>
+                        <Header> Confirm Delete </Header>
+                        <Content> @Loc[nameof(ResourceStrings.Textconfirmdelete)] </Content>
+                    </DialogTemplates>
+                    <DialogButtons>
+                        <DialogButton Content="Delete" IsPrimary="true" OnClick="ConfirmDeleteYes" />
+                        <DialogButton Content="Cancel" IsPrimary="false" OnClick="ConfirmDeleteNo" />
+                    </DialogButtons>
+                </SfDialog>
+
+                <SfDialog @ref="DialogNoRecordSelected" IsModal="true" Width="250px" ShowCloseIcon="true" Visible="false">
+                    <DialogTemplates>
+                        <Header> Warning! </Header>
+                        <Content> @Loc[nameof(ResourceStrings.TextSelectRecord)] </Content>
+                    </DialogTemplates>
+                    <DialogButtons>
+                        <DialogButton Content="OK" IsPrimary="true" OnClick="CloseDialogNoRecordSelected" />
+                    </DialogButtons>
+                </SfDialog>
+                @* Add this dialog after your other dialogs *@
+                <SfDialog @ref="DialogQuantityEdit" IsModal="true" Width="350px" ShowCloseIcon="true" Visible="@isQuantityEditVisible">
+                    <DialogTemplates>
+                        <Header>Stock In</Header>
+                        <Content>
+                            <div class="p-3">
+                                <label class="form-label">Current Quantity: @editingItem?.Quantity</label>
+                                <SfNumericTextBox @bind-Value="@newQuantity"
+                                                  TValue="int"
+                                                  Placeholder="Enter new quantity"
+                                                  Min="0"
+                                                  Step="1"
+                                                  Format="n0"
+                                                  ShowSpinButton="true"
+                                                  Width="100%">
+                                </SfNumericTextBox>
+                            </div>
+                        </Content>
+                    </DialogTemplates>
+                    <DialogButtons>
+                        <DialogButton Content="Update" IsPrimary="true" OnClick="UpdateQuantity" />
+                        <DialogButton Content="Cancel" OnClick="CancelQuantityEdit" />
+                    </DialogButtons>
+                </SfDialog>
+                @* Manual Stock Out Dialog *@
+                <SfDialog @ref="DialogManualStockOut"
+                          IsModal="true"
+                          Width="420px"
+                          ShowCloseIcon="true"
+                          Visible="@isManualStockOutVisible">
+                    <DialogTemplates>
+                        <Header>
+                            <div style="display:flex; align-items:center; gap:10px;">
+                                <i class="fas fa-minus-circle text-danger"></i>
+                                <span>Manual Stock Out</span>
+                            </div>
+                        </Header>
+                        <Content>
+                            <div class="p-3">
+                                @if (stockOutItem != null)
+                                {
+                                    <div class="alert alert-warning py-2 mb-3">
+                                        <i class="fas fa-box"></i>
+                                        <strong> @stockOutItem.ItemName</strong>
+                                        &nbsp;|&nbsp; Current Stock:
+                                        <strong class="@(stockOutItem.Quantity <= CRITICAL_STOCK ? "text-danger" : "text-success")">
+                                            @stockOutItem.Quantity
+                                        </strong>
+                                    </div>
+
+                                    <div class="mb-3">
+                                        <label class="form-label fw-semibold">
+                                            Quantity to Remove <span class="text-danger">*</span>
+                                        </label>
+                                        <SfNumericTextBox @bind-Value="@stockOutQuantity"
+                                                          TValue="int"
+                                                          Placeholder="Enter quantity to deduct"
+                                                          Min="1"
+                                                          Max="@stockOutItem.Quantity"
+                                                          Step="1"
+                                                          Format="n0"
+                                                          ShowSpinButton="true"
+                                                          Width="100%">
+                                        </SfNumericTextBox>
+                                        @if (stockOutQuantity > stockOutItem.Quantity)
+                                        {
+                                            <small class="text-danger">
+                                                <i class="fas fa-exclamation-triangle"></i>
+                                                Cannot exceed available stock (@stockOutItem.Quantity)
+                                            </small>
+                                        }
+                                    </div>
+
+                                    <div class="mb-3">
+                                        <label class="form-label fw-semibold">Reason / Note</label>
+                                        <SfTextArea @bind-Value="@stockOutReason"
+                                                    Placeholder="e.g. Used for internal repair, damaged, lost..."
+                                                    RowCount="3"
+                                                    FloatLabelType="FloatLabelType.Never"
+                                                    Width="100%">
+                                        </SfTextArea>
+                                    </div>
+
+                                    <div class="alert alert-info py-2 mb-0" style="font-size:0.85rem;">
+                                        <i class="fas fa-info-circle"></i>
+                                        After deduction: <strong>@Math.Max(0, stockOutItem.Quantity - stockOutQuantity)</strong> remaining
+                                    </div>
+                                }
+                            </div>
+                        </Content>
+                    </DialogTemplates>
+                    <DialogButtons>
+                        <DialogButton Content="Confirm Stock Out"
+                                      IsPrimary="true"
+                                      OnClick="ConfirmManualStockOut"
+                                      Disabled="@(stockOutQuantity <= 0 || stockOutQuantity > (stockOutItem?.Quantity ?? 0))" />
+                        <DialogButton Content="Cancel"
+                                      OnClick="CancelManualStockOut" />
+                    </DialogButtons>
+                </SfDialog>
+                <SfDialog IsModal="true" Width="500px" ShowCloseIcon="false" Visible="@isAddDialogVisible">
+                    <DialogTemplates>
+                        <Header>
+                            <div class="dialog-header">
+                                <h2 class="dialog-title">@pageTitle</h2>
+                                @if (isEditing)
+                                {
+                                    <SfButton class="custom-close-btn" IconCss="fa fa-barcode" @onclick="() => PopupVisible = true">
+                                        Barcode
+                                    </SfButton>
+                                }
+                            </div>
+                            <DxPopup HeaderText="Barcode Generator"
+                                     Width="300px"
+                                     @bind-Visible="@PopupVisible">
+                                <BodyContentTemplate>
+                                    <div class="popup-body-content">
+                                        <SfBarcodeGenerator Width="200px" Height="100px"
+                                                            Type="@BarcodeType.Code128"
+                                                            ForeColor="black"
+                                                            Value="@sparePart.SerialNumber"
+                                                            @ref="barcodeGenerator">
+                                        </SfBarcodeGenerator>
+                                        <input type="button" value="Export" @onclick="OnExport" />
+                                    </div>
+                                </BodyContentTemplate>
+                            </DxPopup>
+                        </Header>
+                    </DialogTemplates>
+
+                    <EditForm Model="@sparePart" OnValidSubmit="@SaveModel">
+                        <div class="form-group">
+                            <h2 class="image-title">@Loc[nameof(ResourceStrings.TextUploadImage)]</h2>
+
+                            <!-- Add instruction message -->
+                            <div class="image-upload-instructions">
+                                <i class="fas fa-info-circle"></i>
+                                Recommended image size: 300x200 pixels (3:2 aspect ratio) for best quality.
+                                Images will be automatically cropped to fit.
+                            </div>
+
+                            <div class="image-container">
+                                @if (!string.IsNullOrEmpty(pendingImagePreviewUrl))
+                                {
+                                    <!-- Show pending image preview -->
+                                    <img src="@pendingImagePreviewUrl"
+                                         alt="Image Preview"
+                                         class="image-preview" />
+
+                                    <div class="image-filename">
+                                        New image selected (not saved yet)
+                                    </div>
+
+                                    <button type="button"
+                                            class="crop-icon"
+                                            title="Crop Image"
+                                            @onclick="OpenCropperModal">
+                                        <i class="fas fa-crop"></i>
+                                    </button>
+                                }
+                                else if (!string.IsNullOrEmpty(sparePart.PictureUrl))
+                                {
+                                    <!-- Show existing saved image -->
+                                    <img src="@sparePart.PictureUrl"
+                                         alt="Spare Part Image"
+                                         class="image-preview" />
+
+                                    <div class="image-filename">
+                                        @Path.GetFileName(sparePart.PictureUrl)
+                                    </div>
+                                }
+                                else
+                                {
+                                    <!-- Show placeholder when no image -->
+                                    <div class="image-placeholder">
+                                        <i class="fas fa-image"></i>
+                                        <p class="placeholder-text">No image available</p>
+                                        <p class="placeholder-subtext">Upload or browse an image</p>
+                                    </div>
+                                }
+
+                                <!-- UPDATED: Mobile-friendly file upload with better styling -->
+                                <div class="file-upload-overlay">
+                                    <InputFile id="fileUpload"
+                                               OnChange="HandleFileSelected"
+                                               accept="image/*"
+                                               class="file-input-mobile" />
+
+                                    <label for="fileUpload" class="file-upload-label">
+                                        <div class="upload-icon-wrapper">
+                                            <i class="fas fa-camera"></i>
+                                            <i class="fas fa-image"></i>
+                                        </div>
+                                        <span class="upload-text">Take Photo or Browse</span>
+                                    </label>
+                                </div>
+                            </div>
+
+                            <SfTextBox Enabled="false"
+                                       Placeholder="@Loc[nameof(ResourceStrings.Textimagefile)]"
+                                       FloatLabelType="@FloatLabelType.Always"
+                                       Value="@GetImageFileName()">
+                            </SfTextBox>
+
+                            <SfComboBox @ref="comboObj"
+                                        @onclick="OnComboBoxClick"
+                                        @onfocusout="@(async () => await OnComboBoxBlur())"
+                                        TValue="string"
+                                        Placeholder="Select or type to search items"
+                                        FloatLabelType="FloatLabelType.Always"
+                                        FilterType="Syncfusion.Blazor.DropDowns.FilterType.Contains"
+                                        AllowFiltering="true"
+                                        AllowCustom="true"
+                                        TItem="string"
+                                        @bind-Value="sparePart.ItemName"
+                                        DataSource="@uniqueItemNames"
+                                        Width="100%"
+                                        PopupWidth="100%">
+                                <ComboBoxFieldSettings Value="" Text=""></ComboBoxFieldSettings>
+                                <ComboBoxTemplates TItem="string">
+                                    <ItemTemplate Context="itemName">
+                                        <div class="item-name" title="@itemName">
+                                            @itemName
+                                        </div>
+                                    </ItemTemplate>
+                                </ComboBoxTemplates>
+                                <ComboBoxEvents TValue="string"
+                                                TItem="string"
+                                                Filtering="OnComboBoxFiltering">
+                                </ComboBoxEvents>
+                            </SfComboBox>
+
+                            <SfTextArea Enabled="true" Placeholder="@Loc[nameof(ResourceStrings.textDescription)]" RowCount="5" ColumnCount="150" FloatLabelType="@FloatLabelType.Always" @bind-Value="sparePart.Description"></SfTextArea>
+
+                            <div>
+                                <SfTextBox Enabled="true" Placeholder="Part Number" FloatLabelType="@FloatLabelType.Always" @bind-Value="@sparePart.SerialNumber"></SfTextBox>
+                            </div>
+
+                            <div>
+                                <SfNumericTextBox TValue="int"
+                                                  Placeholder="Quantity"
+                                                  FloatLabelType="@FloatLabelType.Always"
+                                                  @bind-Value="sparePart.Quantity"
+                                                  Min="0"
+                                                  Step="1"
+                                                  Format="n0"
+                                                  ShowSpinButton="true"
+                                                  Enabled="true">
+                                </SfNumericTextBox>
+                            </div>
+
+                            <div>
+                                <SfTextArea Enabled="true" Placeholder="@Loc[nameof(ResourceStrings.TextUsefor)]" RowCount="5" ColumnCount="150" FloatLabelType="@FloatLabelType.Always" @bind-Value="sparePart.UseFor"></SfTextArea>
+                            </div>
+                        </div>
+                        @if (uploadStatus.IsVisible)
+                        {
+                            <div class="upload-status-bar @GetStatusBarClass()">
+                                @if (uploadStatus.IsBusy)
+                                {
+                                    <div class="upload-status-spinner"></div>
+                                }
+                                <div>
+                                    <div class="upload-status-text" style="color: @uploadStatus.Color">
+                                        <b>@uploadStatus.Message</b>
+                                    </div>
+
+                                    @* Step pills — same 3 steps as the test /upload page *@
+                                    @if (uploadStatus.IsBusy)
+                                    {
+                                        <div class="upload-steps">
+                                            <span class="upload-step-pill @StepClass(UploadStep.GettingToken)">
+                                                🔑 Token
+                                            </span>
+                                            <span style="color:#aaa">›</span>
+                                            <span class="upload-step-pill @StepClass(UploadStep.UploadingToCloud)">
+                                                ⬆️ Upload
+                                            </span>
+                                            <span style="color:#aaa">›</span>
+                                            <span class="upload-step-pill @StepClass(UploadStep.Confirming)">
+                                                ✅ Confirm
+                                            </span>
+                                        </div>
+                                    }
+                                </div>
+                            </div>
+                        }
+                        <div class="e-footer-content">
+                            <div class="button-container">
+                                <button type="submit"
+                                        class="e-btn e-normal e-primary"
+                                        disabled="@uploadStatus.IsBusy">
+                                    @if (uploadStatus.IsBusy)
+                                    {
+                                        <span>Saving...</span>
+                                    }
+                                    else
+                                    {
+                                        @Loc[nameof(ResourceStrings.TextSave)]
+                                    }
+                                </button>
+                                <button type="button"
+                                        class="e-btn e-normal"
+                                        disabled="@uploadStatus.IsBusy"
+                                        @onclick="CancelDialog">
+                                    @Loc[nameof(ResourceStrings.TextDecline)]
+                                </button>
+                            </div>
+                        </div>
+
+                    </EditForm>
+                </SfDialog>
+            }
+        </div>
+
+        <SfDialog IsModal="true" Width="500px" Visible="@showCropperModal" ShowCloseIcon="true" Closed="CloseCropperModal">
+            <DialogTemplates>
+                <Header>
+                    <span>Crop Your Image</span>
+                </Header>
+                <Content>
+                    @if (!string.IsNullOrEmpty(cropperImageUrl))
+                    {
+                        <div style="display: flex; flex-direction: column; align-items: center;">
+                            <div style="background: #f3f3f3; padding: 10px; border-radius: 8px;">
+                                <img id="cropper-preview" src="@cropperImageUrl" style="max-width:400px; max-height:350px; display:block;" />
+                            </div>
+                            <div style="margin: 20px 0 10px 0; display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px;">
+                                <button type="button" class="e-btn" @onclick="@(async () => await CropperAction("reset"))">Reset</button>
+                                <button type="button" class="e-btn e-info" @onclick="@(async () => await CropperAction("rotateLeft"))">Rotate Left</button>
+                                <button type="button" class="e-btn e-info" @onclick="@(async () => await CropperAction("rotateRight"))">Rotate Right</button>
+                                <button type="button" class="e-btn" @onclick="@(async () => await CropperAction("zoomIn"))">Zoom In</button>
+                                <button type="button" class="e-btn" @onclick="@(async () => await CropperAction("zoomOut"))">Zoom Out</button>
+                                <button type="button" class="e-btn" @onclick="@(async () => await CropperAction("setCropBox"))">Set Crop Box</button>
+                                <button type="button" class="e-btn e-warning" @onclick="@(async () => await CropperAction("revertDefault"))">Revert to Default</button>
+                            </div>
+                            <div style="display: flex; align-items: center; justify-content: center; margin-top: 18px;">
+                                <button type="button" class="slider-arrow" @onclick="ScrollFilterSliderLeft">
+                                    <i class="fas fa-chevron-left"></i>
+                                </button>
+
+                                <div class="filter-card-slider" id="filterCardSlider">
+                                    @foreach (var filter in Filters)
+                                    {
+                                        <div class="filter-card" @onclick="@(() => SetFilter(filter.Key))">
+                                            <img src="@cropperImageUrl" alt="@filter.Name" style="filter: @filter.Css;" />
+                                            <div>@filter.Name</div>
+                                        </div>
+                                    }
+                                </div>
+
+                                <button type="button" class="slider-arrow" @onclick="ScrollFilterSliderRight">
+                                    <i class="fas fa-chevron-right"></i>
+                                </button>
+                            </div>
+
+                            <div style="margin-top: 20px; display: flex; gap: 16px; justify-content: center;">
+                                <button class="e-btn e-danger" @onclick="@(async () => await CloseCropperModal(null))">Cancel</button>
+                                <button class="e-btn e-primary" @onclick="PerformCrop">Apply Crop</button>
+                            </div>
+                        </div>
+                    }
+                </Content>
+            </DialogTemplates>
+        </SfDialog>
+    }
+}
+
+@code {
+    private SfGrid<SparePartObject> MyGrid;
+    private SfDialog DialogDelete;
+    private SfDialog DialogNoRecordSelected;
+    private Guid? sparePartID;
+    private bool isAddDialogVisible = false;
+    private string pageTitle = "Add Spare Part"; // Title for the Add dialog
+    private SparePartObject sparePart = new SparePartObject(); // New instance for Add
+    // Pagination variables
+    private List<SparePartObject> spareParts = new List<SparePartObject>();
+    private int totalCount = 0;
+    private int currentPage = 1;
+    private int pageSize = 10;
+    private int totalPages => totalCount > 0 ? (int)Math.Ceiling(totalCount / (double)pageSize) : 0;
+    private const int CRITICAL_STOCK = 5;
+    private const int LOW_STOCK = 10;
+    private const int GOOD_STOCK = 20;
+    private const int MAX_STOCK_DISPLAY = 50; // For progress bar calculation
+    private SfDialog DialogQuantityEdit;
+    private bool isQuantityEditVisible = false;
+    private SparePartObject editingItem;
+    private int newQuantity;
+    // Search variables
+    private string searchQuery = "";
+    private bool isSearching = false;
+    private System.Threading.Timer _searchDebounceTimer;
+    ToastAnimationType Animation { get; set; } = ToastAnimationType.Slide;
+    private HubConnection hubConnection;
+    private SfComboBox<string, string> comboObj; // Corrected type to match the ComboBox's TItem="string"
+    private IBrowserFile pendingImageFile;
+    private string pendingImagePreviewUrl;
+    private Dictionary<string, int> productNameCount = new Dictionary<string, int>();
+    bool PopupVisible { get; set; } = false;
+    private SfBarcodeGenerator barcodeGenerator;
+    private bool isEditing = false;
+    private List<string> uniqueItemNames = new(); // List for unique ItemName values
+    private System.Threading.Timer _comboBoxSearchTimer;
+    private string currentComboBoxSearch = "";
+    // Manual Stock Out
+private SfDialog DialogManualStockOut;
+private bool isManualStockOutVisible = false;
+private SparePartObject stockOutItem;
+private int stockOutQuantity = 1;
+private string stockOutReason = "";
+    [Inject] IJSRuntime JS { get; set; }
+    private UploadStatusInfo uploadStatus = UploadStatusInfo.Idle();
+
+    // ── 2. Helper methods for the step pills CSS ─────────────────────────────
+    private string GetStatusBarClass() => uploadStatus.Status switch
+    {
+        UploadStep.Success => "success",
+        UploadStep.Failed => "failed",
+        _ => uploadStatus.IsBusy ? "busy" : ""
+    };
+
+    private string StepClass(UploadStep step)
+    {
+        int current = (int)uploadStatus.Status;
+        int target = (int)step;
+
+        if (current == target) return "active";
+        if (current > target) return "done";
+        return "";
+    }
+    private string selectedFilter = "none";
+    private string cropperImageUrl;
+    private bool showCropperModal = false;
+    private string croppedImageDataUrl; // Holds the cropped image result
+    [Inject]
+    public NavigationManager NavigationManager { get; set; }
+
+    bool indicatorVisible = false;
+    bool indicatorAreaVisible = true;
+    bool isXSmallScreen;
+    private List<(string Name, string Css, string Key)> Filters = new()
+{
+    ("Grayscale", "grayscale(1)", "filterGrayscale"),
+    ("Brightness+", "brightness(1.3)", "filterBrightnessPlus"),
+    ("Brightness-", "brightness(0.7)", "filterBrightnessMinus"),
+    ("Contrast+", "contrast(1.5)", "filterContrastPlus"),
+    ("Contrast-", "contrast(0.7)", "filterContrastMinus"),
+    ("Sepia", "sepia(1)", "filterSepia"),
+    ("Invert", "invert(1)", "filterInvert"),
+    ("Blur", "blur(2px)", "filterBlur"),
+    ("Hue Rotate", "hue-rotate(90deg)", "filterHueRotate"),
+    ("Saturate", "saturate(2)", "filterSaturate"),
+    ("Opacity", "opacity(0.5)", "filterOpacity"),
+    ("No Filter", "none", "filterNone")
+};
+
+
+    protected override async Task OnInitializedAsync()
+    {
+        await base.OnInitializedAsync();
+
+        // Load first page with pagination
+        await LoadSparePartsPagedAsync(currentPage, pageSize);
+
+        // Don't load all item names anymore - they will load on-demand in ComboBox
+
+        // Establish SignalR connection
+        hubConnection = new HubConnectionBuilder()
+            .WithUrl(NavigationManager.ToAbsoluteUri("/itemHub"))
+            .Build();
+
+        // Handle incoming data updates
+        hubConnection.On<string>("ReceiveItemUpdate", async (message) =>
+        {
+            await LoadSparePartsPagedAsync(currentPage, pageSize);
+            // Optionally refresh ComboBox data if dialog is open
+            if (isAddDialogVisible && !string.IsNullOrEmpty(currentComboBoxSearch))
+            {
+                uniqueItemNames = await sparePartService.SearchItemNamesAsync(currentComboBoxSearch, 20);
+            }
+            await InvokeAsync(StateHasChanged);
+        });
+
+        // Handle item deletion event
+        hubConnection.On<Guid>("BroadcastItemDelete", (deletedItemId) =>
+        {
+            spareParts = spareParts.Where(item => item.Id != deletedItemId).ToList();
+            // Clear ComboBox cache when items are deleted
+            uniqueItemNames = new List<string>();
+            InvokeAsync(StateHasChanged);
+        });
+
+        // Start the SignalR connection
+        await hubConnection.StartAsync();
+    }
+    // NEW: Load paginated spare parts
+    private async Task LoadSparePartsPagedAsync(int page, int size)
+    {
+        try
+        {
+            indicatorVisible = true;
+            var result = await sparePartService.GetSparePartsPagedAsync(page, size);
+            spareParts = result.Items ?? new List<SparePartObject>();
+            totalCount = result.TotalCount;
+            currentPage = page;
+            pageSize = size;
+            indicatorVisible = false;
+            Console.WriteLine($"Loaded page {currentPage}/{totalPages} - {spareParts.Count} items (Total: {totalCount})");
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Error loading spare parts: {ex.Message}");
+            spareParts = new List<SparePartObject>();
+            indicatorVisible = false;
+        }
+    }
+
+    // NEW: Search functionality
+    private void OnSearchKeyUp(KeyboardEventArgs e)
+    {
+        _searchDebounceTimer?.Dispose();
+
+        _searchDebounceTimer = new System.Threading.Timer(async _ =>
+        {
+            try
+            {
+                await InvokeAsync(async () =>
+                {
+                    await PerformSearch();
+                });
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Error in debounced search: {ex.Message}");
+            }
+        }, null, 500, Timeout.Infinite);
+    }
+
+    private async Task PerformSearch()
+    {
+        try
+        {
+            isSearching = true;
+            StateHasChanged();
+
+            currentPage = 1;
+
+            if (string.IsNullOrWhiteSpace(searchQuery))
+            {
+                await LoadSparePartsPagedAsync(currentPage, pageSize);
+            }
+            else
+            {
+                var result = await sparePartService.SearchSparePartsAsync(
+                    pageNumber: currentPage,
+                    pageSize: pageSize,
+                    searchTerm: searchQuery
+                );
+
+                spareParts = result.Items ?? new List<SparePartObject>();
+                totalCount = result.TotalCount;
+                currentPage = result.PageNumber;
+
+                Console.WriteLine($"Search completed: Found {totalCount} results for '{searchQuery}'");
+            }
+
+            isSearching = false;
+            StateHasChanged();
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Error in PerformSearch: {ex.Message}");
+            isSearching = false;
+            ShowErrorToast("Failed to search spare parts");
+        }
+    }
+    private string GetStockLevelColor(int quantity)
+    {
+        if (quantity <= 0)
+            return "#dc3545"; // Red - Out of stock
+        else if (quantity <= CRITICAL_STOCK)
+            return "#ff6b6b"; // Light Red - Critical
+        else if (quantity <= LOW_STOCK)
+            return "#ffc107"; // Yellow - Low
+        else if (quantity <= GOOD_STOCK)
+            return "#17a2b8"; // Blue - Good
+        else
+            return "#28a745"; // Green - Excellent
+    }
+
+    private string GetStockLevelIcon(int quantity)
+    {
+        if (quantity <= 0)
+            return "fas fa-exclamation-triangle";
+        else if (quantity <= CRITICAL_STOCK)
+            return "fas fa-exclamation-circle";
+        else if (quantity <= LOW_STOCK)
+            return "fas fa-info-circle";
+        else
+            return "fas fa-check-circle";
+    }
+
+    private string GetStockStatus(int quantity)
+    {
+        if (quantity <= 0)
+            return "OUT Of STOCK";
+        else if (quantity <= CRITICAL_STOCK)
+            return "CRITICAL";
+        else if (quantity <= LOW_STOCK)
+            return "LOW";
+        else if (quantity <= GOOD_STOCK)
+            return "In Stock";
+        else
+            return "In Stock";
+    }
+
+    private int GetStockProgressWidth(int quantity)
+    {
+        if (quantity <= 0)
+            return 0;
+
+        // Calculate percentage based on MAX_STOCK_DISPLAY
+        var percentage = (int)((quantity / (double)MAX_STOCK_DISPLAY) * 100);
+        return Math.Min(percentage, 100); // Cap at 100%
+    }
+    private async Task ClearSearch()
+    {
+        searchQuery = "";
+        currentPage = 1;
+        await LoadSparePartsPagedAsync(currentPage, pageSize);
+    }
+
+    // NEW: Pagination methods
+    private async Task NextPage()
+    {
+        if (!IsLastPage())
+        {
+            if (!string.IsNullOrWhiteSpace(searchQuery))
+            {
+                var result = await sparePartService.SearchSparePartsAsync(
+                    pageNumber: currentPage + 1,
+                    pageSize: pageSize,
+                    searchTerm: searchQuery
+                );
+                spareParts = result.Items ?? new List<SparePartObject>();
+                totalCount = result.TotalCount;
+                currentPage = result.PageNumber;
+            }
+            else
+            {
+                await LoadSparePartsPagedAsync(currentPage + 1, pageSize);
+            }
+        }
+    }
+
+    private async Task PreviousPage()
+    {
+        if (!IsFirstPage())
+        {
+            if (!string.IsNullOrWhiteSpace(searchQuery))
+            {
+                var result = await sparePartService.SearchSparePartsAsync(
+                    pageNumber: currentPage - 1,
+                    pageSize: pageSize,
+                    searchTerm: searchQuery
+                );
+                spareParts = result.Items ?? new List<SparePartObject>();
+                totalCount = result.TotalCount;
+                currentPage = result.PageNumber;
+            }
+            else
+            {
+                await LoadSparePartsPagedAsync(currentPage - 1, pageSize);
+            }
+        }
+    }
+
+    private async Task FirstPage()
+    {
+        if (!IsFirstPage())
+        {
+            if (!string.IsNullOrWhiteSpace(searchQuery))
+            {
+                var result = await sparePartService.SearchSparePartsAsync(
+                    pageNumber: 1,
+                    pageSize: pageSize,
+                    searchTerm: searchQuery
+                );
+                spareParts = result.Items ?? new List<SparePartObject>();
+                totalCount = result.TotalCount;
+                currentPage = result.PageNumber;
+            }
+            else
+            {
+                await LoadSparePartsPagedAsync(1, pageSize);
+            }
+        }
+    }
+
+    private async Task LastPage()
+    {
+        if (!IsLastPage())
+        {
+            if (!string.IsNullOrWhiteSpace(searchQuery))
+            {
+                var result = await sparePartService.SearchSparePartsAsync(
+                    pageNumber: totalPages,
+                    pageSize: pageSize,
+                    searchTerm: searchQuery
+                );
+                spareParts = result.Items ?? new List<SparePartObject>();
+                totalCount = result.TotalCount;
+                currentPage = result.PageNumber;
+            }
+            else
+            {
+                await LoadSparePartsPagedAsync(totalPages, pageSize);
+            }
+        }
+    }
+    private string stockFilter = "all";
+
+    private async Task FilterByStock(string filter)
+    {
+        stockFilter = filter;
+        currentPage = 1;
+
+        if (filter == "all")
+        {
+            await LoadSparePartsPagedAsync(currentPage, pageSize);
+        }
+        else
+        {
+            int minQty = filter switch
+            {
+                "out" => 0,
+                "low" => 1,
+                "good" => LOW_STOCK + 1,
+                _ => 0
+            };
+
+            int maxQty = filter switch
+            {
+                "out" => 0,
+                "low" => LOW_STOCK,
+                "good" => int.MaxValue,
+                _ => int.MaxValue
+            };
+
+            // Filter the spare parts
+            var allParts = await sparePartService.GetSparePartsPagedAsync(1, 10000);
+            var filteredParts = allParts.Items.Where(sp =>
+                sp.Quantity >= minQty && sp.Quantity <= maxQty).ToList();
+
+            spareParts = filteredParts.Skip((currentPage - 1) * pageSize)
+                                     .Take(pageSize)
+                                     .ToList();
+            totalCount = filteredParts.Count;
+
+            StateHasChanged();
+        }
+    }
+    private async Task OnPageSizeChanged(Microsoft.AspNetCore.Components.ChangeEventArgs e)
+    {
+        if (int.TryParse(e.Value?.ToString(), out int newSize))
+        {
+            pageSize = newSize;
+            currentPage = 1;
+            await LoadSparePartsPagedAsync(currentPage, pageSize);
+        }
+    }
+
+    private bool IsFirstPage() => currentPage <= 1;
+    private bool IsLastPage() => currentPage >= totalPages;
+    private int GetStartRecord() => totalCount == 0 ? 0 : ((currentPage - 1) * pageSize) + 1;
+    private int GetEndRecord() => Math.Min(currentPage * pageSize, totalCount);
+
+    public async void ToolbarClickHandler(Syncfusion.Blazor.Navigations.ClickEventArgs args)
+    {
+        if (args.Item.Text == "Add")
+        {
+            sparePart = new SparePartObject(); // Reset model for adding
+            sparePartID = Guid.Empty; // Indicates an add operation
+            pageTitle = "Add Spare Part"; // Set the title for adding
+            isAddDialogVisible = true;
+            StateHasChanged(); // To update the UI
+        }
+        else if (args.Item.Text == "Edit")
+        {
+            if (sparePartID.HasValue && sparePartID != Guid.Empty) // Ensure a valid ID is selected
+            {
+                pageTitle = "Edit Spare Part"; // Set the title for editing
+                sparePart = spareParts.FirstOrDefault(p => p.Id == sparePartID); // Ensure you're checking the correct property
+                if (sparePart == null)
+                {
+                    // Handle the case where the sparePartID does not exist in the list
+                    sparePartID = Guid.Empty; // Resetting ID
+                    await DialogNoRecordSelected.ShowAsync(); // Use await
+                    return;
+                }
+                isAddDialogVisible = true;
+                StateHasChanged(); // To update the UI
+            }
+            else
+            {
+                await DialogNoRecordSelected.ShowAsync(); // Use await
+            }
+        }
+        else if (args.Item.Text == "Delete")
+        {
+            if (sparePartID.HasValue && sparePartID != Guid.Empty) // Ensure a valid ID is selected
+            {
+                await DialogDelete.ShowAsync(); // Use await
+            }
+            else
+            {
+                await DialogNoRecordSelected.ShowAsync(); // Use await
+            }
+        }
+    }
+
+    private int GetStockCount(int minQty, int maxQty)
+    {
+        if (spareParts == null || !spareParts.Any())
+            return 0;
+
+        return spareParts.Count(sp => sp.Quantity >= minQty && sp.Quantity <= maxQty);
+    }
+    private async Task SetFilter(string filterKey)
+    {
+        selectedFilter = filterKey;
+
+        if (JS != null)
+        {
+            try
+            {
+                await JS.InvokeVoidAsync("cropperInterop.cropperAction", filterKey);
+                Console.WriteLine($"Filter applied: {filterKey}");
+            }
+            catch (JSDisconnectedException)
+            {
+                Console.WriteLine("JS Runtime disconnected during filter action");
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Error during filter action: {ex.Message}");
+            }
+        }
+    }
+
+
+
+    public async Task ExportToExcel()
+    {
+        try
+        {
+            var originalPageSize = pageSize;
+            var originalCurrentPage = currentPage;
+            var originalSearchQuery = searchQuery;
+
+            // Load ALL data for export
+            if (string.IsNullOrWhiteSpace(searchQuery))
+            {
+                var allData = await sparePartService.GetSparePartsPagedAsync(1, totalCount > 0 ? totalCount : 10000);
+                spareParts = allData.Items ?? new List<SparePartObject>();
+            }
+            else
+            {
+                var allData = await sparePartService.SearchSparePartsAsync(1, totalCount > 0 ? totalCount : 10000, searchQuery);
+                spareParts = allData.Items ?? new List<SparePartObject>();
+            }
+
+            StateHasChanged();
+            await Task.Delay(100);
+
+            ExcelExportProperties ExportProperties = new ExcelExportProperties
+            {
+                IncludeTemplateColumn = true,
+                Columns = new List<GridColumn>()
+            {
+                new GridColumn()
+                {
+                    Field = "ItemName",
+                    HeaderText = "Item Name",
+                    TextAlign = Syncfusion.Blazor.Grids.TextAlign.Left,
+                    Width = "150"
+                },
+                new GridColumn()
+                {
+                    Field = "SerialNumber",
+                    HeaderText = "Part Number",
+                    TextAlign = Syncfusion.Blazor.Grids.TextAlign.Left,
+                    Width = "150"
+                },
+                new GridColumn()
+                {
+                    Field = "UseFor",
+                    HeaderText = "Use For",
+                    TextAlign = Syncfusion.Blazor.Grids.TextAlign.Left,
+                    Width = "200"
+                },
+                new GridColumn()
+                {
+                    Field = "Quantity",
+                    HeaderText = "Quantity",
+                    TextAlign = Syncfusion.Blazor.Grids.TextAlign.Center,
+                    Width = "100"
+                },
+                new GridColumn()
+                {
+                    Field = "StockStatus", // ✅ Virtual field - populated via ExcelQueryCellInfo
+                    HeaderText = "Stock Status",
+                    TextAlign = Syncfusion.Blazor.Grids.TextAlign.Center,
+                    Width = "120"
+                },
+                new GridColumn()
+                {
+                    Field = "Description",
+                    HeaderText = "Description",
+                    TextAlign = Syncfusion.Blazor.Grids.TextAlign.Left,
+                    Width = "200"
+                }
+            }
+            };
+
+            await MyGrid.ExportToExcelAsync(ExportProperties);
+
+            // Restore
+            await LoadSparePartsPagedAsync(originalCurrentPage, originalPageSize);
+            searchQuery = originalSearchQuery;
+            StateHasChanged();
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Error exporting to Excel: {ex.Message}");
+            ShowErrorToast("Failed to export data to Excel");
+        }
+    }
+    public void OnExcelQueryCellInfo(ExcelQueryCellInfoEventArgs<SparePartObject> args)
+    {
+        if (args.Column.HeaderText == "Stock Status")
+        {
+            var qty = args.Data.Quantity;
+            string status;
+
+            if (qty <= 0)
+            {
+                status = "OUT OF STOCK";
+                args.Cell.CellStyle.BackColor = "#FF0000";
+                args.Cell.CellStyle.FontColor = "#FFFFFF";
+                args.Cell.CellStyle.Bold = true;
+            }
+            else if (qty <= CRITICAL_STOCK)
+            {
+                status = "CRITICAL";
+                args.Cell.CellStyle.BackColor = "#FF6B6B";
+                args.Cell.CellStyle.FontColor = "#FFFFFF";
+                args.Cell.CellStyle.Bold = true;
+            }
+            else if (qty <= LOW_STOCK)
+            {
+                status = "LOW STOCK";
+                args.Cell.CellStyle.BackColor = "#FFC107";
+                args.Cell.CellStyle.FontColor = "#000000";
+                args.Cell.CellStyle.Bold = true;
+            }
+            else
+            {
+                status = "IN STOCK";
+                args.Cell.CellStyle.BackColor = "#28A745";
+                args.Cell.CellStyle.FontColor = "#FFFFFF";
+                args.Cell.CellStyle.Bold = true;
+            }
+
+            args.Cell.Value = status;
+        }
+
+        // Color the Quantity cell
+        if (args.Column.HeaderText == "Quantity")
+        {
+            var qty = args.Data.Quantity;
+
+            if (qty <= 0)
+                args.Cell.CellStyle.BackColor = "#FFE0E0";
+            else if (qty <= CRITICAL_STOCK)
+                args.Cell.CellStyle.BackColor = "#FFD0D0";
+            else if (qty <= LOW_STOCK)
+                args.Cell.CellStyle.BackColor = "#FFF3CD";
+            else
+                args.Cell.CellStyle.BackColor = "#D4EDDA";
+        }
+    }
+    private async Task StartEditQuantity(SparePartObject sparePart)
+    {
+        editingItem = sparePart;
+        newQuantity = sparePart.Quantity;
+        isQuantityEditVisible = true;
+        StateHasChanged();
+    }
+
+    private async Task UpdateQuantity()
+    {
+        if (editingItem != null)
+        {
+            try
+            {
+                editingItem.Quantity = newQuantity;
+                await sparePartService.UpdateSparePartAsync(editingItem);
+
+                await hubConnection.SendAsync("BroadcastItemUpdate", "QuantityUpdated");
+                await StateManagementAction.SendNotificationAsync("update");
+
+                await LoadSparePartsPagedAsync(currentPage, pageSize);
+
+                isQuantityEditVisible = false;
+                ShowSuccessToast("Quantity updated successfully");
+                StateHasChanged();
+            }
+            catch (Exception ex)
+            {
+                ShowErrorToast($"Failed to update quantity: {ex.Message}");
+            }
+        }
+    }
+    private void CancelQuantityEdit()
+    {
+        isQuantityEditVisible = false;
+        editingItem = null;
+        StateHasChanged();
+    }
+
+    public async Task ExportToPdf()
+    {
+        try
+        {
+            // Store current state
+            var originalPageSize = pageSize;
+            var originalCurrentPage = currentPage;
+            var originalSearchQuery = searchQuery;
+
+            // Load ALL data for export
+            if (string.IsNullOrWhiteSpace(searchQuery))
+            {
+                // Load all spare parts without pagination
+                var allData = await sparePartService.GetSparePartsPagedAsync(1, totalCount > 0 ? totalCount : 10000);
+                spareParts = allData.Items ?? new List<SparePartObject>();
+            }
+            else
+            {
+                // Load all search results
+                var allData = await sparePartService.SearchSparePartsAsync(1, totalCount > 0 ? totalCount : 10000, searchQuery);
+                spareParts = allData.Items ?? new List<SparePartObject>();
+            }
+
+            StateHasChanged();
+            await Task.Delay(100); // Give time for grid to update
+
+            // Define the export properties with customized column widths
+            PdfExportProperties ExportProperties = new PdfExportProperties
+            {
+                IncludeTemplateColumn = true,
+                DisableAutoFitWidth = true, // Disable auto fit to allow custom widths
+                Columns = new List<GridColumn>()
+            {
+                new GridColumn()
+                {
+                    Field = "Image",
+                    HeaderText = "Image",
+                    TextAlign = Syncfusion.Blazor.Grids.TextAlign.Left,
+                    Width = "80"
+                },
+                new GridColumn()
+                {
+                    Field = "ItemName",
+                    HeaderText = "Item Name",
+                    TextAlign = Syncfusion.Blazor.Grids.TextAlign.Left,
+                    Width = "100"
+                },
+                new GridColumn()
+                {
+                    Field = "Description",
+                    HeaderText = "Keyword",
+                    TextAlign = Syncfusion.Blazor.Grids.TextAlign.Left,
+                    Width = "80"
+                },
+                new GridColumn()
+                {
+                    Field = "UseFor",
+                    HeaderText = "UseFor",
+                    TextAlign = Syncfusion.Blazor.Grids.TextAlign.Left,
+                    Width = "80"
+                },
+                new GridColumn()
+                {
+                    Field = "Barcode",
+                    HeaderText = "Barcode",
+                    TextAlign = Syncfusion.Blazor.Grids.TextAlign.Left,
+                    Width = "180"
+                }
+            }
+            };
+
+            // Perform the PDF export with all data
+            await this.MyGrid.ExportToPdfAsync(ExportProperties);
+
+            // Restore original pagination
+            await LoadSparePartsPagedAsync(originalCurrentPage, originalPageSize);
+            searchQuery = originalSearchQuery;
+
+            StateHasChanged();
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Error exporting to PDF: {ex.Message}");
+            ShowErrorToast("Failed to export data to PDF");
+        }
+    }
+
+    private async Task OnComboBoxClick(MouseEventArgs args)
+    {
+        if (!uniqueItemNames.Any())
+        {
+            // Load initial items when first opened
+            uniqueItemNames = await sparePartService.SearchItemNamesAsync("", 20);
+            StateHasChanged();
+        }
+        await comboObj.ShowPopupAsync();
+    }
+
+
+    private void OnPdfQueryCellInfo(PdfQueryCellInfoEventArgs<SparePartObject> args)
+    {
+        int fixedRowHeight = 100;  // Define a fixed row height (adjust as per your needs)
+
+
+        // Set the row height for the current row
+        if (args.Row != null)
+        {
+            args.Row.Height = fixedRowHeight;
+        }
+
+
+        if (args.Column.HeaderText == "Image" && !string.IsNullOrEmpty(args.Data.PictureUrl))
+        {
+            try
+            {
+                string imagePath = Path.Combine(Directory.GetCurrentDirectory(), "wwwroot", args.Data.PictureUrl.Replace("wwwroot/", "").Replace("/", Path.DirectorySeparatorChar.ToString()));
+
+                if (File.Exists(imagePath))
+                {
+                    using var img = Image.FromFile(imagePath);
+
+                    // Resize the image to fit the column width and height
+                    int targetWidth = 100;  // Adjust as per column width
+                    int targetHeight = 100; // Adjust as per column height
+                    using var resizedImage = new Bitmap(img, new System.Drawing.Size(targetWidth, targetHeight));
+
+                    using MemoryStream imageStream = new();
+                    resizedImage.Save(imageStream, img.RawFormat);
+                    imageStream.Position = 0;
+
+                    args.Cell.Style.BackgroundImage = Syncfusion.PdfExport.PdfImage.FromStream(imageStream);
+                    args.Cell.ImagePosition = Syncfusion.PdfExport.PdfGridImagePosition.Center;
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Error loading image: {ex.Message}");
+            }
+        }
+        else if (args.Column.HeaderText == "Barcode")
+        {
+            try
+            {
+                string serialNumber = string.IsNullOrEmpty(args.Data.SerialNumber) ? "0" : args.Data.SerialNumber;
+
+                // Generate the barcode with specific width and height
+                using var barcodeStream = GenerateBarcode(serialNumber, 150, 60); // Adjust width & height for barcode
+
+                args.Cell.Style.BackgroundImage = Syncfusion.PdfExport.PdfImage.FromStream(barcodeStream);
+                args.Cell.ImagePosition = Syncfusion.PdfExport.PdfGridImagePosition.Center;
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Error generating barcode: {ex.Message}");
+            }
+        }
+    }
+    private void OnComboBoxFiltering(Syncfusion.Blazor.DropDowns.FilteringEventArgs args)
+    {
+        args.PreventDefaultAction = true; // Prevent default filtering
+
+        _comboBoxSearchTimer?.Dispose();
+
+        var searchQuery = args.Text ?? "";
+        currentComboBoxSearch = searchQuery;
+
+        _comboBoxSearchTimer = new System.Threading.Timer(async _ =>
+        {
+            try
+            {
+                await InvokeAsync(async () =>
+                {
+                    if (currentComboBoxSearch == searchQuery) // Check if search hasn't changed
+                    {
+                        if (string.IsNullOrWhiteSpace(searchQuery))
+                        {
+                            // Load initial items (you can adjust the pageSize)
+                            uniqueItemNames = await sparePartService.SearchItemNamesAsync("", 20);
+                        }
+                        else
+                        {
+                            // Search with the query
+                            uniqueItemNames = await sparePartService.SearchItemNamesAsync(searchQuery, 20);
+                        }
+
+                        // Just update the list and trigger re-render
+                        StateHasChanged();
+                    }
+                });
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Error in ComboBox filtering: {ex.Message}");
+            }
+        }, null, 300, Timeout.Infinite); // 300ms debounce
+    }
+
+    private Stream GenerateBarcode(string value, int width, int height)
+    {
+        Barcode barcode = new();
+        barcode.IncludeLabel = true;
+
+        using var skImage = barcode.Encode(BarcodeStandard.Type.Code128, value, width, height);
+        using var data = skImage.Encode();
+
+        MemoryStream stream = new();
+        data.SaveTo(stream);
+        stream.Position = 0;
+
+        return stream;
+    }
+
+    private string GetImageFileName()
+    {
+        if (pendingImageFile != null)
+        {
+            return pendingImageFile.Name + " (pending)";
+        }
+        else if (!string.IsNullOrEmpty(sparePart.PictureUrl))
+        {
+            return Path.GetFileName(sparePart.PictureUrl);
+        }
+        return string.Empty;
+    }
+
+
+
+    private void NewItem_Click()
+    {
+        sparePart = new SparePartObject(); // Reset model for adding
+        sparePartID = Guid.Empty; // Indicates an add operation
+        pageTitle = @Loc[nameof(ResourceStrings.TextAddSparePart)]; // Set the title for adding
+        isEditing = false; // Set to false for adding
+
+        // Clear any pending file data
+        pendingImageFile = null;
+        pendingImagePreviewUrl = null;
+
+        isAddDialogVisible = true;
+        StateHasChanged(); // To update the UI
+    }
+
+
+
+    private async void EditItem_Click()
+    {
+        if (sparePartID.HasValue && sparePartID.Value != Guid.Empty)
+        {
+            pageTitle = "Edit Spare Part"; // Set the title for editing
+            sparePart = spareParts.FirstOrDefault(p => p.Id == sparePartID.Value); // Use Id for matching
+
+            if (sparePart == null)
+            {
+                sparePartID = null; // Resetting ID
+                await DialogNoRecordSelected.ShowAsync(); // Use await
+                return;
+            }
+
+            isEditing = true; // Set to true for editing
+
+            // Clear any pending file data when starting edit
+            pendingImageFile = null;
+            pendingImagePreviewUrl = null;
+
+            isAddDialogVisible = true;
+            StateHasChanged(); // To update the UI
+        }
+        else
+        {
+            await DialogNoRecordSelected.ShowAsync(); // Use await
+        }
+    }
+
+
+
+    private async void DeleteItem_Click()
+    {
+        if (sparePartID.HasValue && sparePartID.Value != Guid.Empty)
+        {
+            await DialogDelete.ShowAsync(); // Show delete confirmation dialog
+            isEditing = false; // Set to false because delete operation is not in edit mode
+        }
+        else
+        {
+            await DialogNoRecordSelected.ShowAsync(); // Show no record selected dialog
+        }
+    }
+
+
+
+    public async void ConfirmDeleteYes()
+    {
+        if (sparePartID.HasValue)
+        {
+            await sparePartService.DeleteSparePartAsync(sparePartID.Value);
+            await DialogDelete.HideAsync();
+            await hubConnection.SendAsync("BroadcastItemDelete", sparePartID.Value);
+            await StateManagementAction.SendNotificationAsync("delete"); // Notify creation
+                                                                         // Check if current page becomes empty after deletion
+            if (spareParts.Count == 1 && currentPage > 1)
+            {
+                await LoadSparePartsPagedAsync(currentPage - 1, pageSize);
+            }
+            else
+            {
+                await LoadSparePartsPagedAsync(currentPage, pageSize);
+            }
+            StateHasChanged();
+        }
+    }
+    private void ClearImage()
+    {
+        pendingImageFile = null;
+        pendingImagePreviewUrl = null;
+
+        // If editing and want to remove existing image
+        if (isEditing)
+        {
+            sparePart.PictureUrl = null;
+        }
+
+        StateHasChanged();
+    }
+    public void ShowInfo(SparePartObject item)
+    {
+        // Add logic to display item information
+    }
+
+    private void PrintReport_Click()
+    {
+        // Implement the logic to print the report
+    }
+
+    private void ConfirmDelete(SparePartObject item)
+    {
+        sparePartID = item.Id;
+        DialogDelete.ShowAsync();
+    }
+
+    private async void ConfirmDeleteNo()
+    {
+        await DialogDelete.HideAsync();
+    }
+
+    private void CloseDialogNoRecordSelected()
+    {
+        DialogNoRecordSelected.HideAsync();
+    }
+
+    private void CancelDialog()
+    {
+        // Clear pending file data when canceling
+        pendingImageFile = null;
+        pendingImagePreviewUrl = null;
+
+        isAddDialogVisible = false;
+        StateHasChanged(); // To update the UI
+    }
+
+    private void RowSelectHandler(RowSelectEventArgs<SparePartObject> args)
+    {
+        sparePartID = args.Data.Id;
+        // Load the selected spare part for editing
+        sparePart = spareParts.FirstOrDefault(p => p.Id == sparePartID);
+    }
+
+    private async Task SaveModel()
+    {
+        uploadStatus = UploadStatusInfo.Idle(); // ← ADD HERE (top of method, resets status before each save)
+
+        try
+        {
+            // Process and save the image if there's a pending file
+            if (pendingImageFile != null)
+            {
+                try
+                {
+                    await ProcessAndSaveImage();
+                }
+                catch (Exception imageEx)
+                {
+                    uploadStatus = UploadStatusInfo.Error(imageEx.Message); // ← ADD HERE (shows red error in status bar)
+                    ShowErrorToast($"Image processing failed: {imageEx.Message}");
+                    return;
+                }
+            }
+
+            // Validate required fields
+            if (string.IsNullOrWhiteSpace(sparePart.ItemName))
+            {
+                ShowErrorToast("Item Name is required");
+                return;
+            }
+
+            // Rest of your existing SaveModel logic
+            if (sparePartID == null || sparePartID == Guid.Empty) // Add operation
+            {
+                sparePart.LinkItemId = Guid.NewGuid();
+
+                try
+                {
+                    await sparePartService.CreateSparePartAsync(sparePart);
+                    await hubConnection.SendAsync("BroadcastItemUpdate", "ItemCreated");
+                    await StateManagementAction.SendNotificationAsync("create");
+                }
+                catch (Exception ex)
+                {
+                    ShowErrorToast($"Failed to create spare part: {ex.Message}");
+                    return;
+                }
+            }
+            else // Edit operation
+            {
+                sparePart.Id = sparePartID.Value;
+
+                try
+                {
+                    await sparePartService.UpdateSparePartAsync(sparePart);
+                    await hubConnection.SendAsync("BroadcastItemUpdate", "ItemUpdated");
+                    await StateManagementAction.SendNotificationAsync("update");
+                }
+                catch (Exception ex)
+                {
+                    ShowErrorToast($"Failed to update spare part: {ex.Message}");
+                    return;
+                }
+            }
+
+            // Clear pending data after successful save
+            pendingImageFile = null;
+            pendingImagePreviewUrl = null;
+
+            isAddDialogVisible = false;
+            await LoadSparePartsPagedAsync(currentPage, pageSize);
+            StateHasChanged();
+            ShowSuccessToast("Spare part saved successfully");
+        }
+        catch (Exception ex)
+        {
+            uploadStatus = UploadStatusInfo.Error(ex.Message); // ← ADD HERE (catches any unexpected outer error)
+            ShowErrorToast($"Unexpected error: {ex.Message}");
+        }
+    }
+    private void ShowSuccessToast(string message)
+    {
+        Console.WriteLine($"Success: {message}");
+        // Implement your success toast here
+    }
+
+
+    private async Task HandleFileSelected(InputFileChangeEventArgs e)
+    {
+        var file = e.File;
+        if (file == null) return;
+
+        // Validate file type
+        var allowedTypes = new[] { "image/jpeg", "image/jpg", "image/png", "image/gif", "image/webp" };
+        var fileExtension = Path.GetExtension(file.Name).ToLower();
+        var allowedExtensions = new[] { ".jpg", ".jpeg", ".png", ".gif", ".webp" };
+
+        if (!allowedTypes.Contains(file.ContentType.ToLower()) &&
+            !allowedExtensions.Contains(fileExtension))
+        {
+            ShowErrorToast("Please select a valid image file (JPEG, PNG, GIF, or WebP)");
+            return;
+        }
+
+        // Validate file size (max 5MB)
+        const int maxFileSize = 5 * 1024 * 1024;
+        if (file.Size > maxFileSize)
+        {
+            ShowErrorToast("File size must be less than 5MB");
+            return;
+        }
+
+        try
+        {
+            pendingImageFile = file;
+            indicatorVisible = true;
+            StateHasChanged();
+
+            // FIXED: Added maxAllowedSize parameter
+            using var stream = file.OpenReadStream(maxAllowedSize: maxFileSize);
+            using var memoryStream = new MemoryStream();
+            await stream.CopyToAsync(memoryStream);
+            memoryStream.Position = 0;
+
+            try
+            {
+                using var image = Image.FromStream(memoryStream);
+                using var previewImage = ResizeImageForPreview(image, 300, 200);
+                using var outputStream = new MemoryStream();
+
+                // Save with proper JPEG encoder settings
+                var jpegEncoder = GetEncoder(ImageFormat.Jpeg);
+                var encoderParams = new EncoderParameters(1);
+                encoderParams.Param[0] = new EncoderParameter(
+                    System.Drawing.Imaging.Encoder.Quality, 85L);
+
+                previewImage.Save(outputStream, jpegEncoder, encoderParams);
+                var base64String = Convert.ToBase64String(outputStream.ToArray());
+                pendingImagePreviewUrl = $"data:image/jpeg;base64,{base64String}";
+            }
+            catch (Exception imgEx)
+            {
+                Console.WriteLine($"Image processing error: {imgEx.Message}");
+
+                // Fallback: Create base64 from original stream
+                memoryStream.Position = 0;
+                var bytes = memoryStream.ToArray();
+                var base64String = Convert.ToBase64String(bytes);
+                var mimeType = file.ContentType;
+                pendingImagePreviewUrl = $"data:{mimeType};base64,{base64String}";
+            }
+
+            indicatorVisible = false;
+            StateHasChanged();
+
+            // Optional: Auto-open cropper on mobile
+            if (isXSmallScreen)
+            {
+                await Task.Delay(300);
+                await OpenCropperModal();
+            }
+        }
+        catch (Exception ex)
+        {
+            indicatorVisible = false;
+            Console.WriteLine($"Error loading image: {ex.Message}");
+            ShowErrorToast($"Error loading image: {ex.Message}");
+            pendingImageFile = null;
+            pendingImagePreviewUrl = null;
+            StateHasChanged();
+        }
+    }
+
+    // Helper method to get JPEG encoder
+    private ImageCodecInfo GetEncoder(ImageFormat format)
+    {
+        ImageCodecInfo[] codecs = ImageCodecInfo.GetImageDecoders();
+        foreach (ImageCodecInfo codec in codecs)
+        {
+            if (codec.FormatID == format.Guid)
+                return codec;
+        }
+        return null;
+    }
+
+    // Improved ResizeImageForPreview
+    private Image ResizeImageForPreview(Image originalImage, int maxWidth, int maxHeight)
+    {
+        if (originalImage == null)
+            throw new ArgumentNullException(nameof(originalImage));
+
+        var ratioX = (double)maxWidth / originalImage.Width;
+        var ratioY = (double)maxHeight / originalImage.Height;
+        var ratio = Math.Min(ratioX, ratioY);
+
+        var newWidth = (int)(originalImage.Width * ratio);
+        var newHeight = (int)(originalImage.Height * ratio);
+
+        var resizedBitmap = new Bitmap(newWidth, newHeight);
+
+        using (var graphics = Graphics.FromImage(resizedBitmap))
+        {
+            graphics.CompositingQuality = System.Drawing.Drawing2D.CompositingQuality.HighQuality;
+            graphics.InterpolationMode = System.Drawing.Drawing2D.InterpolationMode.HighQualityBicubic;
+            graphics.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.HighQuality;
+            graphics.PixelOffsetMode = System.Drawing.Drawing2D.PixelOffsetMode.HighQuality;
+
+            graphics.DrawImage(originalImage, 0, 0, newWidth, newHeight);
+        }
+
+        return resizedBitmap;
+    }
+
+    private string GetImageUrl(string pictureUrl)
+    {
+        if (string.IsNullOrEmpty(pictureUrl))
+            return "images/default-image.jpg";
+
+        // Ensure the URL starts with forward slash for proper routing
+        if (!pictureUrl.StartsWith("/"))
+        {
+            pictureUrl = "/" + pictureUrl;
+        }
+
+        return UriHelper.ToAbsoluteUri(pictureUrl).ToString();
+    }
+
+    // Update the disposal method to clean up resources
+    public void Dispose()
+    {
+        _searchDebounceTimer?.Dispose();
+        _comboBoxSearchTimer?.Dispose();
+        hubConnection?.DisposeAsync();
+        pendingImageFile = null;
+        pendingImagePreviewUrl = null;
+    }
+
+    // Add this method to ensure proper initialization
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender)
+        {
+            // Ensure the upload directory exists
+            try
+            {
+                var uploadsPath = Path.Combine(Directory.GetCurrentDirectory(), "wwwroot", "images", "spareparts");
+                if (!Directory.Exists(uploadsPath))
+                {
+                    Directory.CreateDirectory(uploadsPath);
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Warning: Could not create upload directory: {ex.Message}");
+            }
+        }
+
+        await base.OnAfterRenderAsync(firstRender);
+    }
+    private async Task ProcessAndSaveImage()
+    {
+        if (pendingImageFile == null) return;
+
+        KoompiUploadResult result;
+
+        // Show reading status immediately
+        uploadStatus = UploadStatusInfo.Reading();
+        StateHasChanged();
+
+        if (!string.IsNullOrEmpty(pendingImagePreviewUrl) &&
+            pendingImagePreviewUrl.StartsWith("data:image"))
+        {
+            // Use cropped / filtered preview
+            var (bytes, contentType, fileName) =
+                ImageUploadHelper.ReadDataUrl(pendingImagePreviewUrl);
+
+            result = await KoompiStorage.UploadAsync(
+                bytes, fileName, contentType,
+                async info =>
+                {
+                    uploadStatus = info;
+                    await InvokeAsync(StateHasChanged);
+                });
+        }
+        else
+        {
+            // Validate first
+            if (!ImageUploadHelper.IsValidImageType(pendingImageFile))
+                throw new Exception("Invalid image type.");
+
+            if (!ImageUploadHelper.IsWithinSizeLimit(pendingImageFile))
+                throw new Exception("File exceeds 5 MB limit.");
+
+            var (bytes, contentType, fileName) =
+                await ImageUploadHelper.ReadBrowserFileAsync(pendingImageFile);
+
+            result = await KoompiStorage.UploadAsync(
+                bytes, fileName, contentType,
+                async info =>
+                {
+                    uploadStatus = info;
+                    await InvokeAsync(StateHasChanged);
+                });
+        }
+
+        if (!result.Success)
+            throw new Exception(result.ErrorMessage);
+
+        sparePart.PictureUrl = result.PublicUrl;
+        pendingImageFile = null;
+        pendingImagePreviewUrl = null;
+
+        // Keep "success" visible briefly, then reset
+        await Task.Delay(1500);
+        uploadStatus = UploadStatusInfo.Idle();
+    }
+
+    // Simplified image resizing method for Docker compatibility
+    private Image ResizeImageForDocker(Image originalImage, int targetWidth, int targetHeight)
+    {
+        try
+        {
+            var resizedBitmap = new Bitmap(targetWidth, targetHeight);
+
+            using (var graphics = Graphics.FromImage(resizedBitmap))
+            {
+                // Use basic quality settings for Docker compatibility
+                graphics.CompositingQuality = System.Drawing.Drawing2D.CompositingQuality.HighSpeed;
+                graphics.InterpolationMode = System.Drawing.Drawing2D.InterpolationMode.Low;
+                graphics.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.HighSpeed;
+
+                // Simple resize without complex cropping
+                graphics.DrawImage(originalImage, 0, 0, targetWidth, targetHeight);
+            }
+
+            return resizedBitmap;
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Image resize failed: {ex.Message}");
+            // Return original image if resize fails
+            return new Bitmap(originalImage);
+        }
+    }
+    private Image CropAndResizeImage(Image originalImage, int targetWidth, int targetHeight)
+    {
+        // Calculate the aspect ratios
+        double originalAspect = (double)originalImage.Width / originalImage.Height;
+        double targetAspect = (double)targetWidth / targetHeight;
+
+        int cropWidth, cropHeight, cropX, cropY;
+
+        if (originalAspect > targetAspect)
+        {
+            // Original is wider, crop from sides
+            cropHeight = originalImage.Height;
+            cropWidth = (int)(cropHeight * targetAspect);
+            cropX = (originalImage.Width - cropWidth) / 2;
+            cropY = 0;
+        }
+        else
+        {
+            // Original is taller, crop from top/bottom
+            cropWidth = originalImage.Width;
+            cropHeight = (int)(cropWidth / targetAspect);
+            cropX = 0;
+            cropY = (originalImage.Height - cropHeight) / 2;
+        }
+
+        // Create the cropped image
+        var cropRectangle = new Rectangle(cropX, cropY, cropWidth, cropHeight);
+        var croppedBitmap = new Bitmap(targetWidth, targetHeight);
+
+        using (var graphics = Graphics.FromImage(croppedBitmap))
+        {
+            // Set high quality settings for better image quality
+            graphics.CompositingQuality = System.Drawing.Drawing2D.CompositingQuality.HighQuality;
+            graphics.InterpolationMode = System.Drawing.Drawing2D.InterpolationMode.HighQualityBicubic;
+            graphics.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.HighQuality;
+
+            // Draw the cropped and resized image
+            graphics.DrawImage(originalImage,
+                new Rectangle(0, 0, targetWidth, targetHeight),
+                cropRectangle,
+                GraphicsUnit.Pixel);
+        }
+
+        return croppedBitmap;
+    }
+
+    private void ShowErrorToast(string message)
+    {
+        // You can integrate this with your existing toast notification system
+        // For now, this is a placeholder - replace with your actual toast implementation
+        Console.WriteLine($"Error: {message}");
+
+        // If you're using DevExpress toasts, you might do something like:
+        // await ToastProvider.ShowToastAsync(new ToastMessage
+        // {
+        //     Text = message,
+        //     Type = ToastMessageType.Error
+        // });
+    }
+    private async Task OnItemNameChanged()
+    {
+        if (!string.IsNullOrEmpty(sparePart.ItemName))
+        {
+            sparePart.SerialNumber = await GenerateSerialNumber(sparePart.ItemName);
+            StateHasChanged();
+        }
+    }
+    private async Task CropperAction(string action)
+    {
+        if (JS == null)
+        {
+            Console.WriteLine("JS runtime not available");
+            return;
+        }
+
+        try
+        {
+            await JS.InvokeVoidAsync("cropperInterop.cropperAction", action);
+            Console.WriteLine($"Cropper action executed: {action}");
+        }
+        catch (JSDisconnectedException)
+        {
+            Console.WriteLine("JS Runtime disconnected during cropper action");
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Error during cropper action: {ex.Message}");
+        }
+    }
+
+    private async Task OpenCropperModal()
+    {
+        if (string.IsNullOrEmpty(pendingImagePreviewUrl))
+        {
+            ShowErrorToast("No image to crop");
+            return;
+        }
+
+        try
+        {
+            cropperImageUrl = pendingImagePreviewUrl;
+            showCropperModal = true;
+            selectedFilter = "none";
+
+            StateHasChanged();
+
+            // Wait for modal to fully render
+            await Task.Delay(500);
+
+            if (JS != null)
+            {
+                await JS.InvokeVoidAsync("cropperInterop.initCropper", "cropper-preview");
+                Console.WriteLine("Cropper initialized");
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Error opening cropper modal: {ex.Message}");
+            ShowErrorToast($"Error opening cropper: {ex.Message}");
+            showCropperModal = false;
+        }
+    }
+
+    private async Task CloseCropperModal(object args)
+    {
+        showCropperModal = false;
+        cropperImageUrl = null;
+        selectedFilter = "none";
+
+        if (JS != null)
+        {
+            try
+            {
+                await JS.InvokeVoidAsync("cropperInterop.destroyCropper");
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Error closing cropper: {ex.Message}");
+            }
+        }
+
+        StateHasChanged();
+    }
+
+    private Image ImageFromDataUrl(string dataUrl)
+    {
+        var base64Data = dataUrl.Substring(dataUrl.IndexOf(",") + 1);
+        var bytes = Convert.FromBase64String(base64Data);
+        using var ms = new MemoryStream(bytes);
+        return Image.FromStream(ms);
+    }
+    private async Task PerformCrop()
+    {
+        try
+        {
+            Console.WriteLine("PerformCrop started");
+
+            if (JS == null)
+            {
+                ShowErrorToast("JavaScript runtime not available");
+                return;
+            }
+
+            // Get the cropped image with current filter applied
+            var croppedDataUrl = await JS.InvokeAsync<string>(
+                "cropperInterop.getCroppedImage",
+                selectedFilter
+            );
+
+            Console.WriteLine($"Cropped data URL received: {!string.IsNullOrEmpty(croppedDataUrl)}");
+
+            if (!string.IsNullOrEmpty(croppedDataUrl))
+            {
+                croppedImageDataUrl = croppedDataUrl;
+                pendingImagePreviewUrl = croppedDataUrl;
+
+                Console.WriteLine("Image cropped successfully");
+                ShowSuccessToast("Image cropped successfully");
+            }
+            else
+            {
+                Console.WriteLine("Failed to get cropped image");
+                ShowErrorToast("Failed to crop image");
+            }
+
+            // Close modal and destroy cropper
+            showCropperModal = false;
+
+            try
+            {
+                await JS.InvokeVoidAsync("cropperInterop.destroyCropper");
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Error destroying cropper: {ex.Message}");
+            }
+
+            StateHasChanged();
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Error in PerformCrop: {ex.Message}");
+            ShowErrorToast($"Error cropping image: {ex.Message}");
+        }
+    }
+    private async Task<string> GenerateSerialNumber(string itemName)
+    {
+        if (string.IsNullOrEmpty(itemName)) return string.Empty;
+
+        // Split itemName into words
+        var words = itemName.Split(new[] { ' ' }, StringSplitOptions.RemoveEmptyEntries);
+
+        // Determine how many characters to take for initials
+        int initialLength = words.Length switch
+        {
+            >= 4 => 4,
+            3 => 3,
+            2 => 2,
+            _ => 1
+        };
+
+        var initials = string.Concat(words.Take(initialLength).Select(word => word[0])).ToUpper();
+
+        // Extract context (numeric suffix) from the last word if present
+        string context = string.Empty;
+        var lastWord = words.Last();
+        var digitMatch = System.Text.RegularExpressions.Regex.Match(lastWord, @"\d+$");
+        if (digitMatch.Success)
+        {
+            context = digitMatch.Value;
+        }
+
+        string prefix = initials + context;
+
+        // USE API TO GET EXISTING SERIAL NUMBERS
+        try
+        {
+            var existingSerials = await sparePartService.GetSerialNumbersByPrefixAsync(prefix, 100);
+
+            if (!existingSerials.Any())
+            {
+                return $"{prefix}-01";
+            }
+
+            // Find the maximum serial number
+            var maxSerial = existingSerials
+                .Where(sn => sn.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+                .OrderByDescending(sn => sn)
+                .FirstOrDefault();
+
+            int nextSerialNumber = 1;
+            if (!string.IsNullOrEmpty(maxSerial))
+            {
+                var parts = maxSerial.Split('-');
+                if (parts.Length == 2 && int.TryParse(parts[1], out int lastNumber))
+                {
+                    nextSerialNumber = lastNumber + 1;
+                }
+            }
+
+            return $"{prefix}-{nextSerialNumber:D2}";
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Error generating serial number: {ex.Message}");
+            return $"{prefix}-01"; // Fallback
+        }
+    }
+
+
+    private async Task OnComboBoxBlur()
+    {
+        await OnItemNameChanged();
+    }
+
+    private void OnExport()
+    {
+        barcodeGenerator.Export("barcodeFile", BarcodeExportType.JPG);
+    }
+    private async Task ScrollFilterSliderLeft()
+    {
+        if (JS != null)
+        {
+            try
+            {
+                await JS.InvokeVoidAsync("eval", @"
+                const slider = document.getElementById('filterCardSlider');
+                if (slider) {
+                    slider.scrollLeft -= 100;
+                }
+            ");
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Error scrolling filter slider: {ex.Message}");
+            }
+        }
+    }
+
+    private async Task ScrollFilterSliderRight()
+    {
+        if (JS != null)
+        {
+            try
+            {
+                await JS.InvokeVoidAsync("eval", @"
+                const slider = document.getElementById('filterCardSlider');
+                if (slider) {
+                    slider.scrollLeft += 100;
+                }
+            ");
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Error scrolling filter slider: {ex.Message}");
+            }
+        }
+    }
+}
+

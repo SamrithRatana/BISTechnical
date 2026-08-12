@@ -1,0 +1,319 @@
+@* Pages/Leave/ManagerApproval.razor *@
+@page "/leave/approval"
+@using Microsoft.AspNetCore.Authorization
+@using Microsoft.AspNetCore.Components.Authorization
+@using Microsoft.AspNetCore.Identity
+@using Microsoft.EntityFrameworkCore
+@using UserManagementAPI.Data
+@using UserManagementAPI.Models
+@using UserManagementAPI.Models.Leave
+@inject UserManagementContext Db
+@inject UserManager<UserManagementAPI.Models.ApplicationUser> UserManager
+@inject AuthenticationStateProvider Auth
+@attribute [Authorize(Roles = "Admin,SuperAdmin,Manager")]
+
+<PageTitle>Leave Approvals</PageTitle>
+
+<div class="container" style="max-width:960px; margin:2rem auto;">
+
+    <div class="d-flex justify-content-between align-items-center mb-4">
+        <h3 class="mb-0">Leave Approvals</h3>
+        <div>
+            <span class="badge @(_myStep == 1 ? "bg-primary" : "bg-success") me-2" style="font-size:13px;">
+                @(_myStep == 1 ? "Step 1 — Admin First Approval" : "Step 2 — Manager Final Approval")
+            </span>
+            <span class="text-muted" style="font-size:13px;">@_managerName</span>
+        </div>
+    </div>
+
+    @if (_loading)
+    {
+        <div class="text-center py-5 text-muted">Loading...</div>
+    }
+    else if (!_items.Any())
+    {
+        <div class="alert alert-secondary">
+            <strong>No pending requests for Step @_myStep.</strong>
+            @if (_myStep == 1)
+            {
+                <span> New employee requests appear here for first approval.</span>
+            }
+            else
+            {
+
+                <span> Requests approved by Admin (Step 1) appear here for final approval.</span>
+            }
+        </div>
+    }
+    else
+    {
+        <p class="text-muted mb-3" style="font-size:13px;">
+            @_items.Count request(s) waiting —
+            @(_myStep == 1
+                    ? "Approve → forwards to Manager for final decision"
+                    : "Approve → completes process and deducts leave balance. Reject → no balance deducted.")
+    </p>
+        }
+
+    @foreach (var item in _items)
+    {
+        <div class="card mb-3 shadow-sm">
+            <div class="card-body p-3">
+
+                <div class="d-flex justify-content-between align-items-start mb-2">
+                    <div>
+                        <strong style="font-size:15px;">@item.EmployeeName</strong>
+                        <span class="badge bg-secondary ms-2">@item.LeaveTypeName</span>
+                        <span class="badge @StatusBadge(item.Status) ms-1">@item.Status</span>
+                    </div>
+                    <small class="text-muted">@item.CreatedAt.ToString("dd MMM yyyy HH:mm")</small>
+                </div>
+
+                <div class="row g-3 mb-2" style="font-size:13px;">
+                    <div class="col-auto">
+                        <span class="text-muted">From:</span>
+                        <strong class="ms-1">@item.FromDate.ToString("dd MMM yyyy")</strong>
+                    </div>
+                    <div class="col-auto">
+                        <span class="text-muted">To:</span>
+                        <strong class="ms-1">@item.ToDate.ToString("dd MMM yyyy")</strong>
+                    </div>
+                    <div class="col-auto">
+                        <span class="text-muted">Duration:</span>
+                        <strong class="ms-1">@item.TotalHours h = @(item.TotalHours / 8) day(s)</strong>
+                    </div>
+                </div>
+
+                @if (!string.IsNullOrEmpty(item.Reason))
+                {
+                    <div class="mb-2 p-2 bg-light rounded" style="font-size:13px;">
+                        <span class="text-muted">Employee reason: </span>@item.Reason
+                    </div>
+                }
+
+                @* Step 2: show Step 1 admin decision *@
+                @if (_myStep == 2)
+                {
+                    <div class="mb-2 p-2 rounded" style="font-size:12px; background:#e8f4fd; border-left:3px solid #0d6efd;">
+                        <span class="text-muted">Admin approved (Step 1) on </span>
+                        <strong>@item.M1DecidedAt?.ToString("dd MMM yyyy HH:mm")</strong>
+                        @if (!string.IsNullOrEmpty(item.M1Reason))
+                        {
+                            <span class="text-muted ms-2">— "@item.M1Reason"</span>
+                        }
+                    </div>
+                }
+
+                @if (item.ActionTaken)
+                {
+                    <div class="alert @(item.WasApproved ? "alert-success" : "alert-danger") py-2 mb-0 mt-2"
+                         style="font-size:13px;">
+                        @if (item.WasApproved && _myStep == 1)
+                        {
+                            <span>✓ Approved — forwarded to Manager for final approval.</span>
+                        }
+                        else if (item.WasApproved && _myStep == 2)
+                        {
+
+                            <span>✓ Final approval complete. @item.TotalHours h deducted from leave balance.</span>
+                        }
+                        else
+                        {
+
+                            <span>✗ Rejected — leave balance NOT deducted. Employee will be notified.</span>
+                        }
+                    </div>
+                }
+                else
+                {
+                    <div class="d-flex gap-2 align-items-end mt-3">
+                        <div class="flex-grow-1">
+                            <label class="form-label form-label-sm mb-1" style="font-size:12px;">
+                                Your note (optional)
+                            </label>
+                            <input class="form-control form-control-sm"
+                                   @bind="item.ManagerReason"
+                                   placeholder="Add a note..." />
+                                    
+                        </div>
+                        <button class="btn btn-success btn-sm px-3"
+                                @onclick="() => Decide(item, true)"
+                                disabled="@item.Deciding">
+                            @(item.Deciding ? "Saving..."
+                                                : _myStep == 1 ? "Approve → Send to Manager"
+                                                : "Final Approve ✓")
+                </button>
+                <button class="btn btn-danger btn-sm px-3"
+                        @onclick="() => Decide(item, false)"
+                        disabled="@item.Deciding">
+                    Reject ✗
+                </button>
+            </div>
+            @if (_myStep == 2)
+                    {
+                        <div class="mt-1" style="font-size:11px; color:#94a3b8;">
+                            Approve = deducts @item.TotalHours h from balance &nbsp;|&nbsp;
+                            Reject = balance unchanged, hours returned
+                        </div>
+                    }
+                }
+
+            </div>
+        </div>
+    }
+</div>
+
+@code {
+    List<ApprovalItem> _items = new();
+    string _managerId = "";
+    string _managerName = "";
+    int _myStep = 1;
+    bool _loading = true;
+
+    protected override async Task OnInitializedAsync()
+    {
+        var state = await Auth.GetAuthenticationStateAsync();
+        var user = await UserManager.GetUserAsync(state.User);
+        _managerId = user?.Id ?? "";
+        _managerName = user?.UserName ?? "";
+
+        // Admin / SuperAdmin = Step 1
+        // Manager            = Step 2
+        bool isManager = state.User.IsInRole("Manager");
+        bool isAdmin = state.User.IsInRole("Admin") || state.User.IsInRole("SuperAdmin");
+        _myStep = (isManager && !isAdmin) ? 2 : 1;
+
+        await LoadPending();
+    }
+
+    async Task LoadPending()
+    {
+        _loading = true;
+        StateHasChanged();
+
+        var targetStatus = _myStep == 1 ? "Pending" : "ApprovedByM1";
+
+        var requests = await Db.LeaveRequests
+            .Include(r => r.LeaveType)
+            .Include(r => r.Approvals)
+            .Where(r => r.Status == targetStatus)
+            .OrderByDescending(r => r.CreatedAt)
+            .ToListAsync();
+
+        var items = new List<ApprovalItem>();
+        foreach (var r in requests)
+        {
+            var emp = await UserManager.FindByIdAsync(r.UserId);
+            var step1Approval = r.Approvals.FirstOrDefault(a => a.ApprovalStep == 1);
+
+            items.Add(new ApprovalItem
+            {
+                RequestId = r.Id,
+                EmployeeName = emp?.UserName ?? r.UserId,
+                LeaveTypeName = r.LeaveType?.Name ?? "",
+                FromDate = r.FromDate.ToDateTime(TimeOnly.MinValue),
+                ToDate = r.ToDate.ToDateTime(TimeOnly.MinValue),
+                TotalHours = r.TotalHours,
+                Reason = r.Reason ?? "",
+                Status = r.Status,
+                CreatedAt = r.CreatedAt,
+                M1Reason = step1Approval?.Reason ?? "",
+                M1DecidedAt = step1Approval?.DecidedAt
+            });
+        }
+
+        _items = items;
+        _loading = false;
+    }
+
+    async Task Decide(ApprovalItem item, bool approve)
+    {
+        item.Deciding = true;
+        StateHasChanged();
+
+        var req = await Db.LeaveRequests.FindAsync(item.RequestId);
+        if (req == null) { item.Deciding = false; return; }
+
+        // Save approval record
+        Db.LeaveApprovals.Add(new LeaveApproval
+        {
+            LeaveRequestId = item.RequestId,
+            ManagerId = _managerId,
+            ApprovalStep = _myStep,
+            Decision = approve ? "Approved" : "Rejected",
+            Reason = item.ManagerReason,
+            DecidedAt = DateTime.UtcNow
+        });
+
+        if (!approve)
+        {
+            // ── REJECTED ──────────────────────────────────────
+            // Balance is NOT deducted
+            // If Step 2 rejects something that Step 1 already approved,
+            // no balance was touched yet so nothing to restore
+            req.Status = "Rejected";
+            req.UpdatedAt = DateTime.UtcNow;
+        }
+        else if (_myStep == 1)
+        {
+            // ── STEP 1 APPROVED ───────────────────────────────
+            // Just move to Manager queue, no balance change yet
+            req.Status = "ApprovedByM1";
+            req.UpdatedAt = DateTime.UtcNow;
+        }
+        else
+        {
+            // ── STEP 2 FINAL APPROVED ─────────────────────────
+            // Only NOW deduct from balance
+            req.Status = "Approved";
+            req.UpdatedAt = DateTime.UtcNow;
+
+            var bal = await Db.LeaveBalances.FirstOrDefaultAsync(b =>
+                b.UserId == req.UserId &&
+                b.LeaveTypeId == req.LeaveTypeId &&
+                b.Year == DateTime.Today.Year);
+
+            if (bal != null)
+            {
+                // Deduct — balance can go negative (allowed, shows as -Xh)
+                bal.UsedHours += req.TotalHours;
+            }
+            // If no balance row exists (e.g. Sick Leave on-time), skip deduction
+        }
+
+        await Db.SaveChangesAsync();
+
+        item.WasApproved = approve;
+        item.ActionTaken = true;
+        item.Deciding = false;
+        StateHasChanged();
+    }
+
+    string StatusBadge(string s) => s switch
+    {
+        "Pending" => "bg-warning text-dark",
+        "ApprovedByM1" => "bg-info text-dark",
+        "Approved" => "bg-success",
+        "Rejected" => "bg-danger",
+        _ => "bg-secondary"
+    };
+
+    class ApprovalItem
+    {
+        public int RequestId { get; set; }
+        public string EmployeeName { get; set; } = "";
+        public string LeaveTypeName { get; set; } = "";
+        public DateTime FromDate { get; set; }
+        public DateTime ToDate { get; set; }
+        public decimal TotalHours { get; set; }
+        public string Reason { get; set; } = "";
+        public string Status { get; set; } = "";
+        public DateTime CreatedAt { get; set; }
+        public string ManagerReason { get; set; } = "";
+        public string M1Reason { get; set; } = "";
+        public DateTime? M1DecidedAt { get; set; }
+        public bool ActionTaken { get; set; }
+        public bool WasApproved { get; set; }
+        public bool Deciding { get; set; }
+    }
+}

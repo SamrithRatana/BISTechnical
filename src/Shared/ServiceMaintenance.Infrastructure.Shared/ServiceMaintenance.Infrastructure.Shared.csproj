@@ -1,0 +1,22 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <NoWarn>$(NoWarn);CS0108;CS0436;BL0005;CS8632;CS8669;CS1998;CS0169;CS0649;CS8602;CS0414;CS8618;CS8625;CS8600;CS8620;CS8629;CS8604;CS0168;CS8601;CS8603;CS8765</NoWarn>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Extensions.Configuration.Abstractions" Version="10.0.9" />
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" Version="10.0.9" />
+    <PackageReference Include="Microsoft.Extensions.Hosting.Abstractions" Version="10.0.9" />
+    <PackageReference Include="StackExchange.Redis" Version="3.0.11" />
+  </ItemGroup>
+
+  <ItemGroup>
+	  <ProjectReference Include="..\..\Core\TechnicalService.Domain\TechnicalService.Domain.csproj" />
+    <ProjectReference Include="..\TechnicalService.Infrastructure\TechnicalService.Infrastructure.csproj" />
+  </ItemGroup>
+
+</Project>

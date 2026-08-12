@@ -1,0 +1,569 @@
+@page "/leave/request"
+@using Microsoft.AspNetCore.Authorization
+@using Microsoft.AspNetCore.Components.Authorization
+@using Microsoft.AspNetCore.Identity
+@using Microsoft.EntityFrameworkCore
+@using UserManagementAPI.Data
+@using UserManagementAPI.Models
+@using UserManagementAPI.Models.Leave
+@inject UserManagementContext Db
+@inject UserManager<UserManagementAPI.Models.ApplicationUser> UserManager
+@inject AuthenticationStateProvider Auth
+@inject NavigationManager Nav
+@inject IJSRuntime JS
+@attribute [Authorize]
+
+<PageTitle>Request Leave</PageTitle>
+
+<div class="container" style="max-width:640px; margin:2rem auto;">
+    <h3>Leave Request Form</h3>
+
+    @if (!string.IsNullOrEmpty(_message))
+    {
+        <div class="alert @(_success ? "alert-success" : "alert-danger") d-flex justify-content-between align-items-center">
+            <span>@_message</span>
+            @if (_success && _lastRequestId > 0)
+            {
+                <button class="btn btn-outline-success btn-sm ms-3" @onclick="PrintForm">🖨 Print</button>
+            }
+        </div>
+    }
+
+    <div class="card p-4">
+
+        @* ── Employee ── *@
+        <div class="mb-3">
+            <label class="form-label">Employee Name</label>
+            <select class="form-select" @bind="_selectedUserId" @bind:after="OnEmployeeChanged">
+                <option value="">-- Select Employee --</option>
+                @foreach (var u in _allUsers)
+                {
+                    <option value="@u.Id">@u.UserName</option>
+                }
+            </select>
+        </div>
+
+        @* ── Department ── *@
+        <div class="mb-3">
+            <label class="form-label">Department</label>
+            <select class="form-select" @bind="_department">
+                <option value="">-- Select Department --</option>
+                @foreach (var dept in _departments)
+                {
+                    <option value="@dept">@dept</option>
+                }
+            </select>
+        </div>
+
+        @* ── Leave Type ── *@
+        <div class="mb-3">
+            <label class="form-label">Leave Type</label>
+            <select class="form-select" @bind="_leaveTypeId" @bind:after="OnLeaveTypeChanged">
+                <option value="0">-- Select --</option>
+                @foreach (var lt in _leaveTypes)
+                {
+                    <option value="@lt.Id">
+                        @lt.Name @(lt.TotalHoursYear.HasValue ? $"({lt.TotalHoursYear}h/year)" : "(on-time)")
+                    </option>
+                }
+            </select>
+        </div>
+
+        @* ── Balance ── *@
+        @if (_selectedBalance != null && !_selectedBalance.IsOnTime)
+        {
+            <div class="alert alert-info py-2 mb-3">
+                Balance: <strong>@_selectedBalance.RemainingHours h remaining</strong>
+                of @_selectedBalance.TotalHours h
+                (@((_selectedBalance.RemainingHours / 8m).ToString("F1")) days left)
+            </div>
+        }
+
+        @* ── Date / Time ── *@
+        @if (_leaveTypeId != 0)
+        {
+            <div class="dt-section-label">📅 FROM</div>
+            <div class="dt-grid">
+                <div>
+                    <label class="form-label">Date</label>
+                    <input type="date" class="form-control" @bind="_fromDate" @bind:after="OnFromDateChanged" />
+                </div>
+                <div>
+                    <label class="form-label">Time</label>
+                    <input type="time" class="form-control"
+                           value="@_fromTime"
+                           @onchange="OnFromTimeChanged" />
+                </div>
+            </div>
+
+            <div class="dt-section-label">🏁 TO</div>
+            <div class="dt-grid">
+                <div>
+                    <label class="form-label">Date</label>
+                    <input type="date" class="form-control" @bind="_toDate" @bind:after="OnToDateChanged" />
+                </div>
+                <div>
+                    <label class="form-label">Time</label>
+                    <input type="time" class="form-control"
+                           value="@_toTime"
+                           @onchange="OnToTimeChanged" />
+                </div>
+            </div>
+
+            @if (_dateError != "")
+            {
+                <div class="text-danger-sm">⚠ @_dateError</div>
+            }
+
+            @* ── Booking ── *@
+            <div class="booking-section">
+                <div class="booking-section-title">📋 Booking (Days to deduct)</div>
+
+                <div class="booking-options">
+                    @foreach (var opt in _presetOptions)
+                    {
+                        <button class="booking-btn @(_selectedBooking == opt.Key ? "active" : "")"
+                                @onclick="() => SelectPreset(opt.Key)">
+                            @opt.Label
+                        </button>
+                    }
+
+                    @* ── Custom button ── *@
+                    <button class="booking-btn custom-btn @(_selectedBooking == "custom" ? "active" : "")"
+                            @onclick="ToggleCustom">
+                        ✏️ Custom
+                    </button>
+                </div>
+
+                @* ── Custom date picker — appears when Custom is selected ── *@
+                @if (_selectedBooking == "custom")
+                {
+                    <div class="custom-date-panel">
+                        <label>Select end date:</label>
+                        <input type="date"
+                               value="@_customEndDate.ToString("yyyy-MM-dd")"
+                               min="@_fromDate.ToString("yyyy-MM-dd")"
+                               @onchange="OnCustomEndDateChanged" />
+                        @if (_customWorkingDays > 0)
+                        {
+                            <span class="custom-date-result">
+                                @_customWorkingDays Day@(_customWorkingDays != 1 ? "s" : "")
+                                · @(_customWorkingDays * 8) h
+                            </span>
+                        }
+                        else
+                        {
+                            <span style="font-size:11px; color:#a78bfa;">Pick a date to calculate</span>
+                        }
+                    </div>
+                }
+
+                @if (string.IsNullOrEmpty(_selectedBooking))
+                {
+                    <div class="hint-text">Select a booking unit above</div>
+                }
+            </div>
+
+            @* ── Summary card ── *@
+            @if (!string.IsNullOrEmpty(_selectedBooking) && TotalHours > 0 && _dateError == "")
+            {
+                <div class="summary-card">
+                    <div class="summary-row">
+                        <span class="summary-label">From</span>
+                        <span class="summary-value">@FromDisplay</span>
+                    </div>
+                    <div class="summary-row">
+                        <span class="summary-label">To</span>
+                        <span class="summary-value">@ToDisplay</span>
+                    </div>
+                    <hr class="summary-divider" />
+                    <div class="summary-row">
+                        <span class="summary-label" style="font-weight:600;">Total Time</span>
+                        <span class="total-hours-value">@TotalHours h</span>
+                    </div>
+                    <div class="summary-row" style="margin-top:4px;">
+                        <span class="summary-label">Booking</span>
+                        <span class="booking-pill">@BookingLabel</span>
+                    </div>
+                </div>
+            }
+        }
+
+        <div class="mb-3">
+            <label class="form-label">Reason (optional)</label>
+            <textarea class="form-control" rows="3" @bind="_reason"></textarea>
+        </div>
+
+        <button class="btn btn-primary w-100" @onclick="Submit" disabled="@_submitting">
+            @(_submitting ? "Submitting..." : "Submit Request")
+        </button>
+    </div>
+</div>
+
+@* ── Printable Area ── *@
+<div id="print-area">
+    <div class="pf-title">LEAVE REQUEST FORM</div>
+    <div class="pf-subtitle">Repair and Maintenance Management — @DateTime.Today.Year</div>
+
+    <div class="pf-row">
+        <div class="pf-field"><span class="pf-label">Employee Name</span><span class="pf-value">@_userName</span></div>
+        <div class="pf-field"><span class="pf-label">Department</span><span class="pf-value">@(string.IsNullOrEmpty(_department) ? "—" : _department)</span></div>
+        <div class="pf-field"><span class="pf-label">Request #</span><span class="pf-value">@_lastRequestId</span></div>
+    </div>
+
+    <table class="pf-table">
+        <thead>
+            <tr><th>#</th><th>Leave Type</th><th>Select</th><th>Booking</th><th>Balance (h)</th></tr>
+        </thead>
+        <tbody>
+            @{
+                int row = 0;
+            }
+            @foreach (var lt in _leaveTypes)
+            {
+                row++;
+                bool isSelected = lt.Id == _leaveTypeId;
+                var bal = _allBalances.FirstOrDefault(b => b.LeaveTypeId == lt.Id);
+                var remaining = bal != null ? (bal.TotalHours - bal.UsedHours).ToString("F0") + " h" : "—";
+                string bk = (lt.TotalHoursYear.HasValue && lt.TotalHoursYear > 0)
+                ? Math.Round(lt.TotalHoursYear.Value / 8m / 12m, 0) + " Days/mo" : "On Time";
+                <tr class="@(isSelected ? "checked-row" : "")">
+                    <td>@row</td>
+                    <td>@lt.Name</td>
+                    <td style="text-align:center;"><span class="pf-box">@(isSelected ? "✓" : "")</span></td>
+                    <td>@bk</td>
+                    <td>@remaining</td>
+                </tr>
+            }
+        </tbody>
+    </table>
+
+    <div class="pf-row">
+        <div class="pf-field"><span class="pf-label">From</span><span class="pf-value">@FromDisplay</span></div>
+        <div class="pf-field"><span class="pf-label">To</span><span class="pf-value">@ToDisplay</span></div>
+    </div>
+    <div class="pf-row">
+        <div class="pf-field"><span class="pf-label">Total Time</span><span class="pf-value">@TotalHours h</span></div>
+        <div class="pf-field"><span class="pf-label">Booking</span><span class="pf-value">@BookingLabel</span></div>
+    </div>
+
+    @if (!string.IsNullOrEmpty(_reason))
+    {
+        <div class="pf-row">
+            <div class="pf-field" style="flex:1;">
+                <span class="pf-label">Reason</span><span class="pf-value">@_reason</span>
+            </div>
+        </div>
+    }
+
+    <div class="pf-approval">
+        <div class="pf-approve-box">
+            <h4>1. Manager Approval (Admin)</h4>
+            <div class="pf-checkbox-row"><span class="pf-box"></span> Approved</div>
+            <div class="pf-checkbox-row"><span class="pf-box"></span> Rejected</div>
+            <div style="margin-top:8px; font-size:12px;">Reason: ___________________________</div>
+            <div class="pf-sig-line">Signature / Date</div>
+        </div>
+        <div class="pf-approve-box">
+            <h4>2. Manager Approval (Final)</h4>
+            <div class="pf-checkbox-row"><span class="pf-box"></span> Approved</div>
+            <div class="pf-checkbox-row"><span class="pf-box"></span> Rejected</div>
+            <div style="margin-top:8px; font-size:12px;">Reason: ___________________________</div>
+            <div class="pf-sig-line">Signature / Date</div>
+        </div>
+    </div>
+
+    <div class="pf-note">
+        Balance rule: 1 day = 8 hours | Annual Leave = 2 days/month × 12 months = 192h/year |
+        Submitted: @DateTime.Now.ToString("dd MMM yyyy HH:mm")
+    </div>
+</div>
+
+@code {
+    // ── Fixed lists ───────────────────────────────────────────────────────
+    static readonly string[] _departments = new[]
+    {
+        "Technical", "Accounting & Cashier", "Admin & Stock", "Delivery", "Marketing", "IT"
+    };
+
+    record BookingOption(string Key, string Label, decimal Hours);
+
+    static readonly List<BookingOption> _presetOptions = new()
+    {
+        new("half", "½ Day",  4m),
+        new("1",    "1 Day",  8m),
+        new("2",    "2 Days", 16m),
+        new("3",    "3 Days", 24m),
+        new("4",    "4 Days", 32m),
+        new("5",    "5 Days", 40m),
+        new("6",    "6 Days", 48m),
+        new("7",    "7 Days", 56m),
+    };
+
+    // ── State ─────────────────────────────────────────────────────────────
+    List<LeaveType> _leaveTypes = new();
+    List<LeaveBalance> _allBalances = new();
+    LeaveBalanceView? _selectedBalance;
+    int _leaveTypeId;
+    string _reason = "";
+    bool _submitting, _success;
+    string _message = "";
+    string _userId = "";
+    string _userName = "";
+    int _lastRequestId;
+
+    List<UserManagementAPI.Models.ApplicationUser> _allUsers = new();
+    string _selectedUserId = "";
+    string _department = "";
+
+    // ── Date / Time ───────────────────────────────────────────────────────
+    DateTime _fromDate = DateTime.Today;
+    DateTime _toDate = DateTime.Today;
+    string _fromTime = "08:00";
+    string _toTime = "17:00";
+    string _dateError = "";
+
+    // ── Booking ───────────────────────────────────────────────────────────
+    string _selectedBooking = "";               // "half"|"1".."7"|"custom"|""
+    DateTime _customEndDate = DateTime.Today;   // used when custom is active
+    int _customWorkingDays = 0;               // calculated from fromDate → customEndDate
+
+    // ── Computed ──────────────────────────────────────────────────────────
+    DateTime FromDateTime => _fromDate.Date + ParseTime(_fromTime);
+    DateTime ToDateTime => _toDate.Date + ParseTime(_toTime);
+    string FromDisplay => FromDateTime.ToString("dd MMM yyyy  hh:mm tt");
+    string ToDisplay => ToDateTime.ToString("dd MMM yyyy  hh:mm tt");
+
+    decimal TotalHours
+    {
+        get
+        {
+            if (_selectedBooking == "custom")
+                return _customWorkingDays > 0 ? _customWorkingDays * 8m : 0;
+            return _presetOptions.FirstOrDefault(o => o.Key == _selectedBooking)?.Hours ?? 0;
+        }
+    }
+
+    string BookingLabel
+    {
+        get
+        {
+            if (_selectedBooking == "custom")
+            {
+                if (_customWorkingDays <= 0) return "Custom (no date)";
+                return $"{_customWorkingDays} Day{(_customWorkingDays != 1 ? "s" : "")} " +
+                       $"({_customEndDate:dd MMM yyyy})";
+            }
+            return _presetOptions.FirstOrDefault(o => o.Key == _selectedBooking)?.Label ?? "—";
+        }
+    }
+
+    // ── Init ──────────────────────────────────────────────────────────────
+    protected override async Task OnInitializedAsync()
+    {
+        var state = await Auth.GetAuthenticationStateAsync();
+        var currentUser = await UserManager.GetUserAsync(state.User);
+        _userId = currentUser?.Id ?? "";
+
+        _allUsers = await UserManager.Users.OrderBy(u => u.UserName).ToListAsync();
+        _leaveTypes = await Db.LeaveTypes.Where(x => x.IsActive).ToListAsync();
+    }
+
+    // ── Employee changed ──────────────────────────────────────────────────
+    async Task OnEmployeeChanged()
+    {
+        _leaveTypeId = 0;
+        _selectedBalance = null;
+        _allBalances = new();
+        ResetBooking();
+        ResetDates();
+
+        if (string.IsNullOrEmpty(_selectedUserId)) { _userName = ""; return; }
+
+        var emp = _allUsers.FirstOrDefault(u => u.Id == _selectedUserId);
+        _userName = emp?.UserName ?? "";
+
+        _allBalances = await Db.LeaveBalances
+            .Where(b => b.UserId == _selectedUserId && b.Year == DateTime.Today.Year)
+            .ToListAsync();
+    }
+
+    // ── Leave type changed ────────────────────────────────────────────────
+    async Task OnLeaveTypeChanged()
+    {
+        _selectedBalance = null;
+        ResetBooking();
+        ResetDates();
+
+        if (_leaveTypeId == 0 || string.IsNullOrEmpty(_selectedUserId)) return;
+
+        var bal = _allBalances.FirstOrDefault(b => b.LeaveTypeId == _leaveTypeId);
+        if (bal != null)
+            _selectedBalance = new LeaveBalanceView(bal.TotalHours, bal.UsedHours);
+
+        await Task.CompletedTask;
+    }
+
+    // ── Date / time handlers ──────────────────────────────────────────────
+    void OnFromDateChanged()
+    {
+        // If custom is active and customEndDate is before the new fromDate, reset it
+        if (_selectedBooking == "custom" && _customEndDate < _fromDate)
+        {
+            _customEndDate = _fromDate;
+            _customWorkingDays = 0;
+        }
+        else if (_selectedBooking == "custom" && _customEndDate >= _fromDate)
+        {
+            _customWorkingDays = CountWorkingDays(_fromDate, _customEndDate);
+        }
+        ValidateDates();
+    }
+
+    void OnToDateChanged() => ValidateDates();
+
+    void OnFromTimeChanged(ChangeEventArgs e)
+    {
+        _fromTime = e.Value?.ToString() ?? "08:00";
+        ValidateDates();
+    }
+
+    void OnToTimeChanged(ChangeEventArgs e)
+    {
+        _toTime = e.Value?.ToString() ?? "17:00";
+        ValidateDates();
+    }
+
+    void ValidateDates()
+    {
+        _dateError = "";
+        if (ToDateTime <= FromDateTime)
+            _dateError = "End date/time must be after start date/time.";
+    }
+
+    // ── Booking handlers ──────────────────────────────────────────────────
+    void SelectPreset(string key)
+    {
+        _selectedBooking = (_selectedBooking == key) ? "" : key;
+        _customWorkingDays = 0;
+        _customEndDate = _fromDate;
+    }
+
+    void ToggleCustom()
+    {
+        if (_selectedBooking == "custom")
+        {
+            _selectedBooking = "";
+            _customWorkingDays = 0;
+            _customEndDate = _fromDate;
+        }
+        else
+        {
+            _selectedBooking = "custom";
+            _customWorkingDays = 0;
+            _customEndDate = _fromDate;   // start with fromDate; user picks the end
+        }
+    }
+
+    void OnCustomEndDateChanged(ChangeEventArgs e)
+    {
+        if (DateTime.TryParse(e.Value?.ToString(), out var picked) && picked.Date >= _fromDate.Date)
+        {
+            _customEndDate = picked.Date;
+            // Count working days from fromDate to customEndDate (inclusive of from, exclusive of end
+            // to match the same convention used elsewhere: going from day A to B = B-A working days)
+            _customWorkingDays = CountWorkingDays(_fromDate.Date, _customEndDate);
+        }
+        else
+        {
+            _customWorkingDays = 0;
+        }
+    }
+
+    // Count working days from `from` (inclusive) up to but NOT including `to`
+    // e.g. Mon 29 Apr → Tue 30 Apr = 1 working day
+    int CountWorkingDays(DateTime from, DateTime to)
+    {
+        int count = 0;
+        for (var d = from.Date; d < to.Date; d = d.AddDays(1))
+            if (d.DayOfWeek != DayOfWeek.Saturday && d.DayOfWeek != DayOfWeek.Sunday)
+                count++;
+        // Minimum 1 when at least one day is selected
+        return to.Date > from.Date ? Math.Max(count, 1) : 0;
+    }
+
+    // ── Helpers ───────────────────────────────────────────────────────────
+    void ResetDates()
+    {
+        _fromDate = _toDate = DateTime.Today;
+        _fromTime = "08:00";
+        _toTime = "17:00";
+        _dateError = "";
+    }
+
+    void ResetBooking()
+    {
+        _selectedBooking = "";
+        _customWorkingDays = 0;
+        _customEndDate = DateTime.Today;
+    }
+
+    static TimeSpan ParseTime(string hhmm)
+    {
+        if (TimeSpan.TryParse(hhmm, out var ts)) return ts;
+        return TimeSpan.Zero;
+    }
+
+    // ── Submit ────────────────────────────────────────────────────────────
+    async Task Submit()
+    {
+        _message = ""; _success = false;
+
+        if (string.IsNullOrEmpty(_selectedUserId)) { _message = "Please select an employee."; return; }
+        if (string.IsNullOrEmpty(_department)) { _message = "Please select a department."; return; }
+        if (_leaveTypeId == 0) { _message = "Please select a leave type."; return; }
+        if (_dateError != "") { _message = _dateError; return; }
+        if (string.IsNullOrEmpty(_selectedBooking)) { _message = "Please select a booking unit."; return; }
+        if (_selectedBooking == "custom" && _customWorkingDays <= 0)
+        { _message = "Please pick a custom end date."; return; }
+
+        if (_selectedBalance != null && !_selectedBalance.IsOnTime
+            && TotalHours > _selectedBalance.RemainingHours)
+        {
+            _message = $"Not enough balance. The employee has {_selectedBalance.RemainingHours}h remaining.";
+            return;
+        }
+
+        _submitting = true;
+
+        var req = new LeaveRequest
+        {
+            UserId = _selectedUserId,
+            LeaveTypeId = _leaveTypeId,
+            FromDate = DateOnly.FromDateTime(_fromDate),
+            ToDate = _selectedBooking == "custom"
+                            ? DateOnly.FromDateTime(_customEndDate)
+                            : DateOnly.FromDateTime(_toDate),
+            TotalHours = TotalHours,
+            Reason = _reason,
+            Status = "Pending",
+            CreatedAt = DateTime.UtcNow
+        };
+
+        Db.LeaveRequests.Add(req);
+        await Db.SaveChangesAsync();
+
+        _lastRequestId = req.Id;
+        _submitting = false;
+        _success = true;
+        _message = $"Request submitted! #{req.Id} — awaiting Manager 1 approval.";
+    }
+
+    async Task PrintForm() => await JS.InvokeVoidAsync("window.print");
+
+    record LeaveBalanceView(decimal TotalHours, decimal UsedHours)
+    {
+        public decimal RemainingHours => TotalHours - UsedHours;
+        public bool IsOnTime => TotalHours == 0;
+    }
+}

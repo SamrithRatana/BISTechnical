@@ -1,0 +1,31 @@
+{
+  "ConnectionStrings": {
+    "TechnicalServiceConnectionString": "Server=your-db-host,port;Database=TechnicalServiceDB;User Id=your_user;Password=your_password;Encrypt=True;TrustServerCertificate=True;",
+    "EventBus": "amqp://localhost"
+  },
+  "StockTelegram": {
+    "BotToken": "your_telegram_bot_token",
+    "ChatId": "your_chat_id",
+    "Topics": {
+      "StockOut": 0,
+      "StockIn": 0
+    }
+  },
+  "Logging": {
+    "LogLevel": {
+      "Default": "Information",
+      "Microsoft.AspNetCore": "Warning"
+    }
+  },
+  "AllowedHosts": "*",
+  "OpenApi": {
+    "Endpoint": {
+      "Name": "TechnicalService.API V1"
+    },
+    "Document": {
+      "Description": "The Technical Service HTTP API",
+      "Title": "BIS - Technical Service HTTP API",
+      "Version": "v1"
+    }
+  }
+}

@@ -1,0 +1,27 @@
+﻿@page
+@model LogoutModel
+@{
+    ViewData["Title"] = "Log out";
+}
+<header>
+    <h1>@ViewData["Title"]</h1>
+    @{
+        if (User.Identity?.IsAuthenticated ?? false)
+        {
+            <p>Click the button below to log out.</p>
+            <form id="logoutForm" class="form-inline" asp-area="Identity" asp-page="/Account/Logout" asp-route-returnUrl="@Url.Page("/", new { area = "" })" method="post">
+                <button type="submit" class="btn btn-primary">Click here to Logout</button>
+            </form>
+        }
+        else
+        {
+            <p>You have successfully logged out of the application.</p>
+        }
+    }
+</header>
+@* ✅ FIXED — removed the auto-submit script.
+   It called document.getElementById('logoutForm').submit() on every page
+   load, but no element had id="logoutForm", so it threw a TypeError in the
+   browser console every time this page rendered. It also meant GET requests
+   here silently triggered a logout submission client-side. Logout now only
+   happens when the user explicitly clicks the button above (POST). *@

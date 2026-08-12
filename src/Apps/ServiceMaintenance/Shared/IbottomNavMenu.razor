@@ -1,0 +1,156 @@
+﻿@using Microsoft.AspNetCore.Components
+@using Microsoft.AspNetCore.Components.Authorization
+@inject NavigationManager UriHelper
+
+<div class="bottom-nav-bar">
+    <AuthorizeView>
+        <Authorized>
+            <a class="nav-link" href="/" @onclick="NavigateToHome">
+                <i class="fas fa-home"></i>
+                Home
+            </a>
+
+            <a class="nav-link" @onclick="ToggleSettingsDrawer">
+                <i class="fas fa-cog"></i>
+                Settings
+            </a>
+        </Authorized>
+        <NotAuthorized>
+            <a class="nav-link" href="/identity/account/login">
+                <i class="fas fa-sign-in-alt"></i>
+                Login
+            </a>
+            <a class="nav-link" href="/identity/account/register">
+                <i class="fas fa-user-plus"></i>
+                Register
+            </a>
+        </NotAuthorized>
+    </AuthorizeView>
+</div>
+
+<AuthorizeView>
+    <Authorized>
+        <div class="settings-drawer @drawerClass" @ref="drawerElement">
+            <div class="drawer-profile">
+                <div class="profile-img">
+                    @if (!string.IsNullOrEmpty(profilePictureUrl) && profilePictureUrl != "/images/avatar.jpg")
+                    {
+                        <img src="@profilePictureUrl?v=@DateTime.UtcNow.Ticks"
+                             alt="Profile"
+                             onerror="this.src='/images/avatar.jpg'" />
+                    }
+                    else
+                    {
+                        <img src="/images/avatar.jpg" alt="Default Profile" />
+                    }
+                </div>
+                <div class="profile-info">
+                    <h2 class="profile-title">@userName</h2>
+                    <p class="profile-subtitle">@currentUser?.Email</p>
+                </div>
+            </div>
+
+            <button class="drawer-item" @onclick="dr1">
+                <i class="fas fa-question-circle"></i>
+                Help & Support
+            </button>
+
+            <button class="drawer-item" @onclick="dr2">
+                <i class="fas fa-user-shield"></i>
+                Privacy
+            </button>
+
+            <button class="drawer-item" @onclick="dr3">
+                <i class="fas fa-file-contract"></i>
+                Terms & Conditions
+            </button>
+
+            <a class="drawer-item" href="/identity/account/logout" style="text-decoration:none">
+                <i class="fas fa-sign-out-alt"></i>
+                Log out
+            </a>
+
+            <button class="drawer-item" @onclick="CloseDrawer">
+                <i class="fas fa-times"></i>
+                Close
+            </button>
+        </div>
+    </Authorized>
+</AuthorizeView>
+
+<style>
+    .bottom-nav-bar {
+        /* Style for your bottom navigation bar */
+    }
+
+    .nav-item-profile {
+        display: flex;
+        align-items: center;
+    }
+
+        .nav-item-profile .rounded-circle {
+            border-radius: 50%;
+            width: 40px;
+            height: 40px;
+            object-fit: cover;
+            margin-right: 10px;
+        }
+
+    .username {
+        font-weight: bold;
+    }
+
+    .nav-link {
+        position: relative;
+    }
+
+    .badge {
+        position: absolute;
+        top: -5px;
+        right: -5px;
+        background-color: red;
+        color: white;
+        border-radius: 50%;
+        padding: 5px 10px;
+        font-size: 0.8rem;
+    }
+
+    .settings-drawer {
+        transition: transform 0.3s ease, opacity 0.3s ease, visibility 0.3s ease;
+        transform: translateX(100%);
+        opacity: 0;
+        visibility: hidden;
+    }
+
+        .settings-drawer.open {
+            transform: translateX(0);
+            opacity: 1;
+            visibility: visible;
+        }
+
+        .settings-drawer.closed {
+            transform: translateX(100%);
+            opacity: 0;
+            visibility: hidden;
+        }
+</style>
+
+<script>
+    window.addClickDrawer = function (drawerElement) {
+        document.addEventListener('click', function (event) {
+            let drawer = drawerElement;
+            if (drawer && drawer.classList.contains('open') && !drawer.contains(event.target) && !event.target.closest('.nav-link')) {
+                closeDrawer();
+                location.reload();
+            }
+        });
+    };
+
+    function closeDrawer() {
+        let drawer = document.querySelector('.settings-drawer');
+        if (drawer) {
+            drawer.classList.remove('open');
+            drawer.classList.add('closed');
+        }
+    }
+</script>

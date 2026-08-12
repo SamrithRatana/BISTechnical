@@ -1,0 +1,958 @@
+/* ════════════════════════════════════════════════════════════════════════════
+   components-dark-overrides.css
+   Full dark mode overrides for Syncfusion (e-*) and DevExpress (dx-*)
+   components. Applied ONLY when .dark-theme is on <html>.
+   Every selector is scoped so light mode is completely unaffected.
+   ════════════════════════════════════════════════════════════════════════════ */
+
+/* ──────────────────────────────────────────────────────────────
+   0. DARK MODE CSS VARIABLE ALIASES
+   (Used by component rules below so one token change updates all)
+────────────────────────────────────────────────────────────── */
+.dark-theme {
+    --dk-bg:          var(--bg-primary, #0f172a);
+    --dk-surface:     var(--card-bg, #1e293b);
+    --dk-surface2:    var(--bg-secondary, #263348);
+    --dk-border:      var(--border-subtle, rgba(255,255,255,0.09));
+    --dk-text:        var(--text-primary, #f1f5f9);
+    --dk-text-muted:  var(--text-secondary, #94a3b8);
+    --dk-header-bg:   var(--header-bg, #1FA9D3);
+    --dk-primary:     var(--primary-color, #1FA9D3);
+    --dk-hover:       rgba(255,255,255,0.06);
+    --dk-selected:    rgba(31,169,211,0.18);
+    --dk-input-bg:    rgba(255,255,255,0.06);
+    --dk-placeholder: var(--text-secondary, #64748b);
+    --dk-shadow:      0 4px 16px rgba(0,0,0,0.5);
+}
+
+/* ──────────────────────────────────────────────────────────────
+   1. SYNCFUSION GRID (SfGrid / e-grid)
+────────────────────────────────────────────────────────────── */
+.dark-theme .e-grid,
+.dark-theme .e-grid .e-table,
+.dark-theme .e-grid .e-content,
+.dark-theme .e-grid .e-gridcontent,
+.dark-theme .e-grid .e-gridfooter {
+    background-color: var(--dk-surface) !important;
+    color: var(--dk-text) !important;
+    border-color: var(--dk-border) !important;
+}
+
+/* Grid header */
+.dark-theme .e-grid .e-gridheader,
+.dark-theme .e-grid .e-headercontent,
+.dark-theme .e-grid .e-columnheader,
+.dark-theme .e-grid .e-gridheader .e-headercell,
+.dark-theme .e-grid .e-gridheader .e-headercelldiv,
+.dark-theme .e-grid .e-gridheader .e-sortfilterdiv,
+.dark-theme .e-grid th.e-headercell {
+    background-color: var(--dk-header-bg) !important;
+    color: #ffffff !important;
+    border-color: var(--dk-border) !important;
+}
+
+/* Grid rows */
+.dark-theme .e-grid .e-row td.e-rowcell,
+.dark-theme .e-grid .e-row .e-rowcell {
+    background-color: var(--dk-surface) !important;
+    color: var(--dk-text) !important;
+    border-color: var(--dk-border) !important;
+}
+
+/* Alternating rows */
+.dark-theme .e-grid .e-altrow td.e-rowcell {
+    background-color: var(--dk-surface2) !important;
+}
+
+/* Hover */
+.dark-theme .e-grid .e-row:hover td.e-rowcell,
+.dark-theme .e-grid tr.e-hover td.e-rowcell {
+    background-color: var(--dk-hover) !important;
+}
+
+/* Selected */
+.dark-theme .e-grid .e-active td.e-rowcell,
+.dark-theme .e-grid tr.e-active td.e-rowcell {
+    background-color: var(--dk-selected) !important;
+    color: var(--dk-text) !important;
+}
+
+/* Pager */
+.dark-theme .e-grid .e-gridpager,
+.dark-theme .e-pager,
+.dark-theme .e-pager .e-pagercontainer,
+.dark-theme .e-pager .e-numericcontainer,
+.dark-theme .e-pager .e-currentitem {
+    background-color: var(--dk-surface) !important;
+    color: var(--dk-text) !important;
+    border-color: var(--dk-border) !important;
+}
+
+.dark-theme .e-pager .e-currentitem {
+    background-color: var(--dk-primary) !important;
+    color: #fff !important;
+}
+
+/* Toolbar above grid */
+.dark-theme .e-grid .e-toolbar,
+.dark-theme .e-grid .e-toolbar-items {
+    background-color: var(--dk-surface) !important;
+    border-color: var(--dk-border) !important;
+}
+
+/* Column chooser / popup menus inside grid */
+.dark-theme .e-grid .e-menu-parent,
+.dark-theme .e-grid .e-popup,
+.dark-theme .e-grid .e-filtermenudiv {
+    background-color: var(--dk-surface) !important;
+    color: var(--dk-text) !important;
+}
+
+/* ──────────────────────────────────────────────────────────────
+   2. SYNCFUSION TOOLBAR (DxToolbar / e-toolbar)
+────────────────────────────────────────────────────────────── */
+.dark-theme .e-toolbar,
+.dark-theme .e-toolbar-items,
+.dark-theme .e-toolbar-item {
+    background-color: var(--dk-surface) !important;
+    border-color: var(--dk-border) !important;
+}
+
+.dark-theme .e-toolbar .e-btn,
+.dark-theme .e-toolbar .e-tbar-btn,
+.dark-theme .e-toolbar .e-tbar-btn-text {
+    color: var(--dk-text) !important;
+    background-color: transparent !important;
+    border-color: transparent !important;
+}
+
+.dark-theme .e-toolbar .e-btn:hover,
+.dark-theme .e-toolbar .e-tbar-btn:hover {
+    background-color: var(--dk-hover) !important;
+}
+
+/* ──────────────────────────────────────────────────────────────
+   3. SYNCFUSION DIALOG (SfDialog / e-dialog)
+────────────────────────────────────────────────────────────── */
+.dark-theme .e-dialog,
+.dark-theme .e-dlg-container {
+    background-color: var(--dk-surface) !important;
+    color: var(--dk-text) !important;
+    border-color: var(--dk-border) !important;
+    box-shadow: var(--dk-shadow) !important;
+}
+
+.dark-theme .e-dialog .e-dlg-header-content {
+    background-color: var(--dk-surface2) !important;
+    border-bottom-color: var(--dk-border) !important;
+}
+
+.dark-theme .e-dialog .e-dlg-header,
+.dark-theme .e-dialog .e-title-text {
+    color: var(--dk-text) !important;
+}
+
+.dark-theme .e-dialog .e-dlg-content {
+    background-color: var(--dk-surface) !important;
+    color: var(--dk-text) !important;
+}
+
+.dark-theme .e-dialog .e-footer-content,
+.dark-theme .e-dialog .e-dlg-footer {
+    background-color: var(--dk-surface) !important;
+    border-top-color: var(--dk-border) !important;
+}
+
+.dark-theme .e-dialog .e-btn.e-primary {
+    background-color: var(--dk-primary) !important;
+    color: #fff !important;
+    border-color: var(--dk-primary) !important;
+}
+
+/* Overlay backdrop */
+.dark-theme .e-dlg-overlay {
+    background-color: rgba(0,0,0,0.7) !important;
+}
+
+/* ──────────────────────────────────────────────────────────────
+   4. SYNCFUSION BUTTONS (SfButton / e-btn)
+────────────────────────────────────────────────────────────── */
+.dark-theme .e-btn:not(.e-primary):not(.e-success):not(.e-danger):not(.e-warning) {
+    background-color: var(--dk-surface2) !important;
+    color: var(--dk-text) !important;
+    border-color: var(--dk-border) !important;
+}
+
+.dark-theme .e-btn:not(.e-primary):not(.e-success):not(.e-danger):not(.e-warning):hover {
+    background-color: var(--dk-hover) !important;
+}
+
+/* ──────────────────────────────────────────────────────────────
+   5. SYNCFUSION INPUT CONTROLS
+   (SfTextBox, SfNumericTextBox, SfTextArea, SfDatePicker,
+    SfDateTimePicker, SfComboBox, SfDropDownList, SfMultiSelect)
+────────────────────────────────────────────────────────────── */
+.dark-theme .e-input-group,
+.dark-theme .e-input-group.e-control-wrapper,
+.dark-theme .e-float-input {
+    background-color: var(--dk-input-bg) !important;
+    border-color: var(--dk-border) !important;
+}
+
+.dark-theme .e-input-group input.e-input,
+.dark-theme .e-input-group textarea.e-input,
+.dark-theme .e-float-input input,
+.dark-theme .e-float-input textarea,
+.dark-theme input.e-input,
+.dark-theme textarea.e-input {
+    background-color: var(--dk-input-bg) !important;
+    color: var(--dk-text) !important;
+    border-color: var(--dk-border) !important;
+}
+
+.dark-theme .e-input-group input.e-input::placeholder,
+.dark-theme .e-float-input input::placeholder {
+    color: var(--dk-placeholder) !important;
+}
+
+.dark-theme .e-float-input label.e-label-bottom,
+.dark-theme .e-float-input .e-float-text {
+    color: var(--dk-text-muted) !important;
+}
+
+/* Suffix/prefix icons inside inputs */
+.dark-theme .e-input-group .e-input-group-icon,
+.dark-theme .e-input-group span.e-date-icon,
+.dark-theme .e-input-group span.e-time-icon,
+.dark-theme .e-input-group span.e-search-icon {
+    color: var(--dk-text-muted) !important;
+    background-color: transparent !important;
+    border-color: var(--dk-border) !important;
+}
+
+/* ──────────────────────────────────────────────────────────────
+   6. SYNCFUSION DROPDOWNS & COMBOBOX POPUP
+────────────────────────────────────────────────────────────── */
+.dark-theme .e-popup.e-ddl.e-lib,
+.dark-theme .e-dropdown-popup,
+.dark-theme .e-dropdownbase .e-list-parent,
+.dark-theme .e-listbox-wrapper {
+    background-color: var(--dk-surface) !important;
+    color: var(--dk-text) !important;
+    border-color: var(--dk-border) !important;
+    box-shadow: var(--dk-shadow) !important;
+}
+
+.dark-theme .e-popup .e-list-item,
+.dark-theme .e-dropdownbase .e-list-item {
+    background-color: var(--dk-surface) !important;
+    color: var(--dk-text) !important;
+}
+
+.dark-theme .e-popup .e-list-item:hover,
+.dark-theme .e-dropdownbase .e-list-item.e-hover {
+    background-color: var(--dk-hover) !important;
+}
+
+.dark-theme .e-popup .e-list-item.e-active,
+.dark-theme .e-dropdownbase .e-list-item.e-active {
+    background-color: var(--dk-selected) !important;
+    color: var(--dk-primary) !important;
+}
+
+/* Search box inside popup */
+.dark-theme .e-popup .e-filter-parent,
+.dark-theme .e-popup .e-input-group {
+    background-color: var(--dk-input-bg) !important;
+    border-color: var(--dk-border) !important;
+}
+
+/* ──────────────────────────────────────────────────────────────
+   7. SYNCFUSION DATE / DATETIME PICKER CALENDAR POPUP
+────────────────────────────────────────────────────────────── */
+.dark-theme .e-datepicker.e-popup,
+.dark-theme .e-datetimepicker.e-popup,
+.dark-theme .e-calendar,
+.dark-theme .e-calendar .e-content,
+.dark-theme .e-calendar .e-header {
+    background-color: var(--dk-surface) !important;
+    color: var(--dk-text) !important;
+    border-color: var(--dk-border) !important;
+}
+
+.dark-theme .e-calendar .e-cell span {
+    color: var(--dk-text) !important;
+}
+
+.dark-theme .e-calendar .e-cell.e-disabled span {
+    color: var(--dk-placeholder) !important;
+}
+
+.dark-theme .e-calendar .e-cell:hover span,
+.dark-theme .e-calendar .e-cell.e-focused span {
+    background-color: var(--dk-hover) !important;
+    color: var(--dk-text) !important;
+}
+
+.dark-theme .e-calendar .e-cell.e-selected span,
+.dark-theme .e-calendar .e-cell.e-today span {
+    background-color: var(--dk-primary) !important;
+    color: #fff !important;
+}
+
+.dark-theme .e-calendar .e-header .e-title,
+.dark-theme .e-calendar .e-day {
+    color: var(--dk-text) !important;
+}
+
+/* ──────────────────────────────────────────────────────────────
+   8. SYNCFUSION CHECKBOX (SfCheckBox / e-checkbox)
+────────────────────────────────────────────────────────────── */
+.dark-theme .e-checkbox-wrapper .e-frame,
+.dark-theme .e-css.e-checkbox-wrapper .e-frame {
+    background-color: var(--dk-input-bg) !important;
+    border-color: var(--dk-border) !important;
+}
+
+.dark-theme .e-checkbox-wrapper .e-check,
+.dark-theme .e-css.e-checkbox-wrapper .e-check {
+    color: #fff !important;
+}
+
+.dark-theme .e-checkbox-wrapper.e-checkbox-checked .e-frame,
+.dark-theme .e-css.e-checkbox-wrapper .e-frame.e-check {
+    background-color: var(--dk-primary) !important;
+    border-color: var(--dk-primary) !important;
+}
+
+.dark-theme .e-checkbox-wrapper .e-label {
+    color: var(--dk-text) !important;
+}
+
+/* ──────────────────────────────────────────────────────────────
+   9. SYNCFUSION SIDEBAR (SfSidebar / e-sidebar)
+────────────────────────────────────────────────────────────── */
+.dark-theme .e-sidebar {
+    background-color: var(--dk-surface) !important;
+    color: var(--dk-text) !important;
+    border-color: var(--dk-border) !important;
+}
+
+/* ──────────────────────────────────────────────────────────────
+   10. SYNCFUSION CARD (SfCard / e-card)
+────────────────────────────────────────────────────────────── */
+.dark-theme .e-card {
+    background-color: var(--dk-surface) !important;
+    color: var(--dk-text) !important;
+    border-color: var(--dk-border) !important;
+    box-shadow: var(--dk-shadow) !important;
+}
+
+.dark-theme .e-card .e-card-header-title,
+.dark-theme .e-card .e-card-content {
+    color: var(--dk-text) !important;
+}
+
+/* ──────────────────────────────────────────────────────────────
+   11. SYNCFUSION TOOLTIP (SfTooltip / e-tooltip)
+────────────────────────────────────────────────────────────── */
+.dark-theme .e-tooltip-wrap,
+.dark-theme .e-tooltip-wrap .e-tip-content {
+    background-color: #0f172a !important;
+    color: var(--dk-text) !important;
+    border-color: var(--dk-border) !important;
+}
+
+/* ──────────────────────────────────────────────────────────────
+   12. SYNCFUSION TOAST (SfToast / e-toast)
+────────────────────────────────────────────────────────────── */
+.dark-theme .e-toast-container .e-toast {
+    background-color: var(--dk-surface2) !important;
+    color: var(--dk-text) !important;
+    border-color: var(--dk-border) !important;
+}
+
+/* ──────────────────────────────────────────────────────────────
+   13. SYNCFUSION SPINNER (SfSpinner / e-spinner)
+────────────────────────────────────────────────────────────── */
+.dark-theme .e-spinner-pane .e-spinner-inner .e-spin-material {
+    stroke: var(--dk-primary) !important;
+}
+
+/* ──────────────────────────────────────────────────────────────
+   14. DEVEXPRESS COMPONENTS (DxGrid, DxToolbar, DxButton, etc.)
+────────────────────────────────────────────────────────────── */
+
+/* DxGrid */
+.dark-theme .dxbl-grid,
+.dark-theme .dxbl-grid-table {
+    background-color: var(--dk-surface) !important;
+    color: var(--dk-text) !important;
+    border-color: var(--dk-border) !important;
+}
+
+.dark-theme .dxbl-grid-header-row th {
+    background-color: var(--dk-header-bg) !important;
+    color: #fff !important;
+    border-color: var(--dk-border) !important;
+}
+
+.dark-theme .dxbl-grid-data-row td {
+    background-color: var(--dk-surface) !important;
+    color: var(--dk-text) !important;
+    border-color: var(--dk-border) !important;
+}
+
+.dark-theme .dxbl-grid-data-row:nth-child(even) td {
+    background-color: var(--dk-surface2) !important;
+}
+
+.dark-theme .dxbl-grid-data-row:hover td {
+    background-color: var(--dk-hover) !important;
+}
+
+.dark-theme .dxbl-grid-data-row.dxbl-grid-selected-row td {
+    background-color: var(--dk-selected) !important;
+}
+
+.dark-theme .dxbl-pager,
+.dark-theme .dxbl-pager-page-num {
+    background-color: var(--dk-surface) !important;
+    color: var(--dk-text) !important;
+    border-color: var(--dk-border) !important;
+}
+
+.dark-theme .dxbl-pager-page-num.dxbl-pager-active-page-num {
+    background-color: var(--dk-primary) !important;
+    color: #fff !important;
+}
+
+/* DxToolbar */
+.dark-theme .dxbl-toolbar,
+.dark-theme .dxbl-toolbar-group {
+    background-color: var(--dk-surface) !important;
+    color: var(--dk-text) !important;
+    border-color: var(--dk-border) !important;
+}
+
+.dark-theme .dxbl-toolbar .dxbl-btn,
+.dark-theme .dxbl-toolbar-item .dxbl-btn {
+    color: var(--dk-text) !important;
+    background-color: transparent !important;
+    border-color: var(--dk-border) !important;
+}
+
+.dark-theme .dxbl-toolbar .dxbl-btn:hover {
+    background-color: var(--dk-hover) !important;
+}
+
+/* DxButton */
+.dark-theme .dxbl-btn:not(.dxbl-btn-primary):not(.dxbl-btn-danger):not(.dxbl-btn-success) {
+    background-color: var(--dk-surface2) !important;
+    color: var(--dk-text) !important;
+    border-color: var(--dk-border) !important;
+}
+
+/* DxPopup / DxLoadingPanel */
+.dark-theme .dxbl-modal-dialog,
+.dark-theme .dxbl-modal-content,
+.dark-theme .dxbl-popup-window {
+    background-color: var(--dk-surface) !important;
+    color: var(--dk-text) !important;
+    border-color: var(--dk-border) !important;
+    box-shadow: var(--dk-shadow) !important;
+}
+
+.dark-theme .dxbl-modal-header {
+    background-color: var(--dk-surface2) !important;
+    border-bottom-color: var(--dk-border) !important;
+    color: var(--dk-text) !important;
+}
+
+.dark-theme .dxbl-modal-footer {
+    background-color: var(--dk-surface) !important;
+    border-top-color: var(--dk-border) !important;
+}
+
+.dark-theme .dxbl-loading-panel {
+    background-color: rgba(15,23,42,0.8) !important;
+    color: var(--dk-text) !important;
+}
+
+/* DxTextBox / DxMemo */
+.dark-theme .dxbl-text-edit,
+.dark-theme .dxbl-text-edit input,
+.dark-theme .dxbl-text-edit textarea {
+    background-color: var(--dk-input-bg) !important;
+    color: var(--dk-text) !important;
+    border-color: var(--dk-border) !important;
+}
+
+/* DxFormLayout */
+.dark-theme .dxbl-form-layout-item-caption {
+    color: var(--dk-text-muted) !important;
+}
+
+/* ──────────────────────────────────────────────────────────────
+   15. BOOTSTRAP CARDS / MODALS / DROPDOWNS (in dark mode)
+────────────────────────────────────────────────────────────── */
+.dark-theme .card,
+.dark-theme .card-body,
+.dark-theme .card-header,
+.dark-theme .card-footer {
+    background-color: var(--dk-surface) !important;
+    color: var(--dk-text) !important;
+    border-color: var(--dk-border) !important;
+}
+
+.dark-theme .modal-content {
+    background-color: var(--dk-surface) !important;
+    color: var(--dk-text) !important;
+    border-color: var(--dk-border) !important;
+}
+
+.dark-theme .modal-header {
+    background-color: var(--dk-surface2) !important;
+    border-bottom-color: var(--dk-border) !important;
+    color: var(--dk-text) !important;
+}
+
+.dark-theme .modal-footer {
+    border-top-color: var(--dk-border) !important;
+    background-color: var(--dk-surface) !important;
+}
+
+.dark-theme .dropdown-menu {
+    background-color: var(--dk-surface) !important;
+    border-color: var(--dk-border) !important;
+    box-shadow: var(--dk-shadow) !important;
+}
+
+.dark-theme .dropdown-item {
+    color: var(--dk-text) !important;
+}
+
+.dark-theme .dropdown-item:hover,
+.dark-theme .dropdown-item:focus {
+    background-color: var(--dk-hover) !important;
+    color: var(--dk-text) !important;
+}
+
+.dark-theme .dropdown-divider {
+    border-color: var(--dk-border) !important;
+}
+
+/* Bootstrap form controls */
+.dark-theme .form-control,
+.dark-theme .form-select {
+    background-color: var(--dk-input-bg) !important;
+    color: var(--dk-text) !important;
+    border-color: var(--dk-border) !important;
+}
+
+.dark-theme .form-control::placeholder {
+    color: var(--dk-placeholder) !important;
+}
+
+.dark-theme .form-control:focus,
+.dark-theme .form-select:focus {
+    background-color: var(--dk-input-bg) !important;
+    color: var(--dk-text) !important;
+    border-color: var(--dk-primary) !important;
+    box-shadow: 0 0 0 3px rgba(31,169,211,0.2) !important;
+}
+
+.dark-theme .form-label,
+.dark-theme label {
+    color: var(--dk-text) !important;
+}
+
+.dark-theme .form-text,
+.dark-theme .text-muted {
+    color: var(--dk-text-muted) !important;
+}
+
+/* Bootstrap table */
+.dark-theme .table,
+.dark-theme .table-responsive {
+    color: var(--dk-text) !important;
+}
+
+.dark-theme .table td,
+.dark-theme .table th {
+    border-color: var(--dk-border) !important;
+    color: var(--dk-text) !important;
+}
+
+.dark-theme .table thead th {
+    background-color: var(--dk-surface2) !important;
+}
+
+.dark-theme .table-striped > tbody > tr:nth-of-type(odd) > * {
+    background-color: var(--dk-surface2) !important;
+    color: var(--dk-text) !important;
+}
+
+.dark-theme .table-hover > tbody > tr:hover > * {
+    background-color: var(--dk-hover) !important;
+    color: var(--dk-text) !important;
+}
+
+/* Bootstrap alerts */
+.dark-theme .alert-info {
+    background-color: rgba(31,169,211,0.15) !important;
+    border-color: rgba(31,169,211,0.35) !important;
+    color: #7dd3fc !important;
+}
+
+.dark-theme .alert-success {
+    background-color: rgba(16,185,129,0.15) !important;
+    border-color: rgba(16,185,129,0.35) !important;
+    color: #6ee7b7 !important;
+}
+
+.dark-theme .alert-warning {
+    background-color: rgba(245,158,11,0.15) !important;
+    border-color: rgba(245,158,11,0.35) !important;
+    color: #fcd34d !important;
+}
+
+.dark-theme .alert-danger {
+    background-color: rgba(239,68,68,0.15) !important;
+    border-color: rgba(239,68,68,0.35) !important;
+    color: #fca5a5 !important;
+}
+
+/* ──────────────────────────────────────────────────────────────
+   16. NAV MENUS / SIDEBAR NAVIGATION ITEMS
+────────────────────────────────────────────────────────────── */
+.dark-theme .nav-item a,
+.dark-theme .nav-link,
+.dark-theme .sidebar .nav-link {
+    color: var(--dk-text-muted) !important;
+}
+
+.dark-theme .nav-link:hover,
+.dark-theme .sidebar .nav-link:hover {
+    color: var(--dk-text) !important;
+    background-color: var(--dk-hover) !important;
+}
+
+.dark-theme .nav-link.active,
+.dark-theme .sidebar .nav-link.active {
+    color: var(--dk-primary) !important;
+    background-color: var(--dk-selected) !important;
+}
+
+/* ──────────────────────────────────────────────────────────────
+   17. MISCELLANEOUS COMMON ELEMENTS
+────────────────────────────────────────────────────────────── */
+.dark-theme h1,
+.dark-theme h2,
+.dark-theme h3,
+.dark-theme h4,
+.dark-theme h5,
+.dark-theme h6 {
+    color: var(--dk-text) !important;
+}
+
+.dark-theme p,
+.dark-theme span:not(.badge):not(.e-badge) {
+    color: var(--dk-text);
+}
+
+.dark-theme hr {
+    border-color: var(--dk-border) !important;
+}
+
+.dark-theme .border,
+.dark-theme .border-bottom,
+.dark-theme .border-top,
+.dark-theme .border-start,
+.dark-theme .border-end {
+    border-color: var(--dk-border) !important;
+}
+
+.dark-theme .bg-light,
+.dark-theme .bg-white {
+    background-color: var(--dk-surface2) !important;
+}
+
+.dark-theme .list-group-item {
+    background-color: var(--dk-surface) !important;
+    color: var(--dk-text) !important;
+    border-color: var(--dk-border) !important;
+}
+
+.dark-theme .input-group-text {
+    background-color: var(--dk-surface2) !important;
+    color: var(--dk-text) !important;
+    border-color: var(--dk-border) !important;
+}
+
+/* ──────────────────────────────────────────────────────────────
+   18. BOOTSTRAP SELECT PLUGIN
+────────────────────────────────────────────────────────────── */
+.dark-theme .bootstrap-select > .dropdown-toggle,
+.dark-theme .bootstrap-select .dropdown-menu {
+    background-color: var(--dk-surface) !important;
+    color: var(--dk-text) !important;
+    border-color: var(--dk-border) !important;
+}
+
+.dark-theme .bootstrap-select > .dropdown-toggle .filter-option-inner-inner {
+    color: var(--dk-text) !important;
+}
+
+.dark-theme .bootstrap-select .dropdown-item {
+    color: var(--dk-text) !important;
+}
+
+.dark-theme .bootstrap-select .dropdown-item:hover,
+.dark-theme .bootstrap-select .dropdown-item.active {
+    background-color: var(--dk-hover) !important;
+    color: var(--dk-text) !important;
+}
+
+/* ──────────────────────────────────────────────────────────────
+   19. SKELETON LOADER (inline shimmer animation)
+────────────────────────────────────────────────────────────── */
+.dark-theme .skeleton-cell {
+    background: linear-gradient(
+        90deg,
+        rgba(255,255,255,0.05) 25%,
+        rgba(255,255,255,0.1) 50%,
+        rgba(255,255,255,0.05) 75%
+    ) !important;
+    background-size: 200% 100% !important;
+}
+
+.dark-theme .skeleton-row {
+    border-bottom-color: var(--dk-border) !important;
+}
+
+/* ──────────────────────────────────────────────────────────────
+   20. PAGE-LEVEL WRAPPER / SEARCH PANEL
+   (inline style background: #f9f9f9 on page wrapper divs)
+────────────────────────────────────────────────────────────── */
+/* Broad catch — the MutationObserver in theme.js handles inline styles,
+   but these CSS rules add a belt-and-suspenders cover for any static ones */
+.dark-theme .card.shadow-sm,
+.dark-theme .card.rounded-lg,
+.dark-theme .rounded-lg,
+.dark-theme .shadow-sm {
+    background-color: var(--dk-surface) !important;
+    border-color: var(--dk-border) !important;
+    color: var(--dk-text) !important;
+}
+
+/* ──────────────────────────────────────────────────────────────
+   21. BOOTSTRAP PAGINATION
+────────────────────────────────────────────────────────────── */
+.dark-theme .pagination .page-link {
+    background-color: var(--dk-surface) !important;
+    border-color: var(--dk-border) !important;
+    color: var(--dk-text) !important;
+}
+
+.dark-theme .pagination .page-item.active .page-link {
+    background-color: var(--dk-primary) !important;
+    border-color: var(--dk-primary) !important;
+    color: #fff !important;
+}
+
+.dark-theme .pagination .page-item.disabled .page-link {
+    background-color: var(--dk-surface) !important;
+    border-color: var(--dk-border) !important;
+    color: var(--dk-text-muted) !important;
+}
+
+/* ──────────────────────────────────────────────────────────────
+   22. DEVEXPRESS GRID TOOLBAR SEARCH BOX
+────────────────────────────────────────────────────────────── */
+.dark-theme .dxbl-grid-toolbar,
+.dark-theme .dxbl-grid .dxbl-toolbar {
+    background-color: var(--dk-surface) !important;
+    border-color: var(--dk-border) !important;
+}
+
+.dark-theme .dxbl-grid-search-editor input,
+.dark-theme .dxbl-search-box input {
+    background-color: var(--dk-input-bg) !important;
+    color: var(--dk-text) !important;
+    border-color: var(--dk-border) !important;
+}
+
+/* ──────────────────────────────────────────────────────────────
+   23. REMAINING TEXT / COLOR FIXES
+────────────────────────────────────────────────────────────── */
+.dark-theme .text-dark {
+    color: var(--dk-text) !important;
+}
+
+.dark-theme .text-body {
+    color: var(--dk-text) !important;
+}
+
+.dark-theme .text-secondary {
+    color: var(--dk-text-muted) !important;
+}
+
+.dark-theme strong,
+.dark-theme b {
+    color: inherit;
+}
+
+/* Table td / th — force all background regardless of inline style */
+.dark-theme table td,
+.dark-theme table th {
+    background-color: var(--dk-surface) !important;
+    color: var(--dk-text) !important;
+    border-color: var(--dk-border) !important;
+}
+
+.dark-theme table tr:nth-child(even) td {
+    background-color: var(--dk-surface2) !important;
+}
+
+.dark-theme table tr:hover td {
+    background-color: var(--dk-hover) !important;
+}
+
+/* ──────────────────────────────────────────────────────────────
+   24. INLINE STYLE BACKGROUND OVERRIDES FOR SEARCH & FOOTER BARS
+────────────────────────────────────────────────────────────── */
+.dark-theme div[style*="background-color: #f9f9f9"],
+.dark-theme div[style*="background-color:#f9f9f9"],
+.dark-theme div[style*="background-color: #ffffff"],
+.dark-theme div[style*="background-color:#ffffff"],
+.dark-theme div[style*="background-color: #fff"],
+.dark-theme div[style*="background-color:#fff"],
+.dark-theme div[style*="background-color: white"],
+.dark-theme div[style*="background: #f9f9f9"],
+.dark-theme div[style*="background:#f9f9f9"],
+.dark-theme div[style*="background: #ffffff"],
+.dark-theme div[style*="background:#ffffff"],
+.dark-theme div[style*="background: #fff"],
+.dark-theme div[style*="background:#fff"],
+.dark-theme div[style*="background: white"],
+.dark-theme section[style*="background"],
+.dark-theme article[style*="background"] {
+    background-color: var(--card-bg, #1e293b) !important;
+    color: var(--text-primary, #f1f5f9) !important;
+    border-color: var(--border-subtle, rgba(255,255,255,0.09)) !important;
+}
+
+.dark-theme div[style*="border-top: 1px solid #ddd"],
+.dark-theme div[style*="border-top:1px solid #ddd"],
+.dark-theme div[style*="border-top: 1px solid #e0e0e0"],
+.dark-theme div[style*="border: 1px solid #e0e0e0"] {
+    border-color: var(--border-subtle, rgba(255,255,255,0.09)) !important;
+    background-color: var(--card-bg, #1e293b) !important;
+    color: var(--text-primary, #f1f5f9) !important;
+}
+
+.dark-theme div[style*="color: #666"],
+.dark-theme div[style*="color:#666"],
+.dark-theme div[style*="color: #666666"],
+.dark-theme span[style*="color: #666"],
+.dark-theme span[style*="color:#666"],
+.dark-theme p[style*="color: #666"],
+.dark-theme p[style*="color:#666"] {
+    color: var(--text-secondary, #94a3b8) !important;
+}
+
+/* ──────────────────────────────────────────────────────────────
+   25. CARDS, INPUT GROUPS & PAGINATION CONTAINERS
+────────────────────────────────────────────────────────────── */
+.dark-theme .card,
+.dark-theme .card-body,
+.dark-theme .card-header,
+.dark-theme .card-footer,
+.dark-theme .grid-wrapper,
+.dark-theme .pagination-controls,
+.dark-theme .pagination-info,
+.dark-theme .pagination-buttons,
+.dark-theme .page-size-selector {
+    background-color: var(--card-bg, #1e293b) !important;
+    color: var(--text-primary, #f1f5f9) !important;
+    border-color: var(--border-subtle, rgba(255,255,255,0.09)) !important;
+}
+
+.dark-theme .input-group,
+.dark-theme .input-group .form-control,
+.dark-theme .input-group .input-group-text,
+.dark-theme .input-group .btn-outline-secondary {
+    background-color: rgba(255, 255, 255, 0.06) !important;
+    color: var(--text-primary, #f1f5f9) !important;
+    border-color: var(--border-subtle, rgba(255,255,255,0.09)) !important;
+}
+
+.dark-theme .input-group .btn-outline-secondary:hover {
+    background-color: rgba(255, 255, 255, 0.12) !important;
+    color: #ffffff !important;
+}
+
+
+
+
+/* ──────────────────────────────────────────────────────────────
+   26. THEME PLAYGROUND & COMPONENT INSPECTOR OVERRIDES
+────────────────────────────────────────────────────────────── */
+.dark-theme .ts-inspector-save-btn,
+.ts-inspector-save-btn {
+    background-color: #10b981 !important;
+    background: #10b981 !important;
+    color: #ffffff !important;
+    border: none !important;
+    padding: 6px 16px !important;
+    border-radius: 6px !important;
+    font-size: 0.8rem !important;
+    font-weight: 600 !important;
+    cursor: pointer !important;
+    display: inline-flex !important;
+    align-items: center !important;
+    box-shadow: 0 2px 6px rgba(16, 185, 129, 0.4) !important;
+}
+
+.dark-theme .ts-inspector-save-btn:hover,
+.ts-inspector-save-btn:hover {
+    background-color: #059669 !important;
+    background: #059669 !important;
+    color: #ffffff !important;
+}
+
+.dark-theme .ts-demo-alert,
+.ts-demo-alert {
+    margin-top: 16px;
+    padding: 10px 14px;
+    background-color: rgba(34, 197, 94, 0.15) !important;
+    border-left: 4px solid #22c55e !important;
+    border-radius: 6px;
+    color: #4ade80 !important;
+    display: flex;
+    align-items: center;
+    font-size: 0.8rem;
+}
+
+.dark-theme .ts-demo-alert span,
+.ts-demo-alert span {
+    color: #4ade80 !important;
+}
+
+.dark-theme .ts-demo-alert i,
+.ts-demo-alert i {
+    color: #22c55e !important;
+}
+
+.dark-theme table td .ts-demo-status-active,
+.dark-theme .ts-demo-status-active { background-color: #d1fae5 !important; color: #065f46 !important; }
+
+.dark-theme table td .ts-demo-status-pending,
+.dark-theme .ts-demo-status-pending { background-color: #fef3c7 !important; color: #92400e !important; }
+
+.dark-theme table td .ts-demo-status-done,
+.dark-theme .ts-demo-status-done { background-color: #dbeafe !important; color: #1e40af !important; }
+
+.dark-theme table td .ts-demo-status-danger,
+.dark-theme .ts-demo-status-danger { background-color: #fee2e2 !important; color: #991b1b !important; }

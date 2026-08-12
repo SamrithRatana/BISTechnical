@@ -1,0 +1,1012 @@
+@page "/sparepart-usage"
+@using ServiceMaintenance.Models
+@using ServiceMaintenance.Services.BISServices
+@inject SparepartUsageService SparepartUsageService
+@inject NavigationManager Navigation
+@inject IJSRuntime JS
+
+<PageTitle>Sparepart Usage Report</PageTitle>
+
+<div class="usage-page">
+
+    <!-- Header -->
+    <div class="page-header">
+        <div class="header-left">
+            <div class="header-icon">
+                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z" />
+                </svg>
+            </div>
+            <div>
+                <h1 class="page-title">Sparepart Usage</h1>
+                <p class="page-subtitle">Track consumption across service records</p>
+            </div>
+        </div>
+
+        <div class="header-actions">
+            @if (result != null)
+            {
+                <div class="summary-chips">
+                    <span class="chip chip-blue">
+                        <strong>@result.TotalCount</strong> unique parts
+                    </span>
+                    <span class="chip chip-orange">
+                        <strong>@result.TotalUsedQuantity</strong> total qty used
+                    </span>
+                    @if (result.TotalServiceUsedQuantity > 0)
+                    {
+                        <span class="chip chip-indigo">
+                            <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" style="flex-shrink:0">
+                                <path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z" />
+                            </svg>
+                            <strong>@result.TotalServiceUsedQuantity</strong> service qty
+                        </span>
+                    }
+                    @if (result.TotalManualUsedQuantity > 0)
+                    {
+                        <span class="chip chip-amber">
+                            <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" style="flex-shrink:0">
+                                <path d="M18 11V6a2 2 0 0 0-2-2v0a2 2 0 0 0-2 2v0M14 10V4a2 2 0 0 0-2-2v0a2 2 0 0 0-2 2v0m0 0v0a2 2 0 0 0-2-2v0a2 2 0 0 0-2 2v5" />
+                                <path d="M6 14v1a6 6 0 0 0 12 0v-2" />
+                            </svg>
+                            <strong>@result.TotalManualUsedQuantity</strong> manual qty
+                        </span>
+                    }
+                </div>
+            }
+        </div>
+    </div>
+
+    <!-- Filter Card -->
+    <div class="filter-card">
+        <div class="filter-row">
+
+            <div class="filter-group">
+                <label class="filter-label">From Date</label>
+                <input type="date" class="filter-input" @bind="fromDate"
+                       disabled="@ignoreDateFilter"
+                       style="@(ignoreDateFilter ? "opacity:.4;cursor:not-allowed;pointer-events:none;" : "")" />
+            </div>
+
+            <div class="filter-group">
+                <label class="filter-label">To Date</label>
+                <input type="date" class="filter-input" @bind="toDate"
+                       disabled="@ignoreDateFilter"
+                       style="@(ignoreDateFilter ? "opacity:.4;cursor:not-allowed;pointer-events:none;" : "")" />
+            </div>
+
+            <div class="filter-group filter-group--wide">
+                <label class="filter-label">Search Sparepart</label>
+                <div class="search-wrapper">
+                    <svg class="search-icon" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <circle cx="11" cy="11" r="8" />
+                        <path d="m21 21-4.35-4.35" />
+                    </svg>
+                    <input type="text" class="filter-input filter-input--search"
+                           placeholder="Name or serial..."
+                           @bind="searchTerm"
+                           @bind:event="oninput"
+                           @onkeyup="OnSearchKeyUp" />
+                </div>
+            </div>
+
+            @* <div class="filter-group">
+                <label class="filter-label">Status</label>
+                <select class="filter-input" @bind="statusFilter">
+                    <option value="">All Statuses</option>
+                    <option value="Finished">Finished</option>
+                    <option value="Repairing">Inspection</option>                 
+                </select>
+            </div> *@
+
+            <div class="filter-group">
+                <label class="filter-label">Service Type</label>
+                <select class="filter-input" @bind="serviceTypeFilter">
+                    <option value="">All Types</option>
+                    <option value="Free">Free</option>
+                    <option value="Charge">Charge</option>
+                </select>
+            </div>
+
+            <div class="filter-group">
+                <label class="filter-label">Condition</label>
+                <select class="filter-input" @bind="conditionFilter">
+                    <option value="">All Conditions</option>
+                    <option value="Replace">Replace</option>
+                    <option value="Free">Free</option>
+                    <option value="Fix">Fix (No Stock Used)</option>
+                </select>
+            </div>
+
+            <div class="filter-group">
+                <label class="filter-label">Source</label>
+                <select class="filter-input" @bind="sourceFilter">
+                    <option value="">All Sources</option>
+                    <option value="Service">Service Only</option>
+                    <option value="Manual">Manual Only</option>
+                </select>
+            </div>
+
+            <div class="filter-group">
+                <label class="filter-label">Sort By</label>
+                <select class="filter-input" @bind="sortBy">
+                    <option value="usedquantity">Used Qty</option>
+                    <option value="itemname">Name</option>
+                    <option value="usagecount">Usage Count</option>
+                </select>
+            </div>
+
+        </div>
+
+        <!-- Row 2: Include + Date Mode + Actions -->
+        <div class="filter-row" style="margin-top:.75rem; align-items:center; flex-wrap:wrap;">
+
+            <div class="filter-group">
+                <label class="filter-label">Include</label>
+                <label style="display:flex; align-items:center; gap:6px; cursor:pointer; font-size:.84rem; height:36px;">
+                    <input type="checkbox" @bind="includeManual" />
+                    ???????????????????
+                </label>
+            </div>
+            <div class="filter-group">
+                <label class="filter-label">Date Filter</label>
+                <label style="display:flex; align-items:center; gap:6px; cursor:pointer; font-size:.84rem; height:36px;">
+                    <input type="checkbox" @bind="ignoreDateFilter" />
+                    ??????????
+                </label>
+            </div>
+            @* <div class="filter-group" style="min-width:320px;">
+                <label class="filter-label">Date Mode</label>
+                <div style="display:flex; gap:1.5rem; align-items:center; height:36px; flex-wrap:wrap;">
+                    <label style="display:flex; align-items:center; gap:5px; cursor:pointer; font-size:.84rem;">
+                        <input type="radio" name="usageDateMode"
+                               checked="@(reportMode == "standard")"
+                               @onchange="@(() => reportMode = "standard")" />
+                        ?????????????????????????
+                    </label>
+                    <label style="display:flex; align-items:center; gap:5px; cursor:pointer; font-size:.84rem;">
+                        <input type="radio" name="usageDateMode"
+                               checked="@(reportMode == "alwayscreated")"
+                               @onchange="@(() => reportMode = "alwayscreated")" />
+                        ?????? Service Date
+                    </label>
+                </div>
+            </div> *@
+
+            <div class="filter-group filter-group--actions" style="margin-left:auto;">
+                <label class="filter-label">&nbsp;</label>
+                <div class="action-buttons">
+                    <button class="btn btn-primary" @onclick="Search" disabled="@isLoading">
+                        @if (isLoading)
+                        {
+                            <span class="spinner"></span>
+                        }
+                        else
+                        {
+                            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+                                <circle cx="11" cy="11" r="8" />
+                                <path d="m21 21-4.35-4.35" />
+                            </svg>
+                        }
+                        Search
+                    </button>
+                    <button class="btn btn-ghost" @onclick="ResetFilters">Reset</button>
+                    <button class="btn btn-export" @onclick="ExportToExcel" disabled="@(result == null || !result.Items.Any())">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+                            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                            <polyline points="7 10 12 15 17 10" />
+                            <line x1="12" y1="15" x2="12" y2="3" />
+                        </svg>
+                        Export Excel
+                    </button>
+                </div>
+            </div>
+
+        </div>
+
+        <!-- Quick Date Shortcuts -->
+        <div class="quick-dates">
+            <span class="quick-dates-label">Quick:</span>
+            <button class="quick-btn" @onclick="() => SetQuickDate(QuickDate.Today)">Today</button>
+            <button class="quick-btn" @onclick="() => SetQuickDate(QuickDate.ThisWeek)">This Week</button>
+            <button class="quick-btn @(IsThisMonth() ? "quick-btn--active" : "")" @onclick="() => SetQuickDate(QuickDate.ThisMonth)">This Month</button>
+            <button class="quick-btn" @onclick="() => SetQuickDate(QuickDate.LastMonth)">Last Month</button>
+            <button class="quick-btn" @onclick="() => SetQuickDate(QuickDate.ThisYear)">This Year</button>
+        </div>
+
+        <!-- Active filter chips -->
+        @if (!string.IsNullOrEmpty(statusFilter)
+
+                || !string.IsNullOrEmpty(serviceTypeFilter)
+
+                || !string.IsNullOrEmpty(conditionFilter)
+
+                || !string.IsNullOrEmpty(sourceFilter)
+
+                || reportMode == "alwayscreated"
+
+                || ignoreDateFilter)        // ? ADD THIS condition too
+
+        {
+
+            <div class="active-filters">
+
+                <span class="filter-label" style="margin-right:.4rem;">Active:</span>
+
+                @if (!string.IsNullOrEmpty(statusFilter))
+
+                {
+
+                    <span class="active-chip">
+
+                        Status: @statusFilter
+
+                        <span @onclick="() => { statusFilter = string.Empty; }">×</span>
+
+                    </span>
+
+                }
+
+                @if (!string.IsNullOrEmpty(serviceTypeFilter))
+
+                {
+
+                    <span class="active-chip active-chip--blue">
+
+                        Type: @serviceTypeFilter
+
+                        <span @onclick="() => { serviceTypeFilter = string.Empty; }">×</span>
+
+                    </span>
+
+                }
+
+                @if (!string.IsNullOrEmpty(conditionFilter))
+
+                {
+
+                    <span class="active-chip active-chip--purple">
+
+                        Condition: @conditionFilter
+
+                        <span @onclick="() => { conditionFilter = string.Empty; }">×</span>
+
+                    </span>
+
+                }
+
+                @if (!string.IsNullOrEmpty(sourceFilter))
+
+                {
+
+                    <span class="active-chip active-chip--amber">
+
+                        Source: @sourceFilter
+
+                        <span @onclick="() => { sourceFilter = string.Empty; }">×</span>
+
+                    </span>
+
+                }
+
+                @if (reportMode == "alwayscreated")
+
+                {
+
+                    <span class="active-chip active-chip--green">Mode: Always ServiceDate</span>
+
+                }
+
+                @if (ignoreDateFilter)           // ? PASTE HERE, last inside the div
+
+                {
+
+                    <span class="active-chip active-chip--green">
+
+                        Date: Ignored
+
+                        <span @onclick="() => { ignoreDateFilter = false; }">×</span>
+
+                    </span>
+
+                }
+
+            </div>
+
+        }
+    </div>
+
+    <!-- Error -->
+    @if (!string.IsNullOrEmpty(errorMessage))
+    {
+        <div class="alert alert-error">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <circle cx="12" cy="12" r="10" />
+                <line x1="12" y1="8" x2="12" y2="12" />
+                <line x1="12" y1="16" x2="12.01" y2="16" />
+            </svg>
+            @errorMessage
+        </div>
+    }
+
+    <!-- Table -->
+    <div class="table-card">
+        @if (isLoading)
+        {
+            <div class="loading-state">
+                <div class="loading-spinner"></div>
+                <p>Loading sparepart usage...</p>
+            </div>
+        }
+        else if (result == null || !result.Items.Any())
+        {
+            <div class="empty-state">
+                <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.2">
+                    <path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z" />
+                </svg>
+                <p>No sparepart usage found</p>
+                <span>Try adjusting your date range or filters</span>
+            </div>
+        }
+        else
+        {
+            <div class="table-header-row">
+                <span class="table-info">
+                    Showing
+                    <strong>@((currentPage - 1) * pageSize + 1)–@Math.Min(currentPage * pageSize, result.TotalCount)</strong>
+                    of <strong>@result.TotalCount</strong> unique parts
+                </span>
+                <div class="sort-toggle">
+                    <label class="filter-label" style="margin:0">Order</label>
+                    <button class="sort-dir-btn @(sortDescending ? "active" : "")" @onclick="() => ToggleSortDir(true)">? Desc</button>
+                    <button class="sort-dir-btn @(!sortDescending ? "active" : "")" @onclick="() => ToggleSortDir(false)">? Asc</button>
+                </div>
+            </div>
+
+            <div class="table-wrapper">
+                <table class="data-table">
+                    <thead>
+                        <tr>
+                            <th>#</th>
+                            <th>Sparepart Name</th>
+                            <th>Serial Number</th>
+                            <th>Stock Qty</th>
+                            <th>Used Qty</th>
+                            <th>Source</th>
+                            <th>Usage Count</th>
+                            <th>Usage Bar</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @{
+                            int rowNum = (currentPage - 1) * pageSize + 1;
+                        }
+                        @foreach (var item in result.Items)
+                        {
+                            var pct = item.StockQuantity > 0
+                            ? Math.Min((double)item.UsedQuantity / item.StockQuantity * 100, 100)
+                            : 100;
+                            var barColor = pct >= 80 ? "bar-red" : pct >= 50 ? "bar-orange" : "bar-green";
+                            var isExpanded = expandedRows.Contains(item.SparepartId);
+                            var hasFixOnly = item.Conditions != null
+                            && item.Conditions.All(c => c == "Fix");
+
+                            <tr class="data-row @(isExpanded ? "row-expanded" : "") @(hasFixOnly ? "row-fix-only" : "")"
+                                @onclick="() => ToggleExpand(item.SparepartId)"
+                                style="cursor:pointer;">
+                                <td class="td-num">@rowNum</td>
+                                <td class="td-name">
+                                    <div style="display:flex;align-items:center;gap:6px;">
+                                        <span class="expand-icon">@(isExpanded ? "?" : "?")</span>
+                                        <span class="part-name">@item.ItemName</span>
+                                        @if (hasFixOnly)
+                                        {
+                                            <span class="fix-only-tag">Fix Only</span>
+                                        }
+                                    </div>
+                                </td>
+                                <td class="td-serial">
+                                    <code class="serial-code">@(string.IsNullOrEmpty(item.SerialNumber) ? "—" : item.SerialNumber)</code>
+                                </td>
+                                <td class="td-qty"><span class="qty-badge qty-stock">@item.StockQuantity</span></td>
+                                <td class="td-qty">
+                                    <span class="qty-badge @(hasFixOnly ? "qty-fix" : "qty-used")">
+                                        @item.UsedQuantity
+                                    </span>
+                                </td>
+                                <td class="td-source">
+                                    @{
+                                        var serviceOrders = item.Services?
+                                        .Where(s => s.Source == "Service" && !string.IsNullOrEmpty(s.ReportNo))
+                                        .Select(s => s.ReportNo)
+                                        .Distinct()
+                                        .ToList() ?? new List<string>();
+
+                                        var manualCount = item.Services?
+                                        .Count(s => s.Source == "Manual") ?? 0;
+
+                                        const int maxVisible = 1;
+                                    }
+
+                                    @if (serviceOrders.Any())
+                                    {
+                                        <div style="display:flex;flex-wrap:wrap;gap:3px;align-items:center;">
+                                            @foreach (var rno in serviceOrders.Take(maxVisible))
+                                            {
+                                                <span class="reportno-badge" @onclick:stopPropagation="true">
+                                                    @rno
+                                                </span>
+                                            }
+                                            @if (serviceOrders.Count > maxVisible)
+                                            {
+                                                <span class="reportno-more" @onclick:stopPropagation="true"
+                                                      @onclick="() => ToggleExpand(item.SparepartId)">
+                                                    +@(serviceOrders.Count - maxVisible) more
+                                                </span>
+                                            }
+                                        </div>
+                                    }
+
+                                    @if (manualCount > 0)
+                                    {
+                                        <div style="margin-top:3px;">
+                                            <span class="source-badge source-manual" style="font-size:.72rem;">
+                                                ? @manualCount Manual
+                                                @if (item.ManualUsedQty > 0)
+                                                {
+                                                    <span class="source-qty">(@item.ManualUsedQty pcs)</span>
+                                                }
+                                            </span>
+                                        </div>
+                                    }
+
+                                    @if (item.Conditions != null && item.Conditions.Contains("Fix"))
+                                    {
+                                        <div style="margin-top:3px;">
+                                            <span class="source-badge source-fix">
+                                                ?? Fix <span class="source-qty">(Fix ????????????)</span>
+                                            </span>
+                                        </div>
+                                    }
+                                </td>
+                                <td class="td-qty">
+                                    <span class="usage-count">@item.UsageCount <small>jobs</small></span>
+                                </td>
+                                <td class="td-bar">
+                                    @if (hasFixOnly)
+                                    {
+                                        <span style="font-size:.72rem;color:#15803d;font-style:italic;">No stock impact</span>
+                                    }
+                                    else
+                                    {
+                                        <div class="usage-bar-wrap">
+                                            <div class="usage-bar @barColor" style="width:@pct.ToString("F0")%"></div>
+                                            <span class="bar-label">@pct.ToString("F0")%</span>
+                                        </div>
+                                    }
+                                </td>
+                            </tr>
+
+                            <!-- Expanded detail row -->
+                            @if (isExpanded)
+                            {
+                                <tr class="detail-row">
+                                    <td colspan="8">
+                                        <div class="detail-panel">
+                                            <div class="detail-title">
+                                                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                                    <path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z" />
+                                                </svg>
+                                                Service orders that used this sparepart
+                                            </div>
+
+                                            @if (item.Services == null || !item.Services.Any())
+                                            {
+                                                <p style="font-size:.8rem;color:#9ca3af;margin:.5rem 0 0;">No service order details available.</p>
+                                            }
+                                            else
+                                            {
+                                                <table class="detail-table">
+                                                    <thead>
+                                                        <tr>
+                                                            <th>Report No</th>
+                                                            <th>Machine Name</th>
+                                                            <th>Machine Serial</th>
+                                                            <th>Company</th>
+                                                            <th>Service Status</th>
+                                                            <th>Service Type</th>
+                                                            <th>Used Qty</th>
+                                                            <th>Condition</th>
+                                                            <th>Reason</th>
+                                                            <th>Date (Audit)</th>
+                                                        </tr>
+                                                    </thead>
+                                                    <tbody>
+                                                        @foreach (var svc in item.Services)
+                                                        {
+                                                            var isManual = svc.Source == "Manual";
+                                                            <tr class="@(svc.Condition == "Fix" ? "detail-row-fix" : "") @(isManual ? "detail-row-manual" : "")">
+                                                                <td>
+                                                                    @if (isManual)
+                                                                    {
+                                                                        <span class="manual-tag">Manual</span>
+                                                                    }
+                                                                    else
+                                                                    {
+                                                                        <code class="serial-code">@svc.ReportNo</code>
+                                                                    }
+                                                                </td>
+                                                                <td class="td-name">
+                                                                    <span style="font-size:.8rem;font-weight:600;color:#111827;">
+                                                                        @(string.IsNullOrEmpty(svc.MachineItemName) ? "—" : svc.MachineItemName)
+                                                                    </span>
+                                                                </td>
+                                                                <td>
+                                                                    <code class="serial-code">
+                                                                        @(string.IsNullOrEmpty(svc.MachineSerialNumber) ? "—" : svc.MachineSerialNumber)
+                                                                    </code>
+                                                                </td>
+                                                                <td class="svc-company">@svc.CompanyName</td>
+                                                                <td>
+                                                                    @if (isManual)
+                                                                    {
+                                                                        <span class="source-badge source-manual" style="font-size:.72rem;">
+                                                                            Stock Out
+                                                                        </span>
+                                                                    }
+                                                                    else
+                                                                    {
+                                                                        <span class="status-badge @GetStatusClass(svc.ServiceStatus)">
+                                                                            @svc.ServiceStatus
+                                                                        </span>
+                                                                    }
+                                                                </td>
+                                                                <td>
+                                                                    <span class="cond-badge">
+                                                                        @(string.IsNullOrEmpty(svc.ServiceType) || svc.ServiceType == "—" ? "—" : svc.ServiceType)
+                                                                    </span>
+                                                                </td>
+                                                                <td class="td-qty">
+                                                                    <span class="qty-badge @(svc.Condition == "Fix" ? "qty-fix" : isManual ? "qty-manual" : "qty-used")"
+                                                                          style="font-size:.8rem;">
+                                                                        @svc.Quantity
+                                                                    </span>
+                                                                </td>
+                                                                <td>
+                                                                    @if (!isManual)
+                                                                    {
+                                                                        <span class="cond-badge @GetConditionClass(svc.Condition)">
+                                                                            @(string.IsNullOrEmpty(svc.Condition) ? "N/A" : svc.Condition)
+                                                                            @if (svc.Condition == "Fix")
+                                                                            {
+                                                                                <span style="font-size:.65rem;opacity:.85;margin-left:2px;">(no stock)</span>
+                                                                            }
+                                                                        </span>
+                                                                    }
+                                                                    else
+                                                                    {
+                                                                        <span class="cond-badge" style="color:#9ca3af;">—</span>
+                                                                    }
+                                                                </td>
+                                                                <td class="td-reason">
+                                                                    @if (isManual && !string.IsNullOrEmpty(svc.Reason) && svc.Reason != "—")
+                                                                    {
+                                                                        <span class="reason-text" title="@svc.Reason">
+                                                                            @(svc.Reason.Length > 60 ? svc.Reason[..60] + "…" : svc.Reason)
+                                                                        </span>
+                                                                    }
+                                                                    else
+                                                                    {
+                                                                        <span style="color:#d1d5db;font-size:.75rem;">—</span>
+                                                                    }
+                                                            </td>
+                                                            <td style="font-size:.78rem;color:#6b7280;white-space:nowrap;">
+                                                                @(svc.ProcessDate.HasValue
+                                                                                                                ? svc.ProcessDate.Value.AddHours(7).ToString("dd MMM yyyy HH:mm")
+                                                                                                                : "—")
+                                            </td>
+                                        </tr>
+                                                        }
+                                                    </tbody>
+                                                </table>
+                                            }
+                                        </div>
+                                    </td>
+                                </tr>
+                            }
+
+                            rowNum++;
+                        }
+                    </tbody>
+
+                    <!-- Totals footer -->
+                    <tfoot>
+                        <tr class="totals-row">
+                            <td colspan="3" class="totals-label">
+                                <span>Page @currentPage Subtotal</span>
+                                @if (result.TotalPages > 1)
+                                {
+                                    <span class="totals-note">
+                                        — Grand total (all @result.TotalPages pages):
+                                        <strong>@result.TotalUsedQuantity</strong> pcs
+                                        across <strong>@result.TotalCount</strong> parts
+                                    </span>
+                                }
+                            </td>
+                            <td class="td-qty">
+                                <span class="qty-badge totals-stock">@result.Items.Sum(x => x.StockQuantity)</span>
+                            </td>
+                            <td class="td-qty">
+                                <span class="qty-badge totals-used">@result.Items.Sum(x => x.UsedQuantity)</span>
+                            </td>
+                            <td class="td-source">
+                                @{
+                                    var pageSvcJobs = result.Items.Sum(x => x.ServiceUsageCount);
+                                    var pageSvcQty = result.Items.Sum(x => x.ServiceUsedQty);
+                                    var pageManJobs = result.Items.Sum(x => x.ManualStockOutCount);
+                                    var pageManQty = result.Items.Sum(x => x.ManualUsedQty);
+                                }
+                                @if (pageSvcJobs > 0)
+                                {
+                                    <span class="source-badge source-service">
+                                        @pageSvcJobs Service <span class="source-qty">(@pageSvcQty pcs)</span>
+                                    </span>
+                                }
+                                @if (pageManJobs > 0)
+                                {
+                                    <span class="source-badge source-manual">
+                                        @pageManJobs ??????? <span class="source-qty">(@pageManQty pcs)</span>
+                                    </span>
+                                }
+                                @if (result.TotalPages > 1)
+                                {
+                                    <div class="grand-total-source">
+                                        @if (result.TotalServiceUsedQuantity > 0)
+                                        {
+                                            <span class="source-grand source-grand--service">
+                                                All: <strong>@result.TotalServiceUsedQuantity</strong> svc pcs
+                                            </span>
+                                        }
+                                        @if (result.TotalManualUsedQuantity > 0)
+                                        {
+                                            <span class="source-grand source-grand--manual">
+                                                All: <strong>@result.TotalManualUsedQuantity</strong> manual pcs
+                                            </span>
+                                        }
+                                    </div>
+                                }
+                            </td>
+                            <td class="td-qty">
+                                <span class="usage-count">@result.Items.Sum(x => x.UsageCount) <small>jobs</small></span>
+                            </td>
+                            <td></td>
+                        </tr>
+                    </tfoot>
+                </table>
+            </div>
+
+            @if (result.TotalPages > 1)
+            {
+                <div class="pagination">
+                    <button class="page-btn" disabled="@(currentPage == 1)" @onclick="() => GoToPage(currentPage - 1)">? Prev</button>
+                    @for (int p = Math.Max(1, currentPage - 2); p <= Math.Min(result.TotalPages, currentPage + 2); p++)
+                    {
+                        var pageNum = p;
+                        <button class="page-btn @(pageNum == currentPage ? "page-btn--active" : "")" @onclick="() => GoToPage(pageNum)">@pageNum</button>
+                    }
+                    <button class="page-btn" disabled="@(currentPage == result.TotalPages)" @onclick="() => GoToPage(currentPage + 1)">Next ?</button>
+                    <span class="page-info">Page @currentPage / @result.TotalPages</span>
+                </div>
+            }
+        }
+    </div>
+</div>
+
+@code {
+    private DateTime? fromDate = new DateTime(DateTime.Today.Year, DateTime.Today.Month, 1);
+    private DateTime? toDate = DateTime.Today;
+    private string searchTerm;
+    private string statusFilter = "Finished";
+    private string serviceTypeFilter = string.Empty;
+    private string conditionFilter = string.Empty;
+    private string sourceFilter = string.Empty;
+    private string reportMode = "standard";
+    private string sortBy = "usedquantity";
+    private bool sortDescending = true;
+    private int currentPage = 1;
+    private int pageSize = 15;
+    private bool includeManual = true;
+    private HashSet<Guid> expandedRows = new();
+    private bool ignoreDateFilter = false;
+
+    private PaginatedResult<SparepartUsageSummary> result;
+    private bool isLoading;
+    private string errorMessage;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await Search();
+    }
+
+    private async Task Search()
+    {
+        currentPage = 1;
+        expandedRows.Clear();
+        await LoadData();
+    }
+
+    private async Task LoadData()
+    {
+        isLoading = true;
+        errorMessage = null;
+        StateHasChanged();
+
+        try
+        {
+            result = await SparepartUsageService.GetSparepartUsageAsync(
+     pageNumber: currentPage,
+     pageSize: pageSize,
+     fromDate: ignoreDateFilter ? null : fromDate,       // ? pass null when ignored
+     toDate: ignoreDateFilter ? null : toDate,           // ? pass null when ignored
+     searchTerm: searchTerm,
+     status: string.IsNullOrEmpty(statusFilter) ? null : statusFilter,
+     sortBy: sortBy,
+     sortDescending: sortDescending,
+     includeManualStockOut: includeManual,
+     serviceType: string.IsNullOrEmpty(serviceTypeFilter) ? null : serviceTypeFilter,
+     condition: string.IsNullOrEmpty(conditionFilter) ? null : conditionFilter,
+     sourceFilter: string.IsNullOrEmpty(sourceFilter) ? null : sourceFilter,
+     dateMode: reportMode
+ );
+        }
+        catch (Exception ex)
+        {
+            errorMessage = $"Failed to load data: {ex.Message}";
+            Console.WriteLine($"[SparepartUsage] Error: {ex.Message}");
+        }
+        finally
+        {
+            isLoading = false;
+        }
+    }
+
+    private void ToggleExpand(Guid id)
+    {
+        if (expandedRows.Contains(id))
+            expandedRows.Remove(id);
+        else
+            expandedRows.Add(id);
+    }
+
+    private async Task GoToPage(int page)
+    {
+        currentPage = page;
+        expandedRows.Clear();
+        await LoadData();
+    }
+
+    private async Task ToggleSortDir(bool desc)
+    {
+        sortDescending = desc;
+        await Search();
+    }
+
+    private async Task OnSearchKeyUp(KeyboardEventArgs e)
+    {
+        if (e.Key == "Enter") await Search();
+    }
+
+    private void ResetFilters()
+    {
+        fromDate = new DateTime(DateTime.Today.Year, DateTime.Today.Month, 1);
+        toDate = DateTime.Today;
+        searchTerm = null;
+        statusFilter = "Finished";
+        serviceTypeFilter = string.Empty;
+        conditionFilter = string.Empty;
+        sourceFilter = string.Empty;
+        reportMode = "standard";
+        sortBy = "usedquantity";
+        sortDescending = true;
+        currentPage = 1;
+        result = null;
+        ignoreDateFilter = false;
+        expandedRows.Clear();
+    }
+
+    private bool IsThisMonth() =>
+        fromDate == new DateTime(DateTime.Today.Year, DateTime.Today.Month, 1)
+        && toDate?.Date == DateTime.Today;
+
+    private enum QuickDate { Today, ThisWeek, ThisMonth, LastMonth, ThisYear }
+
+    private void SetQuickDate(QuickDate q)
+    {
+        var today = DateTime.Today;
+        (fromDate, toDate) = q switch
+        {
+            QuickDate.Today => (today, today),
+            QuickDate.ThisWeek => (today.AddDays(-(int)today.DayOfWeek), today),
+            QuickDate.ThisMonth => (new DateTime(today.Year, today.Month, 1), today),
+            QuickDate.LastMonth => (new DateTime(today.Year, today.Month, 1).AddMonths(-1),
+                                    new DateTime(today.Year, today.Month, 1).AddDays(-1)),
+            QuickDate.ThisYear => (new DateTime(today.Year, 1, 1), today),
+            _ => (fromDate, toDate)
+        };
+    }
+
+    private string GetStatusClass(string status) => status switch
+    {
+        "Repairing" => "status-repairing",
+        "Finished" => "status-finished",
+        "Awaiting Sparepart" => "status-awaiting",
+        "Awaiting Customer Confirm" => "status-awaiting",
+        "Customer Rejected" => "status-rejected",
+        "Repair by Third-Party" => "status-thirdparty",
+        "Unrepairable" => "status-rejected",
+        _ => "status-default"
+    };
+
+    // ? NEW: condition badge CSS class
+    private string GetConditionClass(string condition) => condition switch
+    {
+        "Fix" => "cond-fix",
+        "Replace" => "cond-replace",
+        "Free" => "cond-free",
+        _ => ""
+    };
+
+    private async Task ExportToExcel()
+    {
+        if (result == null) return;
+
+        isLoading = true;
+        errorMessage = null;
+        StateHasChanged();
+
+        try
+        {
+            var allData = await SparepartUsageService.GetSparepartUsageAsync(
+                pageNumber: 1,
+                pageSize: int.MaxValue,
+                fromDate: ignoreDateFilter ? null : fromDate,
+                toDate: ignoreDateFilter ? null : toDate,
+                searchTerm: searchTerm,
+                status: string.IsNullOrEmpty(statusFilter) ? null : statusFilter,
+                sortBy: sortBy,
+                sortDescending: sortDescending,
+                includeManualStockOut: includeManual,
+                serviceType: string.IsNullOrEmpty(serviceTypeFilter) ? null : serviceTypeFilter,
+                condition: string.IsNullOrEmpty(conditionFilter) ? null : conditionFilter,
+                sourceFilter: string.IsNullOrEmpty(sourceFilter) ? null : sourceFilter,
+                dateMode: reportMode
+            );
+
+            if (allData == null || !allData.Items.Any())
+            {
+                errorMessage = "No data to export.";
+                return;
+            }
+
+            var firstItem = allData.Items.FirstOrDefault();
+            Console.WriteLine($"[Export Debug] First item: '{firstItem?.ItemName}' " +
+                              $"| Services count: {firstItem?.Services?.Count ?? -1}");
+
+            var headers = new[]
+            {
+            "No",
+            "Sparepart Name",
+            "Sparepart Serial",
+            "Stock Qty",
+            "Total Used Qty",
+            "Usage %",
+            "Source",
+            "Report No",
+            "Machine Name",
+            "Machine Serial",
+            "Company",
+            "Service Status",
+            "Service Type",
+            "Used Qty (per job)",
+            "Condition",
+            "Reason",
+            "Date (Audit)"
+        };
+
+            var rows = new List<object[]>();
+            int no = 1;
+
+            foreach (var item in allData.Items)
+            {
+                var pct = item.StockQuantity > 0
+                    ? Math.Round((double)item.UsedQuantity / item.StockQuantity * 100, 1)
+                    : 100.0;
+
+                var detailRows = item.Services;
+
+                if (detailRows == null || detailRows.Count == 0)
+                {
+                    rows.Add(new object[]
+                    {
+                    no,
+                    item.ItemName,
+                    item.SerialNumber ?? "—",
+                    item.StockQuantity,
+                    item.UsedQuantity,
+                    pct,
+                    "—", "—", "—", "—", "—", "—", "—",
+                    item.UsedQuantity,
+                    "—", "—", "—"
+                    });
+                    no++;
+                    continue;
+                }
+
+                bool isFirst = true;
+                foreach (var svc in detailRows)
+                {
+                    bool isManual = svc.Source == "Manual";
+
+                    rows.Add(new object[]
+                    {
+                    // Sparepart summary columns — first row only
+                    isFirst ? (object)no                     : "",
+                    isFirst ? item.ItemName                  : "",
+                    isFirst ? (item.SerialNumber ?? "—")     : "",
+                    isFirst ? (object)item.StockQuantity     : "",
+                    isFirst ? (object)item.UsedQuantity      : "",
+                    isFirst ? (object)pct                    : "",
+
+                    // Service detail columns — every row
+                    isManual ? "Manual" : "Service",
+                    isManual ? "—" : (svc.ReportNo ?? "—"),
+                    isManual ? "—" : (string.IsNullOrEmpty(svc.MachineItemName)    ? "—" : svc.MachineItemName),
+                    isManual ? "—" : (string.IsNullOrEmpty(svc.MachineSerialNumber) ? "—" : svc.MachineSerialNumber),
+                    svc.CompanyName ?? "—",
+                    isManual ? "Stock Out" : (svc.ServiceStatus ?? "—"),
+                    isManual || string.IsNullOrEmpty(svc.ServiceType) || svc.ServiceType == "—"
+                        ? "—" : svc.ServiceType,
+                    (object)svc.Quantity,
+                    isManual ? "—" : (string.IsNullOrEmpty(svc.Condition) ? "N/A" : svc.Condition),
+                    isManual && !string.IsNullOrEmpty(svc.Reason) && svc.Reason != "—"
+                        ? svc.Reason : "—",
+                    svc.ProcessDate.HasValue
+                        ? svc.ProcessDate.Value.AddHours(7).ToString("dd MMM yyyy HH:mm")
+                        : "—"
+                    });
+
+                    isFirst = false;
+                }
+                no++;
+            }
+
+            // Grand total row — 17 columns
+            rows.Add(new object[]
+            {
+            "TOTAL", "", "",
+            allData.Items.Sum(x => x.StockQuantity),
+            allData.TotalUsedQuantity,
+            "", "", "", "", "", "", "", "",
+            allData.TotalUsedQuantity,
+            "", "", ""
+            });
+
+            var dateRange = fromDate.HasValue || toDate.HasValue
+                ? $"_{fromDate:yyyyMMdd}-{toDate:yyyyMMdd}"
+                : $"_{DateTime.Today:yyyyMMdd}";
+
+            await JS.InvokeVoidAsync("exportToExcel", rows, headers,
+                $"SparepartUsage{dateRange}.xlsx", "Sparepart Usage");
+        }
+        catch (Exception ex)
+        {
+            errorMessage = $"Export failed: {ex.Message}";
+            Console.WriteLine($"[Export Error] {ex}");
+        }
+        finally
+        {
+            isLoading = false;
+            StateHasChanged();
+        }
+    }
+}

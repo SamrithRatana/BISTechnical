@@ -1,0 +1,58 @@
+﻿@page "/edit/{Id:guid}"
+@using ServiceMaintenance.Services
+@inject ItemService ItemService
+@inject NavigationManager NavigationManager
+
+<EditForm Model="@item" OnValidSubmit="@SaveItem">
+    <DataAnnotationsValidator />
+    <ValidationSummary />
+
+    <div class="form-group">
+        <label>ID</label>
+        <InputNumber id="id" @bind-Value="item.Id" class="form-control" disabled />
+    </div>
+    <div class="form-group">
+        <label>Item Name</label>
+        <InputText id="itemName" @bind-Value="item.ItemName" class="form-control" />
+    </div>
+    <div class="form-group">
+        <label>Serial Number</label>
+        <InputText id="serialNumber" @bind-Value="item.SerialNumber" class="form-control" />
+    </div>
+    <div class="form-group">
+        <label>Item Type</label>
+        <InputText id="itemType" @bind-Value="item.ItemType" class="form-control" />
+    </div>
+
+    <button type="submit" class="btn btn-primary">Save</button>
+    <button type="button" class="btn btn-secondary" @onclick="Cancel">Cancel</button>
+</EditForm>
+
+@code {
+    [Parameter] public Guid Id { get; set; }
+    private Repairs item = new Repairs();
+
+    protected override async Task OnInitializedAsync()
+    {
+        item = await ItemService.GetItemByIdAsync(Id);
+    }
+
+    private async Task SaveItem()
+    {
+        try
+        {
+            await ItemService.UpdateItemAsync(item);
+            NavigationManager.NavigateTo("/items");
+        }
+        catch (HttpRequestException ex)
+        {
+            Console.WriteLine($"Error updating item: {ex.Message}");
+            // Handle the error, e.g., show a notification to the user
+        }
+    }
+
+    private void Cancel()
+    {
+        NavigationManager.NavigateTo("/items");
+    }
+}

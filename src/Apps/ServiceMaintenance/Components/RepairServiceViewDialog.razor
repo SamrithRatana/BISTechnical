@@ -1,0 +1,558 @@
+@using ServiceMaintenance.Models
+
+<SfDialog @ref="_dialog"
+          Target="#target"
+          Width="600px"
+          IsModal="true"
+          ShowCloseIcon="true"
+          Visible="@Visible"
+          VisibleChanged="OnVisibleChanged">
+    <DialogEvents OnOverlayModalClick="@HandleOverlayClick"></DialogEvents>
+    <DialogTemplates>
+        <Header>ព័ត៌មានលម្អិត</Header>
+        <Content>
+            <div class="report-container">
+                <div class="report-body">
+                    <table class="report-table">
+
+                        @if (!string.IsNullOrEmpty(Service?.reportNo))
+                        {
+                            <tr>
+                                <td class="report-label"><strong>លេខយោង:</strong></td>
+                                <td class="report-value">@Service.reportNo</td>
+                            </tr>
+                        }
+
+                        @if (Service?.ServiceDate != default(DateTime))
+                        {
+                            <tr>
+                                <td class="report-label"><strong>ទទួលម៉ាស៊ីន:</strong></td>
+                                <td class="report-value">
+                                    @Service.ServiceDate.ToString("yyyy-MM-dd HH:mm tt")
+                                    @{
+                                        var createdByUser = GetUserNameById(
+                                        Service?.createby == Guid.Empty ? (Guid?)null : Service.createby);
+                                    }
+                                    @if (IsKnown(createdByUser))
+                                    {
+                                        <span style="color: var(--text-secondary); margin-left: 8px;">| @createdByUser</span>
+                                    }
+                                </td>
+                            </tr>
+                        }
+
+                        @if (Service?.inspectDate.HasValue == true)
+                        {
+                            <tr>
+                                <td class="report-label"><strong>វិនិច្ឆ័យ:</strong></td>
+                                <td class="report-value">
+                                    @Service.inspectDate.Value.ToString("yyyy-MM-dd HH:mm tt")
+                                    @{
+                                        var inspectByUser = GetUserNameById(Service?.inspectBy);
+                                    }
+                                    @if (IsKnown(inspectByUser))
+                                    {
+                                        <span style="color: var(--text-secondary); margin-left: 8px;">| @inspectByUser</span>
+                                    }
+                                </td>
+                            </tr>
+                        }
+
+                        @if (Service?.awaitingSparepartDate.HasValue == true)
+                        {
+                            <tr>
+                                <td class="report-label"><strong>រង់ចាំគ្រឿងបន្លាស់:</strong></td>
+                                <td class="report-value">
+                                    @Service.awaitingSparepartDate.Value.ToString("yyyy-MM-dd HH:mm tt")
+                                    @{
+                                        var setByUser = GetUserNameById(Service?.setAwaitingSparepartBy);
+                                    }
+                                    @if (IsKnown(setByUser))
+                                    {
+                                        <span style="color: var(--text-secondary); margin-left: 8px;">| @setByUser</span>
+                                    }
+                                </td>
+                            </tr>
+                        }
+
+                        @if (Service?.awaitingCustomerConfirmDate.HasValue == true)
+                        {
+                            <tr>
+                                <td class="report-label"><strong>រង់ចាំយល់ព្រមអតិថិជន:</strong></td>
+                                <td class="report-value">
+                                    @Service.awaitingCustomerConfirmDate.Value.ToString("yyyy-MM-dd HH:mm tt")
+                                    @{
+                                        var confirmByUser = GetUserNameById(Service?.setAwaitingCustomerConfirmBy);
+                                    }
+                                    @if (IsKnown(confirmByUser))
+                                    {
+                                        <span style="color: var(--text-secondary); margin-left: 8px;">| @confirmByUser</span>
+                                    }
+                                </td>
+                            </tr>
+                        }
+
+                        @if (Service?.saleConfirmedDate.HasValue == true)
+                        {
+                            <tr>
+                                <td class="report-label"><strong>Sale Confirmed:</strong></td>
+                                <td class="report-value">
+                                    @Service.saleConfirmedDate.Value.ToString("yyyy-MM-dd HH:mm tt")
+                                    @{
+                                        var saleConfirmedByUser = GetUserNameById(Service?.setSaleConfirmedBy);
+                                    }
+                                    @if (IsKnown(saleConfirmedByUser))
+                                    {
+                                        <span style="color: var(--text-secondary); margin-left: 8px;">| @saleConfirmedByUser</span>
+                                    }
+                                </td>
+                            </tr>
+                        }
+
+                        @if (Service?.sentSparepartsDate.HasValue == true)
+                        {
+                            <tr>
+                                <td class="report-label"><strong>បានបញ្ជូនបន្លាស់ទៅជាង:</strong></td>
+                                <td class="report-value">
+                                    @Service.sentSparepartsDate.Value.ToString("yyyy-MM-dd HH:mm tt")
+                                    @{
+                                        var sentByUser = GetUserNameById(Service?.setSentSparepartsBy);
+                                    }
+                                    @if (IsKnown(sentByUser))
+                                    {
+                                        <span style="color: var(--text-secondary); margin-left: 8px;">| @sentByUser</span>
+                                    }
+                                </td>
+                            </tr>
+                        }
+
+                        @if (Service?.repairDate.HasValue == true)
+                        {
+                            <tr>
+                                <td class="report-label"><strong>អនុម័តជួសជុល:</strong></td>
+                                <td class="report-value">
+                                    @Service.repairDate.Value.ToString("yyyy-MM-dd HH:mm tt")
+                                    @{
+                                        var repairByUser = GetUserNameById(Service?.repairBy);
+                                    }
+                                    @if (IsKnown(repairByUser))
+                                    {
+                                        <span style="color: var(--text-secondary); margin-left: 8px;">| @repairByUser</span>
+                                    }
+                                </td>
+                            </tr>
+                        }
+
+                        @if (Service?.thirdPartyRepairDate.HasValue == true)
+                        {
+                            <tr>
+                                <td class="report-label"><strong>Third-party date:</strong></td>
+                                <td class="report-value">
+                                    @Service.thirdPartyRepairDate.Value.ToString("yyyy-MM-dd HH:mm tt")
+                                    @{
+                                        var tpByUser = GetUserNameById(Service?.thirdPartyRepairBy);
+                                    }
+                                    @if (IsKnown(tpByUser))
+                                    {
+                                        <span style="color: var(--text-secondary); margin-left: 8px;">| @tpByUser</span>
+                                    }
+                                </td>
+                            </tr>
+                        }
+
+                        @if (Service?.finishedDate.HasValue == true)
+                        {
+                            <tr>
+                                <td class="report-label"><strong>រួចរាល់:</strong></td>
+                                <td class="report-value">
+                                    @Service.finishedDate.Value.ToString("yyyy-MM-dd HH:mm tt")
+                                    @{
+                                        var verifiedByUser = GetUserNameById(Service?.verifiedBy);
+                                    }
+                                    @if (IsKnown(verifiedByUser))
+                                    {
+                                        <span style="color: var(--text-secondary); margin-left: 8px;">| @verifiedByUser</span>
+                                    }
+                                </td>
+                            </tr>
+                        }
+
+                        @if (Service?.customerRejectedDate.HasValue == true)
+                        {
+                            <tr>
+                                <td class="report-label"><strong>អតិថិជនមិនព្រម:</strong></td>
+                                <td class="report-value">
+                                    @Service.customerRejectedDate.Value.ToString("yyyy-MM-dd HH:mm tt")
+                                    @{
+                                        var rejByUser = GetUserNameById(Service?.setCustomerRejectedBy);
+                                    }
+                                    @if (IsKnown(rejByUser))
+                                    {
+                                        <span style="color: var(--text-secondary); margin-left: 8px;">| @rejByUser</span>
+                                    }
+                                </td>
+                            </tr>
+                        }
+
+                        @if (Service?.unrepairableDate.HasValue == true)
+                        {
+                            <tr>
+                                <td class="report-label"><strong>ជួសជុលមិនបាន:</strong></td>
+                                <td class="report-value">
+                                    @Service.unrepairableDate.Value.ToString("yyyy-MM-dd HH:mm tt")
+                                    @{
+                                        var unrepByUser = GetUserNameById(Service?.setUnrepairableBy);
+                                    }
+                                    @if (IsKnown(unrepByUser))
+                                    {
+                                        <span style="color: var(--text-secondary); margin-left: 8px;">| @unrepByUser</span>
+                                    }
+                                </td>
+                            </tr>
+                        }
+
+                        @if (Service?.DaysTaken.HasValue == true)
+                        {
+                            <tr>
+                                <td class="report-label"><strong>រយះពេល:</strong></td>
+                                <td class="report-value">@Service.DaysTaken.Value days</td>
+                            </tr>
+                        }
+
+                        <!-- ព័ត៍មានអតិថិជន -->
+                        <tr class="report-section-header">
+                            <td colspan="2" style="background: #f1f5f9; padding: 9px 14px; font-weight: 700; color: #0f172a; font-size: 13.5px; border-top: 1px solid #cbd5e1; border-bottom: 1px solid #cbd5e1;">
+                                <i class="fas fa-building text-primary me-1"></i> ព័ត៌មានអតិថិជន
+                            </td>
+                        </tr>
+
+                        @if (!string.IsNullOrEmpty(Service?.CompanyName))
+                        {
+                            <tr><td class="report-label"><strong>ឈ្មោះស្ថាប័ន:</strong></td><td class="report-value">@Service.CompanyName</td></tr>
+                        }
+                        @if (!string.IsNullOrEmpty(Service?.Address))
+                        {
+                            <tr><td class="report-label"><strong>អាសយដ្ឋាន:</strong></td><td class="report-value">@Service.Address</td></tr>
+                        }
+                        @if (!string.IsNullOrEmpty(Service?.ContactName))
+                        {
+                            <tr><td class="report-label"><strong>ឈ្មោះអ្នកទំនាក់ទំនង:</strong></td><td class="report-value">@Service.ContactName</td></tr>
+                        }
+                        @if (!string.IsNullOrEmpty(Service?.PhoneNumber))
+                        {
+                            <tr><td class="report-label"><strong>លេខទូរស័ព្ទ:</strong></td><td class="report-value">@Service.PhoneNumber</td></tr>
+                        }
+
+                        <!-- ពត័មានម៉ាស៊ីន -->
+                        <tr class="report-section-header">
+                            <td colspan="2" style="background: #f1f5f9; padding: 9px 14px; font-weight: 700; color: #0f172a; font-size: 13.5px; border-top: 1px solid #cbd5e1; border-bottom: 1px solid #cbd5e1;">
+                                <i class="fas fa-print text-primary me-1"></i> ព័ត៌មានម៉ាស៊ីន
+                            </td>
+                        </tr>
+
+                        @if (!string.IsNullOrEmpty(Service?.itemName))
+                        {
+                            <tr><td class="report-label"><strong>ឈ្មោះម៉ាស៊ីន:</strong></td><td class="report-value">@Service.itemName</td></tr>
+                        }
+                        @if (!string.IsNullOrEmpty(Service?.serialNumber))
+                        {
+                            <tr><td class="report-label"><strong>លេខម៉ាស៊ីន:</strong></td><td class="report-value">@Service.serialNumber</td></tr>
+                        }
+                        @if (!string.IsNullOrEmpty(Service?.CustomerRequest))
+                        {
+                            <tr><td class="report-label"><strong>សំណើអតិថិជន:</strong></td><td class="report-value">@Service.CustomerRequest</td></tr>
+                        }
+                        @if (!string.IsNullOrEmpty(Service?.Inspection))
+                        {
+                            <tr><td class="report-label"><strong>វិនិច្ឆ័យ:</strong></td><td class="report-value">@Service.Inspection</td></tr>
+                        }
+                        @if (!string.IsNullOrEmpty(Service?.Solution))
+                        {
+                            <tr><td class="report-label"><strong>ដំណោះស្រាយ:</strong></td><td class="report-value">@Service.Solution</td></tr>
+                        }
+
+                        <!-- ពត័មានស្ថានភាពជួសជុល -->
+                        <tr class="report-section-header">
+                            <td colspan="2" style="background: #f1f5f9; padding: 9px 14px; font-weight: 700; color: #0f172a; font-size: 13.5px; border-top: 1px solid #cbd5e1; border-bottom: 1px solid #cbd5e1;">
+                                <i class="fas fa-tools text-primary me-1"></i> ព័ត៌មានស្ថានភាពជួសជុល
+                            </td>
+                        </tr>
+
+                        @if (!string.IsNullOrEmpty(Service?.ServiceLocation))
+                        {
+                            <tr><td class="report-label"><strong>ទីតាំងសេវាកម្ម:</strong></td><td class="report-value">@Service.ServiceLocation</td></tr>
+                        }
+                        @if (!string.IsNullOrEmpty(Service?.ServiceType))
+                        {
+                            <tr><td class="report-label"><strong>ប្រភេទសេវាកម្ម:</strong></td><td class="report-value">@Service.ServiceType</td></tr>
+                        }
+                        @if (!string.IsNullOrEmpty(Service?.ServicePriority))
+                        {
+                            <tr><td class="report-label"><strong>អាទិភាព:</strong></td><td class="report-value">@Service.ServicePriority</td></tr>
+                        }
+                        @if (!string.IsNullOrEmpty(Service?.Status))
+                        {
+                            <tr>
+                                <td class="report-label"><strong>ស្ថានភាព:</strong></td>
+                                <td class="report-value">@(StatusLabelResolver?.Invoke(Service.Status) ?? Service.Status)</td>
+                            </tr>
+                        }
+
+                        <tr>
+                            <td class="report-label"><strong>មានកុងត្រា:</strong></td>
+                            <td class="report-value">@(Service?.hasContract == true ? "Yes" : "No")</td>
+                        </tr>
+
+                        @if (Service?.isThirdPartyRepair == true)
+                        {
+                            <tr><td class="report-label"><strong>Third-party repair:</strong></td><td class="report-value">Yes</td></tr>
+                        }
+
+                    </table>
+
+                    @if (Service?.SparePartItems != null && Service.SparePartItems.Count > 0)
+                    {
+                        <hr />
+                        <h4 style="font-size:0.95rem; font-weight:700; margin-bottom:8px;">
+                            <i class="fas fa-tools" style="color:#007bff;"></i> SparePart Details
+                        </h4>
+                        <div style="overflow-x:auto; width:100%;">
+                            <table style="width:100%; border-collapse:collapse; font-size:0.78rem; table-layout:fixed;">
+                                <colgroup>
+                                    <col style="width:52px;" />
+                                    <col style="width:22%;" />
+                                    <col style="width:22%;" />
+                                    <col style="width:36px;" />
+                                    <col style="width:70px;" />
+                                    <col style="width:75px;" />
+                                    <col style="width:110px;" />
+                                </colgroup>
+                                <thead>
+                                    <tr style="background:#007bff; color:#fff;">
+                                        <th style="padding:6px 4px; text-align:center;">Img</th>
+                                        <th style="padding:6px 6px; text-align:left;">Item Name</th>
+                                        <th style="padding:6px 6px; text-align:left;">Use For</th>
+                                        <th style="padding:6px 4px; text-align:center;">Qty</th>
+                                        <th style="padding:6px 4px; text-align:center;">Condition</th>
+                                        <th style="padding:6px 4px; text-align:right;">Price</th>
+                                        <th style="padding:6px 4px; text-align:center;">Stock Status</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    @foreach (var sparePart in Service.SparePartItems)
+                                    {
+                                        var sparePartObject = SpareParts?.FirstOrDefault(x => x.Id == sparePart.SparePartId);
+                                        var stockQty = sparePartObject?.Quantity ?? 0;
+                                        var (stockLabel, stockBg, stockFg) = ResolveStockBadge(Service.Status, sparePart.Condition, stockQty);
+
+                                        <tr style="border-bottom:1px solid #f0f0f0;">
+                                            <td style="padding:5px 4px; text-align:center; vertical-align:middle;">
+                                                @if (sparePartObject != null && !string.IsNullOrEmpty(sparePartObject.PictureUrl))
+                                                {
+                                                    <img src="@sparePartObject.PictureUrl" alt="img"
+                                                         style="width:40px; height:40px; object-fit:cover; border-radius:5px; border:1px solid #ddd;" />
+                                                }
+                                                else
+                                                {
+                                                    <div style="width:40px; height:40px; background:#f5f5f5; border-radius:5px; border:1px solid #ddd; display:flex; align-items:center; justify-content:center; margin:auto;">
+                                                        <i class="fas fa-image" style="color:#ccc;"></i>
+                                                    </div>
+                                                }
+                                            </td>
+                                            <td style="padding:5px 6px; vertical-align:middle; font-weight:500; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;"
+                                                title="@(sparePartObject?.ItemName ?? sparePart.ItemName)">
+                                                @(sparePartObject?.ItemName ?? sparePart.ItemName ?? "—")
+                                            </td>
+                                            <td style="padding:5px 6px; vertical-align:middle; color:#555; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;"
+                                                title="@(sparePartObject?.UseFor ?? sparePart.UseFor)">
+                                                @(sparePartObject?.UseFor ?? sparePart.UseFor ?? "—")
+                                            </td>
+                                            <td style="padding:5px 4px; text-align:center; vertical-align:middle; font-weight:700;">@sparePart.Quantity</td>
+                                            <td style="padding:5px 4px; text-align:center; vertical-align:middle;">
+                                                @if (!string.IsNullOrEmpty(sparePart.Condition))
+                                                {
+                                                    <span style="background:#e9ecef; padding:2px 6px; border-radius:8px; font-size:0.72rem; color:#495057;">@sparePart.Condition</span>
+                                                }
+                                                else
+                                                {
+                                                    <span style="color:#aaa;">—</span>
+                                                }
+                                            </td>
+                                            <td style="padding:5px 4px; text-align:right; vertical-align:middle; font-weight:600; color:#28a745; white-space:nowrap;">
+                                                @if (sparePartObject != null)
+                                                {
+                                                    <span>$@sparePartObject.DefaultPrice.ToString("N2")</span>
+                                                }
+                                                else
+                                                {
+                                                    <span style="color:#aaa;">—</span>
+                                                }
+                                            </td>
+                                            <td style="padding:5px 4px; text-align:center; vertical-align:middle; position:relative;">
+                                                <div style="display:inline-flex; align-items:center; gap:3px; position:relative;">
+                                                    <span class="stock-status-badge"
+                                                          style="background:@stockBg; color:@stockFg; padding:2px 8px; border-radius:8px; font-size:0.7rem; font-weight:700; white-space:nowrap; display:inline-block; position:relative; cursor:default;">
+                                                        @stockLabel
+                                                        <span class="stock-qty-tooltip">@stockQty in stock</span>
+                                                    </span>
+
+                                                    @if (ShowRemarks)
+                                                    {
+                                                        <RemarkIndicator SparePartId="@sparePart.Id"
+                                                                         Remarks="@sparePart.Remarks"
+                                                                         RemarksUpdatedAt="@sparePart.RemarksUpdatedAt"
+                                                                         AllowEdit="@AllowEditRemarks"
+                                                                         PresetRemarks="PresetRemarks"
+                                                                         OnSave="(newValue) => HandleSaveRemarks(sparePart, newValue)" />
+                                                    }
+                                                </div>
+                                            </td>
+                                        </tr>
+                                    }
+                                </tbody>
+                                <tfoot>
+                                    <tr style="background:#f8f9fa; font-weight:700; border-top:2px solid #dee2e6;">
+                                        <td colspan="3" style="padding:6px 8px; text-align:right; color:#555; font-size:0.8rem;">Total:</td>
+                                        <td style="padding:6px 4px; text-align:center;">@Service.SparePartItems.Sum(x => x.Quantity)</td>
+                                        <td></td>
+                                        <td style="padding:6px 4px; text-align:right; color:#28a745; white-space:nowrap;">
+                                            @{
+                                                var grandTotal = Service.SparePartItems.Sum(sp =>
+                                                {
+                                                    var obj = SpareParts?.FirstOrDefault(x => x.Id == sp.SparePartId);
+                                                    return (obj?.DefaultPrice ?? 0) * sp.Quantity;
+                                                });
+                                            }
+                                            $@grandTotal.ToString("N2")
+                                        </td>
+                                        <td></td>
+                                    </tr>
+                                </tfoot>
+                            </table>
+                        </div>
+                    }
+                </div>
+            </div>
+        </Content>
+    </DialogTemplates>
+    <DialogButtons>
+        <DialogButton Content="Close" IsPrimary="true" OnClick="@HandleClose" />
+    </DialogButtons>
+</SfDialog>
+
+@code {
+    private SfDialog _dialog;
+
+    /// <summary>The service record to display. Required.</summary>
+    [Parameter] public RepairServices Service { get; set; }
+
+    /// <summary>Dialog visibility (two-way bindable).</summary>
+    [Parameter] public bool Visible { get; set; }
+    [Parameter] public EventCallback<bool> VisibleChanged { get; set; }
+
+    /// <summary>Spare part lookup list for image/price/name enrichment.</summary>
+    [Parameter] public List<SparePartObject> SpareParts { get; set; } = new();
+
+    /// <summary>Resolves a user Guid to a display name. Required.</summary>
+    [Parameter] public Func<Guid?, string> GetUserNameById { get; set; } = _ => "Unknown";
+
+    /// <summary>Optional Khmer/localized status label resolver. If null, raw Status is shown.</summary>
+    [Parameter] public Func<string, string> StatusLabelResolver { get; set; }
+
+    /// <summary>Show the RemarkIndicator column control at all.</summary>
+    [Parameter] public bool ShowRemarks { get; set; } = true;
+
+    /// <summary>Whether the RemarkIndicator allows editing (some pages are read-only).</summary>
+    [Parameter] public bool AllowEditRemarks { get; set; } = false;
+
+    /// <summary>Preset remark options passed through to RemarkIndicator.</summary>
+    [Parameter] public string[] PresetRemarks { get; set; } = Array.Empty<string>();
+
+    /// <summary>Fired when the user saves a remark edit (only relevant if AllowEditRemarks).</summary>
+    [Parameter] public EventCallback<(SparePartItem Part, string NewValue)> OnSaveRemarks { get; set; }
+
+    private bool IsKnown(string name) =>
+        !string.IsNullOrEmpty(name) && name != "Unknown" && name != "Unknown User";
+
+    private async Task HandleSaveRemarks(SparePartItem part, string newValue)
+    {
+        if (OnSaveRemarks.HasDelegate)
+            await OnSaveRemarks.InvokeAsync((part, newValue));
+    }
+
+    private async Task HandleClose()
+    {
+        Visible = false;
+        await VisibleChanged.InvokeAsync(false);
+    }
+
+    private async Task HandleOverlayClick(OverlayModalClickEventArgs args)
+    {
+        Visible = false;
+        await VisibleChanged.InvokeAsync(false);
+    }
+
+    private async Task OnVisibleChanged(bool value)
+    {
+        Visible = value;
+        await VisibleChanged.InvokeAsync(value);
+    }
+
+    // ✅ Single source of truth for the stock-status badge rule used across
+    // inspection-list.razor, await-customer.razor, repairservices.razor, etc.
+    // "Sent Spareparts" status always shows the fixed green "fully sent" badge;
+    // otherwise falls back to Fix/OutOfStock/InStock as before.
+    private (string label, string bg, string fg) ResolveStockBadge(string serviceStatus, string condition, int stockQty)
+    {
+        if (serviceStatus == "Sent Spareparts")
+            return ("បានបញ្ជូលគ្រប់ចំនួន", "#28a745", "#fff");
+
+        if (condition == "Fix")
+            return ("ជួសជុលមិនកាត់ស្តុក", "#6f42c1", "#fff");
+
+        if (stockQty <= 0)
+            return ("អស់ស្តុក", "#dc3545", "#fff");
+
+        return ("មានស្តុក", "#28a745", "#fff");
+    }
+}
+<style>
+    .stock-status-badge {
+        position: relative;
+    }
+
+    .stock-qty-tooltip {
+        visibility: hidden;
+        opacity: 0;
+        background-color: rgba(0, 0, 0, 0.75);
+        color: #fff;
+        text-align: center;
+        border-radius: 5px;
+        padding: 3px 7px;
+        font-size: 0.68rem;
+        font-weight: 500;
+        white-space: nowrap;
+        position: absolute;
+        bottom: 130%;
+        left: 50%;
+        transform: translateX(-50%);
+        transition: opacity 0.2s ease;
+        z-index: 100;
+        pointer-events: none;
+    }
+
+        .stock-qty-tooltip::after {
+            content: "";
+            position: absolute;
+            top: 100%;
+            left: 50%;
+            transform: translateX(-50%);
+            border: 4px solid transparent;
+            border-top-color: rgba(0, 0, 0, 0.75);
+        }
+
+    .stock-status-badge:hover .stock-qty-tooltip {
+        visibility: visible;
+        opacity: 1;
+    }
+</style>

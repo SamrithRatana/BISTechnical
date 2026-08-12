@@ -1,0 +1,1211 @@
+@* @using ServiceMaintenance.ViewModel
+@using Microsoft.AspNetCore.SignalR.Client
+@using ServiceMaintenance.Models
+@inject IServiceScopeFactory ServiceScopeFactory
+@inject NavigationManager Navigation
+@implements IAsyncDisposable
+
+<div class="smdash-main-container">
+    <div class="smdash-content-wrapper">
+        <div class="smdash-schedules-section">
+            <div class="smdash-schedules-card">
+                <div class="smdash-schedules-header">
+                    <h3 class="smdash-schedules-title">Upcoming Schedules</h3>
+                    <div class="smdash-search-section">
+                        <div class="smdash-search-input-container">
+                            <input type="text"
+                                   class="smdash-search-input"
+                                   placeholder="Search by Serial Number..."
+                                   @bind="searchSerialNumber"
+                                   @onkeypress="OnSearchKeyPress"
+                                   @oninput="OnSearchInputChanged"
+                                   @onfocus="OnSearchFocus"
+                                   @onblur="OnSearchBlur" />
+
+                            @if (showReportDropdown && availableReportNumbers.Count > 0)
+                            {
+                                <div class="smdash-report-dropdown">
+                                    <div class="smdash-report-dropdown-header">
+                                        <span>Available Report Numbers:</span>
+                                    </div>
+                                    @foreach (var reportInfo in availableReportNumbers)
+                                    {
+                                        <div class="smdash-report-dropdown-item"
+                                             @onclick="() => SelectReportNumber(reportInfo.ReportNo)"
+                                             @onclick:stopPropagation="true">
+                                            <div class="smdash-report-main">
+                                                <strong>@reportInfo.ReportNo</strong>
+                                            </div>
+                                            <div class="smdash-report-details">
+                                                @reportInfo.CompanyName - @reportInfo.ItemName
+                                            </div>
+                                            <div class="smdash-report-status">
+                                                Status: @reportInfo.Status
+                                            </div>
+                                        </div>
+                                    }
+                                </div>
+                            }
+                        </div>
+
+                        <button class="smdash-search-btn" @onclick="SearchBySerialNumber">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <circle cx="11" cy="11" r="8"></circle>
+                                <polyline points="21,21 16.65,16.65"></polyline>
+                            </svg>
+                        </button>
+
+                        @if (!string.IsNullOrEmpty(selectedReportNumber))
+                        {
+                            <button class="smdash-clear-btn" @onclick="ClearSelection" title="Clear Selection">
+                                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <line x1="18" y1="6" x2="6" y2="18"></line>
+                                    <line x1="6" y1="6" x2="18" y2="18"></line>
+                                </svg>
+                            </button>
+                        }
+                    </div>
+                </div>
+
+                <div class="smdash-schedules-body">
+                    @if (isLoadingSchedules)
+                    {
+                        <div class="smdash-loading">
+                            <p>Loading schedules...</p>
+                        </div>
+                    }
+                    else if (dynamicSchedules.Count > 0)
+                    {
+                        @for (int i = 0; i < dynamicSchedules.Count; i++)
+                        {
+                            var schedule = dynamicSchedules[i];
+                            var isLast = i == dynamicSchedules.Count - 1;
+
+                            <div class="smdash-schedule-item">
+                                <div class="smdash-schedule-time">@schedule.Time</div>
+                                <div class="smdash-timeline-wrapper">
+                                    <div class="smdash-timeline-circle smdash-timeline-@GetTimelineColor(schedule.Type)"></div>
+                                    @if (!isLast)
+                                    {
+                                        <div class="smdash-timeline-line"></div>
+                                    }
+                                </div>
+                                <div class="smdash-schedule-content">
+                                    <div class="smdash-schedule-main-text">@schedule.Title</div>
+                                    @if (!string.IsNullOrEmpty(schedule.Subtitle))
+                                    {
+                                        <div class="smdash-schedule-sub-text">@schedule.Subtitle</div>
+                                    }
+                                </div>
+                            </div>
+                        }
+                    }
+                    else
+                    {
+                        <div class="smdash-no-data">
+                            <p>No upcoming schedules found.</p>
+                        </div>
+                    }
+                </div>
+            </div>
+        </div>
+
+        <div class="smdash-clients-section">
+            <div class="smdash-clients-card">
+                <div class="smdash-clients-header">
+                    <div class="smdash-header-left">
+                        <h3 class="smdash-clients-title">Members Activity</h3>
+                        <div class="smdash-view-options">
+                            <label class="smdash-radio-option">
+                                <input type="radio" name="repairView" value="currentmonth" @onchange="OnRepairViewChanged" checked="@(repairViewMode == "currentmonth")" />
+                                <span class="smdash-radio-text">Current Month</span>
+                            </label>
+                            <label class="smdash-radio-option">
+                                <input type="radio" name="repairView" value="topitem" @onchange="OnRepairViewChanged" checked="@(repairViewMode == "topitem")" />
+                                <span class="smdash-radio-text">Top Item Name</span>
+                            </label>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="smdash-clients-body">
+                    @if (isLoading)
+                    {
+                        <div class="smdash-loading">
+                            <p>Loading users...</p>
+                        </div>
+                    }
+                    else if (!string.IsNullOrEmpty(errorMessage))
+                    {
+                        <div class="smdash-error">
+                            <p>@errorMessage</p>
+                        </div>
+                    }
+                    else if (topPayingClients.Count > 0)
+                    {
+                        <div class="smdash-clients-table-wrapper">
+                            <div class="smdash-clients-table-header">
+                                <div class="smdash-header-profile">Profile</div>
+                                <div class="smdash-header-status">Status</div>
+                                <div class="smdash-header-repair">
+                                    <span>@(repairViewMode == "currentmonth" ? "Current Month" : "Top Repair Item")</span>
+                                </div>
+                            </div>
+                            <div class="smdash-clients-table-content">
+                                @for (int i = 0; i < rankedClients.Count; i++)
+                                {
+                                    var (client, rank) = rankedClients[i];
+                                    var repairCount = GetRepairCount(client);
+
+                                    <div class="smdash-client-row @(selectedClientId == client.Id ? "selected" : "")"
+                                         @onclick="() => OnClientRowClick(client.Id)"
+                                         @onclick:stopPropagation="true">
+
+                                        <div class="smdash-client-profile">
+                                            @if (rank <= 3 && repairCount > 0)
+                                            {
+                                                <div class="smdash-rank-badge smdash-rank-@rank">
+                                                    <div class="smdash-rank-icon">@GetRankIcon(rank)</div>
+                                                    <span class="smdash-rank-text">@GetRankText(rank)</span>
+                                                </div>
+                                            }
+                                            <div class="smdash-profile-container">
+                                                @if (!string.IsNullOrEmpty(client.ProfilePictureBase64))
+                                                {
+                                                    <img src="data:image/jpeg;base64,@client.ProfilePictureBase64"
+                                                         alt="@client.Name"
+                                                         class="smdash-client-profile-image" />
+                                                }
+                                                else
+                                                {
+                                                    <div class="smdash-client-avatar" style="background-color: @client.AvatarColor;">
+                                                        @client.Initials
+                                                    </div>
+                                                }
+                                                @if (rank <= 3 && repairCount > 0)
+                                                {
+                                                    <div class="smdash-rank-overlay smdash-rank-overlay-@rank"></div>
+                                                }
+                                            </div>
+                                            <div class="smdash-client-info">
+                                                <div class="smdash-client-name">@client.Name</div>
+                                                <div class="smdash-client-subject">@client.Email</div>
+                                            </div>
+                                        </div>
+
+                                        <div class="smdash-client-status">
+                                            <span class="smdash-status-badge smdash-status-@GetStatusClass(client.Status)">
+                                                <span class="smdash-status-indicator smdash-status-indicator-@GetStatusClass(client.Status)"></span>
+                                                <div class="smdash-status-content">
+                                                    @client.Status
+                                                    @if (client.Status == "Offline" && !string.IsNullOrEmpty(client.OfflineTime))
+                                                    {
+                                                        <div class="smdash-offline-time">@client.OfflineTime</div>
+                                                    }
+                                                </div>
+                                            </span>
+                                        </div>
+
+                                        <div class="smdash-client-repair">
+                                            @if (repairViewMode == "currentmonth")
+                                            {
+                                                @if (client.CurrentMonthRepairCount > 0)
+                                                {
+                                                    <div class="smdash-total-repair">
+                                                        <div class="smdash-total-count smdash-current-month-count">@client.CurrentMonthRepairCount</div>
+                                                        <div class="smdash-total-label">this month</div>
+                                                    </div>
+                                                }
+                                                else
+                                                {
+                                                    <div class="smdash-no-repairs">No repairs</div>
+                                                }
+                                            }
+                                            else
+                                            {
+                                                @if (!string.IsNullOrEmpty(client.TopRepairItem))
+                                                {
+                                                    <div class="smdash-repair-item">
+                                                        <div class="smdash-repair-name">@client.TopRepairItem</div>
+                                                        @if (client.TopRepairCount > 1)
+                                                        {
+                                                            <div class="smdash-repair-count">+@(client.TopRepairCount - 1) more</div>
+                                                        }
+                                                    </div>
+                                                }
+                                                else
+                                                {
+                                                    <div class="smdash-no-repairs">No repairs</div>
+                                                }
+                                            }
+                                        </div>
+
+                                        <div class="smdash-row-indicator">
+                                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                                <polyline points="9,18 15,12 9,6"></polyline>
+                                            </svg>
+                                        </div>
+                                    </div>
+                                }
+                            </div>
+                        </div>
+                    }
+                    else
+                    {
+                        <div class="smdash-no-data">
+                            <p>No users found.</p>
+                        </div>
+                    }
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+@if (showClientDetailModal && selectedClient != null)
+{
+    <div class="smdash-modal-overlay" @onclick="CloseClientDetailModal">
+        <div class="smdash-modal-container" @onclick:stopPropagation="true">
+            <div class="smdash-modal-header">
+                <h3 class="smdash-modal-title">User Details</h3>
+                <button class="smdash-modal-close-btn" @onclick="CloseClientDetailModal">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <line x1="18" y1="6" x2="6" y2="18"></line>
+                        <line x1="6" y1="6" x2="18" y2="18"></line>
+                    </svg>
+                </button>
+            </div>
+            <div class="smdash-modal-body">
+                <div class="smdash-detail-profile-section">
+                    <div class="smdash-detail-profile-image-container">
+                        @if (!string.IsNullOrEmpty(selectedClient.ProfilePictureBase64))
+                        {
+                            <img src="data:image/jpeg;base64,@selectedClient.ProfilePictureBase64"
+                                 alt="@selectedClient.Name"
+                                 class="smdash-detail-profile-image" />
+                        }
+                        else
+                        {
+                            <div class="smdash-detail-profile-avatar" style="background-color: @selectedClient.AvatarColor;">
+                                @selectedClient.Initials
+                            </div>
+                        }
+                    </div>
+                    <div class="smdash-detail-profile-info">
+                        <h4 class="smdash-detail-name">@selectedClient.Name</h4>
+                        <p class="smdash-detail-email">@selectedClient.Email</p>
+                        <div class="smdash-detail-status">
+                            <span class="smdash-detail-status-indicator smdash-detail-status-@GetStatusClass(selectedClient.Status)"></span>
+                            @selectedClient.Status
+                            @if (selectedClient.Status == "Offline" && !string.IsNullOrEmpty(selectedClient.OfflineTime))
+                            {
+                                <span class="smdash-detail-offline-time">(@selectedClient.OfflineTime)</span>
+                            }
+                        </div>
+                    </div>
+                </div>
+
+                <div class="smdash-detail-stats-grid">
+                    <div class="smdash-detail-stat-card">
+                        <div class="smdash-detail-stat-value smdash-detail-current-month">@selectedClient.CurrentMonthRepairCount</div>
+                        <div class="smdash-detail-stat-label">This Month</div>
+                    </div>
+                    <div class="smdash-detail-stat-card">
+                        <div class="smdash-detail-stat-value">@selectedClient.PhoneNumber</div>
+                        <div class="smdash-detail-stat-label">Phone</div>
+                    </div>
+                    <div class="smdash-detail-stat-card">
+                        <div class="smdash-detail-stat-value">@selectedClient.RolesDisplay</div>
+                        <div class="smdash-detail-stat-label">Roles</div>
+                    </div>
+                </div>
+
+                @if (!string.IsNullOrEmpty(selectedClient.TopRepairItem))
+                {
+                    <div class="smdash-detail-repair-section">
+                        <h5 class="smdash-detail-section-title">Top Repair Item</h5>
+                        <div class="smdash-detail-repair-card">
+                            <div class="smdash-detail-repair-name">@selectedClient.TopRepairItem</div>
+                            <div class="smdash-detail-repair-count">@selectedClient.TopRepairCount times</div>
+                        </div>
+                    </div>
+                }
+
+                <div class="smdash-detail-repair-history-section">
+                    @if (loadingRepairHistory)
+                    {
+                        <div class="smdash-detail-loading">Loading repair history...</div>
+                    }
+                    else if (displayRepairHistory.Count > 0)
+                    {
+                        <div class="smdash-detail-repair-history">
+                            <h5 class="smdash-detail-section-title">
+                                @GetRepairHistoryTitle() (@displayRepairHistory.Count items)
+                            </h5>
+                            <div class="smdash-detail-repair-table-wrapper">
+                                <div class="smdash-detail-repair-table-container">
+                                    <table class="smdash-detail-repair-table">
+                                        <thead>
+                                            <tr>
+                                                <th class="smdash-th-date">Finished Date</th>
+                                                <th class="smdash-th-company">Company Name</th>
+                                                <th class="smdash-th-item">Item Name</th>
+                                                <th class="smdash-th-serial">Serial Number</th>
+                                                <th class="smdash-th-status">Status</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            @foreach (var repair in displayRepairHistory.OrderByDescending(r => r.finishedDate ?? r.ServiceDate))
+                                            {
+                                                <tr>
+                                                    <td class="smdash-td-date">@((repair.finishedDate ?? repair.ServiceDate).ToString("MMM dd, yyyy"))</td>
+                                                    <td class="smdash-td-company">@repair.CompanyName</td>
+                                                    <td class="smdash-td-item">@repair.itemName</td>
+                                                    <td class="smdash-td-serial">@repair.serialNumber</td>
+                                                    <td class="smdash-td-status">
+                                                        <span class="smdash-status-badge-table smdash-status-@repair.Status.ToLower()">@repair.Status</span>
+                                                    </td>
+                                                </tr>
+                                            }
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </div>
+                        </div>
+                    }
+                    else
+                    {
+                        <div class="smdash-detail-no-data">
+                            <p>No repair data available for the selected view mode.</p>
+                        </div>
+                    }
+                </div>
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+    #region Models
+    public sealed class ScheduleItem
+    {
+        public string Time { get; set; } = "";
+        public string Title { get; set; } = "";
+        public string Subtitle { get; set; } = "";
+        public string Type { get; set; } = "";
+        public string SerialNumber { get; set; } = "";
+        public string ReportNumber { get; set; } = "";
+        public DateTime DateTime { get; set; }
+        public string Status { get; set; } = "";
+        public string CompanyName { get; set; } = "";
+        public string ItemName { get; set; } = "";
+        public int StatusPriority { get; set; } = 0;
+    }
+
+    public sealed class ClientItem
+    {
+        public string Id { get; set; } = "";
+        public string Name { get; set; } = "";
+        public string Email { get; set; } = "";
+        public string PhoneNumber { get; set; } = "";
+        public string RolesDisplay { get; set; } = "";
+        public string Status { get; set; } = "";
+        public string AvatarColor { get; set; } = "";
+        public string Initials { get; set; } = "";
+        public string ProfilePictureBase64 { get; set; } = "";
+        public DateTime? LastSeenAt { get; set; }
+        public string OfflineTime { get; set; } = "";
+        public string TopRepairItem { get; set; } = "";
+        public int TopRepairCount { get; set; } = 0;
+        public int CurrentMonthRepairCount { get; set; } = 0;
+    }
+
+    public sealed class ReportNumberInfo
+    {
+        public string ReportNo { get; set; } = "";
+        public string CompanyName { get; set; } = "";
+        public string ItemName { get; set; } = "";
+        public string Status { get; set; } = "";
+        public string SerialNumber { get; set; } = "";
+    }
+    #endregion
+
+    #region Constants
+    private static readonly HashSet<string> AllowedUserIds = new()
+    {
+        "24b12f9a-e26c-4c06-ade0-61b074c49071",
+        "3a633fc9-5d94-4ea3-9ff6-9e0800a9a0c7",
+        "cf0f8506-bae6-433d-8ddc-d2d780294233",
+        "e466c65d-8183-49fb-9f4c-6e0843ea577a",
+        "f4edefb2-440a-4fa6-b12f-3dbf5bd4ceeb"
+    };
+
+    private static readonly string[] AvatarColors = { "#16a34a", "#ea580c", "#2563eb", "#9333ea", "#dc2626", "#059669", "#7c3aed", "#0891b2" };
+    private static readonly Guid[] AllowedUserGuids = AllowedUserIds.Select(Guid.Parse).ToArray();
+    private static readonly TimeSpan CacheExpiry = TimeSpan.FromMinutes(10);
+
+    private readonly int currentMonth = DateTime.Now.Month;
+    private readonly int currentYear = DateTime.Now.Year;
+    #endregion
+
+    #region State Variables
+    private List<ClientItem> topPayingClients = new();
+    private List<(ClientItem client, int rank)> rankedClients = new();
+    private bool isLoading = true;
+    private string errorMessage = "";
+    private string repairViewMode = "currentmonth";
+
+    // Dynamic Schedule Variables
+    private List<ScheduleItem> dynamicSchedules = new();
+    private bool isLoadingSchedules = true;
+    private string searchSerialNumber = "";
+    private string selectedReportNumber = "";
+    private RepairServices[] allRepairServices = Array.Empty<RepairServices>();
+
+    // Report Number Dropdown Variables
+    private List<ReportNumberInfo> availableReportNumbers = new();
+    private bool showReportDropdown = false;
+    private Timer? dropdownTimer;
+
+    // Cache
+    private Dictionary<string, (Dictionary<string, int> itemCounts, int currentMonthCount)> repairDataCache = new();
+    private DateTime repairDataCacheTime = DateTime.MinValue;
+
+    // SignalR
+    private HubConnection? hubConnection;
+    private HashSet<string> onlineUsers = new();
+    private Timer? offlineTimeUpdateTimer;
+
+    // Modal state
+    private bool showClientDetailModal = false;
+    private ClientItem? selectedClient = null;
+    private string selectedClientId = "";
+    private List<ServiceMaintenance.Models.RepairServices> selectedClientAllRepairs = new();
+    private List<ServiceMaintenance.Models.RepairServices> displayRepairHistory = new();
+    private bool loadingRepairHistory = false;
+    #endregion
+
+    #region Lifecycle Methods
+    protected override async Task OnInitializedAsync()
+    {
+        var tasks = new[]
+        {
+            LoadUsersAsync(),
+            LoadDynamicSchedulesAsync(),
+            InitializeSignalRConnection()
+        };
+
+        await Task.WhenAll(tasks);
+        StartOfflineTimeUpdateTimer();
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        offlineTimeUpdateTimer?.Dispose();
+        dropdownTimer?.Dispose();
+        if (hubConnection is not null)
+        {
+            await hubConnection.DisposeAsync();
+        }
+    }
+    #endregion
+
+    #region Data Loading - Optimized
+    private async Task LoadUsersAsync()
+    {
+        try
+        {
+            isLoading = true;
+            StateHasChanged();
+
+            using var scope = ServiceScopeFactory.CreateScope();
+            var userService = scope.ServiceProvider.GetRequiredService<UserService>();
+
+            await LoadRepairDataCacheAsync();
+            var users = await userService.GetUsersAsync();
+
+            if (users?.Any() != true)
+            {
+                topPayingClients.Clear();
+                rankedClients.Clear();
+                return;
+            }
+
+            var allowedUsers = users.Where(u => AllowedUserIds.Contains(u.Id)).ToArray();
+            topPayingClients.Clear();
+            topPayingClients.Capacity = allowedUsers.Length;
+
+            for (int i = 0; i < allowedUsers.Length; i++)
+            {
+                var user = allowedUsers[i];
+                var (repairCounts, currentMonthRepairs) = GetCachedRepairData(user.Id);
+                var topRepairItem = repairCounts.Count > 0
+                    ? repairCounts.Aggregate((l, r) => l.Value > r.Value ? l : r)
+                    : default(KeyValuePair<string, int>);
+
+                topPayingClients.Add(new ClientItem
+                {
+                    Id = user.Id,
+                    Name = GetDisplayName(user),
+                    Email = user.Email ?? "No email",
+                    PhoneNumber = user.PhoneNumber ?? "N/A",
+                    RolesDisplay = user.Roles?.Any() == true ? string.Join(", ", user.Roles) : "No roles",
+                    Status = onlineUsers.Contains(user.Id) ? "Online" : "Offline",
+                    AvatarColor = AvatarColors[i % AvatarColors.Length],
+                    Initials = GetInitials(user.FirstName, user.LastName, user.UserName),
+                    ProfilePictureBase64 = ConvertProfilePictureToBase64(user.ProfilePicture),
+                    TopRepairItem = topRepairItem.Key ?? "",
+                    TopRepairCount = topRepairItem.Value,
+                    CurrentMonthRepairCount = currentMonthRepairs
+                });
+            }
+
+            UpdateRankedClients();
+            _ = Task.Run(RequestLastSeenData);
+        }
+        catch (Exception ex)
+        {
+            errorMessage = $"Error loading users: {ex.Message}";
+            Console.WriteLine($"Error loading users: {ex.Message}");
+            topPayingClients.Clear();
+            rankedClients.Clear();
+        }
+        finally
+        {
+            isLoading = false;
+            StateHasChanged();
+        }
+    }
+
+    private async Task LoadRepairDataCacheAsync()
+    {
+        if (DateTime.UtcNow - repairDataCacheTime < CacheExpiry && repairDataCache.Count > 0)
+            return;
+
+        using var scope = ServiceScopeFactory.CreateScope();
+        var repairService = scope.ServiceProvider.GetRequiredService<RepairItemService>();
+        var allRepairs = await repairService.GetAllRepairServicesAsync();
+
+        if (allRepairs == null) return;
+
+        var finishedRepairs = allRepairs
+            .Where(r => r.Status == "Finished" &&
+                       r.repairBy.HasValue &&
+                       r.finishedDate.HasValue &&
+                       r.finishedDate.Value.Month == currentMonth &&
+                       r.finishedDate.Value.Year == currentYear &&
+                       AllowedUserGuids.Contains(r.repairBy.Value))
+            .ToArray();
+
+        repairDataCache.Clear();
+
+        var groupedRepairs = finishedRepairs
+            .GroupBy(r => r.repairBy.ToString())
+            .ToDictionary(g => g.Key, g => g.ToArray());
+
+        foreach (var userId in AllowedUserIds)
+        {
+            if (groupedRepairs.TryGetValue(userId, out var userRepairs))
+            {
+                var currentMonthCount = userRepairs.Length;
+                var itemCounts = userRepairs
+                    .Where(r => !string.IsNullOrEmpty(r.itemName))
+                    .GroupBy(r => r.itemName)
+                    .ToDictionary(g => g.Key, g => g.Count());
+
+                repairDataCache[userId] = (itemCounts, currentMonthCount);
+            }
+            else
+            {
+                repairDataCache[userId] = (new Dictionary<string, int>(), 0);
+            }
+        }
+
+        repairDataCacheTime = DateTime.UtcNow;
+    }
+
+    private async Task LoadDynamicSchedulesAsync()
+    {
+        try
+        {
+            isLoadingSchedules = true;
+            StateHasChanged();
+
+            using var scope = ServiceScopeFactory.CreateScope();
+            var repairService = scope.ServiceProvider.GetRequiredService<RepairItemService>();
+            var repairs = await repairService.GetAllRepairServicesAsync();
+            allRepairServices = repairs?.ToArray() ?? Array.Empty<RepairServices>();
+
+            if (allRepairServices.Length > 0 && string.IsNullOrEmpty(selectedReportNumber))
+            {
+                var lastRepair = allRepairServices
+                    .Where(r => !string.IsNullOrEmpty(r.reportNo))
+                    .OrderByDescending(r => r.ServiceDate)
+                    .FirstOrDefault();
+
+                if (lastRepair != null)
+                {
+                    selectedReportNumber = lastRepair.reportNo;
+                    searchSerialNumber = lastRepair.serialNumber ?? "";
+                }
+            }
+
+            GenerateScheduleItems();
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Error loading schedules: {ex.Message}");
+            dynamicSchedules.Clear();
+        }
+        finally
+        {
+            isLoadingSchedules = false;
+            StateHasChanged();
+        }
+    }
+
+    private async Task LoadClientRepairHistory(string userId)
+    {
+        try
+        {
+            loadingRepairHistory = true;
+            StateHasChanged();
+
+            using var scope = ServiceScopeFactory.CreateScope();
+            var repairService = scope.ServiceProvider.GetRequiredService<RepairItemService>();
+            var allRepairs = await repairService.GetAllRepairServicesAsync();
+
+            var userGuid = Guid.Parse(userId);
+            selectedClientAllRepairs = allRepairs?
+                .Where(r => r.repairBy == userGuid)
+                .OrderByDescending(r => r.finishedDate ?? r.ServiceDate)
+                .ToList() ?? new List<ServiceMaintenance.Models.RepairServices>();
+
+            UpdateDisplayRepairHistory();
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Error loading repair history: {ex.Message}");
+            selectedClientAllRepairs.Clear();
+            displayRepairHistory.Clear();
+        }
+        finally
+        {
+            loadingRepairHistory = false;
+            StateHasChanged();
+        }
+    }
+    #endregion
+
+    #region Schedule Methods - Optimized
+    private void GenerateScheduleItems()
+    {
+        dynamicSchedules.Clear();
+
+        if (allRepairServices.Length == 0) return;
+
+        var filteredRepairs = allRepairServices.Where(r =>
+            (string.IsNullOrEmpty(searchSerialNumber) ||
+             (!string.IsNullOrEmpty(r.serialNumber) && r.serialNumber.Contains(searchSerialNumber, StringComparison.OrdinalIgnoreCase))) &&
+            (string.IsNullOrEmpty(selectedReportNumber) ||
+             (!string.IsNullOrEmpty(r.reportNo) && r.reportNo.Equals(selectedReportNumber, StringComparison.OrdinalIgnoreCase)))
+        ).ToArray();
+
+        var schedules = new List<ScheduleItem>();
+        var now = DateTime.Now;
+
+        foreach (var repair in filteredRepairs)
+        {
+            var statusTimeline = CreateStatusTimeline(repair, now);
+            schedules.AddRange(statusTimeline);
+        }
+
+        dynamicSchedules = schedules
+            .OrderByDescending(s => s.DateTime)
+            .Take(20)
+            .ToList();
+    }
+
+    private List<ScheduleItem> CreateStatusTimeline(RepairServices repair, DateTime now)
+    {
+        var timeline = new List<(DateTime date, string status, string action, string type, int priority)>();
+
+        if (repair.ServiceDate != default)
+            timeline.Add((repair.ServiceDate, "Created", "Service Received", "created", 1));
+
+        if (repair.inspectDate.HasValue)
+            timeline.Add((repair.inspectDate.Value, "Inspection", "Inspection Completed", "inspect", 2));
+
+        if (repair.awaitingCustomerConfirmDate.HasValue)
+            timeline.Add((repair.awaitingCustomerConfirmDate.Value, "Awaiting Confirmation", "Awaiting Customer", "waiting", 3));
+
+        if (repair.awaitingSparepartDate.HasValue)
+            timeline.Add((repair.awaitingSparepartDate.Value, "Awaiting Parts", "Waiting for Parts", "sparepart", 4));
+
+        if (repair.repairDate.HasValue)
+            timeline.Add((repair.repairDate.Value, "In Repair", "Repair Started", "repair", 5));
+
+        if (repair.thirdPartyRepairDate.HasValue)
+            timeline.Add((repair.thirdPartyRepairDate.Value, "Third Party", "Third Party Repair", "thirdparty", 6));
+
+        if (repair.finishedDate.HasValue)
+            timeline.Add((repair.finishedDate.Value, "Completed", "Repair Finished", "finished", 7));
+
+        if (repair.customerRejectedDate.HasValue)
+            timeline.Add((repair.customerRejectedDate.Value, "Rejected", "Customer Rejected", "rejected", 8));
+
+        if (repair.unrepairableDate.HasValue)
+            timeline.Add((repair.unrepairableDate.Value, "Unrepairable", "Cannot Repair", "unrepairable", 9));
+
+        timeline.Sort((a, b) => a.date.CompareTo(b.date));
+
+        var scheduleItems = new List<ScheduleItem>(timeline.Count);
+
+        for (int i = 0; i < timeline.Count; i++)
+        {
+            var item = timeline[i];
+            var isLatest = i == timeline.Count - 1;
+
+            var timeDisplay = FormatTimeDisplay(item.date, now);
+            var title = $"{item.action}{(isLatest ? " (Current)" : "")}";
+            var subtitle = GetSubtitleByType(item.type, repair);
+
+            scheduleItems.Add(new ScheduleItem
+            {
+                Time = timeDisplay,
+                Title = title,
+                Subtitle = subtitle,
+                SerialNumber = repair.serialNumber,
+                ReportNumber = repair.reportNo,
+                Type = item.type,
+                DateTime = item.date,
+                Status = repair.Status,
+                CompanyName = repair.CompanyName,
+                ItemName = repair.itemName,
+                StatusPriority = isLatest ? 0 : item.priority
+            });
+        }
+
+        return scheduleItems;
+    }
+
+    private string GetSubtitleByType(string type, RepairServices repair) => type switch
+    {
+        "created" => repair.itemName ?? "Item received",
+        "inspect" => repair.Inspection ?? "Under inspection",
+        "waiting" => "Waiting for customer confirmation",
+        "sparepart" => "Waiting for spare parts",
+        "repair" => "Under repair process",
+        "thirdparty" => "Third party repair",
+        "finished" => repair.Solution ?? "Repair completed",
+        "rejected" => "Rejected by customer",
+        "unrepairable" => "Cannot be repaired",
+        _ => repair.itemName ?? "Unknown"
+    };
+
+    private static string FormatTimeDisplay(DateTime date, DateTime now)
+    {
+        var isPast = date < now;
+        var isToday = date.Date == now.Date;
+
+        if (isToday)
+            return date.ToString("HH:mm") + " (Today)";
+
+        if (isPast)
+        {
+            var timeDiff = now - date;
+            return timeDiff.TotalDays >= 1
+                ? date.ToString("MMM dd") + $" ({(int)timeDiff.TotalDays}d ago)"
+                : timeDiff.TotalHours >= 1
+                    ? date.ToString("HH:mm") + $" ({(int)timeDiff.TotalHours}h ago)"
+                    : date.ToString("HH:mm") + " (Recent)";
+        }
+        else
+        {
+            var timeDiff = date - now;
+            return timeDiff.TotalDays >= 1
+                ? date.ToString("MMM dd") + $" (in {(int)timeDiff.TotalDays}d)"
+                : timeDiff.TotalHours >= 1
+                    ? date.ToString("HH:mm") + $" (in {(int)timeDiff.TotalHours}h)"
+                    : date.ToString("HH:mm") + " (Soon)";
+        }
+    }
+
+    private void UpdateAvailableReportNumbers()
+    {
+        availableReportNumbers.Clear();
+
+        if (string.IsNullOrEmpty(searchSerialNumber) || allRepairServices.Length == 0)
+            return;
+
+        var matchingRepairs = allRepairServices
+            .Where(r => !string.IsNullOrEmpty(r.serialNumber) &&
+                       r.serialNumber.Contains(searchSerialNumber, StringComparison.OrdinalIgnoreCase) &&
+                       !string.IsNullOrEmpty(r.reportNo))
+            .GroupBy(r => r.reportNo)
+            .Select(g => g.First())
+            .OrderByDescending(r => r.ServiceDate)
+            .Take(10)
+            .ToArray();
+
+        availableReportNumbers.Capacity = matchingRepairs.Length;
+        foreach (var repair in matchingRepairs)
+        {
+            availableReportNumbers.Add(new ReportNumberInfo
+            {
+                ReportNo = repair.reportNo,
+                CompanyName = repair.CompanyName ?? "Unknown Company",
+                ItemName = repair.itemName ?? "Unknown Item",
+                Status = repair.Status ?? "Unknown Status",
+                SerialNumber = repair.serialNumber ?? ""
+            });
+        }
+    }
+    #endregion
+
+    #region SignalR Connection - Optimized
+    private async Task InitializeSignalRConnection()
+    {
+        try
+        {
+            hubConnection = new HubConnectionBuilder()
+                .WithUrl(Navigation.ToAbsoluteUri("/chathub"))
+                .WithAutomaticReconnect()
+                .Build();
+
+            hubConnection.On<string>("UserConnected", userId =>
+            {
+                onlineUsers.Add(userId);
+                UpdateUserStatus(userId, "Online");
+                InvokeAsync(StateHasChanged);
+            });
+
+            hubConnection.On<string, DateTime>("UserDisconnected", (userId, disconnectedAt) =>
+            {
+                onlineUsers.Remove(userId);
+                UpdateUserStatusWithLastSeen(userId, "Offline", disconnectedAt);
+                InvokeAsync(StateHasChanged);
+            });
+
+            hubConnection.On<string, DateTime>("UpdateLastSeen", (userId, lastSeenAt) =>
+            {
+                UpdateUserLastSeen(userId, lastSeenAt);
+                InvokeAsync(StateHasChanged);
+            });
+
+            await hubConnection.StartAsync();
+
+            var currentOnlineUsers = await hubConnection.InvokeAsync<IEnumerable<string>>("GetOnlineUsers");
+            onlineUsers = new HashSet<string>(currentOnlineUsers);
+
+            StateHasChanged();
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Error initializing SignalR connection: {ex.Message}");
+        }
+    }
+
+    private async Task RequestLastSeenData()
+    {
+        try
+        {
+            if (hubConnection?.State == HubConnectionState.Connected)
+            {
+                var lastSeenData = await hubConnection.InvokeAsync<Dictionary<string, DateTime>>("GetLastSeenData");
+                if (lastSeenData?.Count > 0)
+                {
+                    foreach (var kvp in lastSeenData)
+                    {
+                        UpdateUserLastSeen(kvp.Key, kvp.Value);
+                    }
+                    StateHasChanged();
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Error requesting last seen data: {ex.Message}");
+        }
+    }
+    #endregion
+
+    #region Event Handlers
+    private async Task OnClientRowClick(string clientId)
+    {
+        selectedClientId = clientId;
+        selectedClient = topPayingClients.FirstOrDefault(c => c.Id == clientId);
+
+        if (selectedClient != null)
+        {
+            showClientDetailModal = true;
+            await LoadClientRepairHistory(clientId);
+        }
+    }
+
+    private void CloseClientDetailModal()
+    {
+        showClientDetailModal = false;
+        selectedClient = null;
+        selectedClientId = "";
+        selectedClientAllRepairs.Clear();
+        displayRepairHistory.Clear();
+    }
+
+    private void OnRepairViewChanged(ChangeEventArgs e)
+    {
+        repairViewMode = e.Value?.ToString() ?? "currentmonth";
+        UpdateRankedClients();
+        UpdateDisplayRepairHistory();
+        StateHasChanged();
+    }
+
+    private async Task SearchBySerialNumber()
+    {
+        if (allRepairServices.Length > 0)
+        {
+            UpdateAvailableReportNumbers();
+            GenerateScheduleItems();
+        }
+        else
+        {
+            await LoadDynamicSchedulesAsync();
+        }
+        StateHasChanged();
+    }
+
+    private async Task OnSearchKeyPress(KeyboardEventArgs e)
+    {
+        if (e.Key == "Enter")
+        {
+            await SearchBySerialNumber();
+        }
+    }
+
+    private async Task OnSearchInputChanged(ChangeEventArgs e)
+    {
+        searchSerialNumber = e.Value?.ToString() ?? "";
+        selectedReportNumber = "";
+
+        dropdownTimer?.Dispose();
+
+        if (string.IsNullOrEmpty(searchSerialNumber))
+        {
+            availableReportNumbers.Clear();
+            showReportDropdown = false;
+            await SearchBySerialNumber();
+        }
+        else
+        {
+            dropdownTimer = new Timer(async _ =>
+            {
+                await InvokeAsync(async () =>
+                {
+                    UpdateAvailableReportNumbers();
+                    showReportDropdown = availableReportNumbers.Count > 0;
+                    StateHasChanged();
+                });
+            }, null, 500, Timeout.Infinite);
+        }
+    }
+
+    private void OnSearchFocus()
+    {
+        if (!string.IsNullOrEmpty(searchSerialNumber) && availableReportNumbers.Count > 0)
+        {
+            showReportDropdown = true;
+            StateHasChanged();
+        }
+    }
+
+    private void OnSearchBlur()
+    {
+        Task.Delay(200).ContinueWith(_ =>
+        {
+            InvokeAsync(() =>
+            {
+                showReportDropdown = false;
+                StateHasChanged();
+            });
+        });
+    }
+
+    private async Task SelectReportNumber(string reportNo)
+    {
+        selectedReportNumber = reportNo;
+        showReportDropdown = false;
+        await SearchBySerialNumber();
+    }
+
+    private async Task ClearSelection()
+    {
+        selectedReportNumber = "";
+        await SearchBySerialNumber();
+    }
+    #endregion
+
+    #region User Status Updates - Optimized
+    private void UpdateUserStatus(string userId, string status)
+    {
+        var user = topPayingClients.FirstOrDefault(c => c.Id == userId);
+        if (user != null)
+        {
+            user.Status = status;
+            if (status == "Online")
+            {
+                user.LastSeenAt = null;
+                user.OfflineTime = "";
+            }
+        }
+    }
+
+    private void UpdateUserStatusWithLastSeen(string userId, string status, DateTime lastSeenAt)
+    {
+        var user = topPayingClients.FirstOrDefault(c => c.Id == userId);
+        if (user != null)
+        {
+            user.Status = status;
+            user.LastSeenAt = lastSeenAt;
+            if (status == "Offline")
+            {
+                user.OfflineTime = FormatOfflineTime(DateTime.UtcNow - lastSeenAt);
+            }
+        }
+    }
+
+    private void UpdateUserLastSeen(string userId, DateTime lastSeenAt)
+    {
+        var user = topPayingClients.FirstOrDefault(c => c.Id == userId);
+        if (user?.Status == "Offline")
+        {
+            user.LastSeenAt = lastSeenAt;
+            user.OfflineTime = FormatOfflineTime(DateTime.UtcNow - lastSeenAt);
+        }
+    }
+
+    private void StartOfflineTimeUpdateTimer()
+    {
+        offlineTimeUpdateTimer = new Timer(async _ =>
+        {
+            UpdateOfflineTimes();
+            await InvokeAsync(StateHasChanged);
+        }, null, TimeSpan.Zero, TimeSpan.FromMinutes(1));
+    }
+
+    private void UpdateOfflineTimes()
+    {
+        var now = DateTime.UtcNow;
+        foreach (var client in topPayingClients.Where(c => c.Status == "Offline" && c.LastSeenAt.HasValue))
+        {
+            client.OfflineTime = FormatOfflineTime(now - client.LastSeenAt.Value);
+        }
+    }
+    #endregion
+
+    #region Helper Methods - Optimized
+    private (Dictionary<string, int> itemCounts, int currentMonthCount) GetCachedRepairData(string userId) =>
+        repairDataCache.TryGetValue(userId, out var data) ? data : (new Dictionary<string, int>(), 0);
+
+    private void UpdateRankedClients()
+    {
+        rankedClients = topPayingClients
+            .OrderByDescending(GetRepairCount)
+            .ThenBy(c => c.Name)
+            .Select((client, index) => (client, index + 1))
+            .ToList();
+    }
+
+    private void UpdateDisplayRepairHistory()
+    {
+        if (selectedClientAllRepairs.Count == 0)
+        {
+            displayRepairHistory.Clear();
+            return;
+        }
+
+        displayRepairHistory = repairViewMode switch
+        {
+            "currentmonth" => selectedClientAllRepairs.Where(r =>
+                r.Status == "Finished" &&
+                r.finishedDate.HasValue &&
+                r.finishedDate.Value.Month == currentMonth &&
+                r.finishedDate.Value.Year == currentYear).ToList(),
+            "topitem" => selectedClientAllRepairs.Where(r =>
+                r.Status == "Finished" &&
+                !string.IsNullOrEmpty(selectedClient?.TopRepairItem) &&
+                r.itemName == selectedClient.TopRepairItem).ToList(),
+            _ => selectedClientAllRepairs.Where(r => r.Status == "Finished").ToList()
+        };
+    }
+
+    private int GetRepairCount(ClientItem client) => repairViewMode switch
+    {
+        "currentmonth" => client.CurrentMonthRepairCount,
+        "topitem" => client.TopRepairCount,
+        _ => client.CurrentMonthRepairCount
+    };
+
+    private string GetRepairHistoryTitle() => repairViewMode switch
+    {
+        "currentmonth" => "Current Month Finished Repairs",
+        "topitem" => $"Finished Repairs for {selectedClient?.TopRepairItem}",
+        _ => "Finished Repair History"
+    };
+
+    private static string GetDisplayName(dynamic user) =>
+        !string.IsNullOrEmpty(user.DisplayName) ? user.DisplayName : user.UserName ?? "Unknown User";
+
+    private static string GetInitials(string firstName, string lastName, string userName)
+    {
+        if (!string.IsNullOrEmpty(firstName) && !string.IsNullOrEmpty(lastName))
+            return $"{firstName[0]}{lastName[0]}".ToUpper();
+
+        if (!string.IsNullOrEmpty(userName))
+            return userName.Length >= 2 ? userName[..2].ToUpper() : userName[0].ToString().ToUpper();
+
+        return "??";
+    }
+
+    private static string ConvertProfilePictureToBase64(byte[] profilePicture) =>
+        profilePicture?.Length > 0 ? Convert.ToBase64String(profilePicture) : string.Empty;
+
+    private static string FormatOfflineTime(TimeSpan timeOffline) =>
+        timeOffline.TotalDays >= 1 ? $"{(int)timeOffline.TotalDays}d ago" :
+        timeOffline.TotalHours >= 1 ? $"{(int)timeOffline.TotalHours}h ago" :
+        timeOffline.TotalMinutes >= 1 ? $"{(int)timeOffline.TotalMinutes}m ago" : "Just now";
+
+    private static string GetRankIcon(int rank) => rank switch
+    {
+        1 => "??",
+        2 => "??",
+        3 => "??",
+        _ => ""
+    };
+
+    private static string GetRankText(int rank) => rank switch
+    {
+        1 => "1st",
+        2 => "2nd",
+        3 => "3rd",
+        _ => $"{rank}th"
+    };
+
+    private static string GetStatusClass(string status) => status.ToLower().Replace(" ", "-");
+
+    private static string GetTimelineColor(string type) => type switch
+    {
+        "created" => "blue",
+        "inspect" => "blue",
+        "waiting" => "orange",
+        "sparepart" => "orange",
+        "repair" => "purple",
+        "thirdparty" => "purple",
+        "finished" => "green",
+        "rejected" => "red",
+        "unrepairable" => "red",
+        _ => "gray"
+    };
+    #endregion
+}
+
+*@

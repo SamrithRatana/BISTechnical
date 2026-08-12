@@ -1,0 +1,66 @@
+﻿@page "/roles/add"
+@inject RolesService RolesService
+@inject NavigationManager NavigationManager
+@using System.ComponentModel.DataAnnotations
+@using ServiceMaintenance.Services
+@attribute [Authorize(Roles = "SuperAdmin")]
+
+<h3>Add Role</h3>
+
+<EditForm Model="@roleModel" OnValidSubmit="HandleValidSubmit">
+    <DataAnnotationsValidator />
+    <ValidationSummary />
+
+    <div class="form-group">
+        <label for="roleName">Role Name</label>
+        <InputText id="roleName" class="form-control" @bind-Value="roleModel.Name" />
+        <ValidationMessage For="@(() => roleModel.Name)" />
+    </div>
+
+    <button type="submit" class="btn btn-primary">Add Role</button>
+    <button class="btn btn-secondary" @onclick="Cancel">Cancel</button>
+</EditForm>
+
+@if (!string.IsNullOrEmpty(errorMessage))
+{
+    <div class="alert alert-danger mt-3">
+        @errorMessage
+    </div>
+}
+
+@code {
+    private RoleModel roleModel = new RoleModel();
+    private string errorMessage;
+
+    private async Task HandleValidSubmit()
+    {
+        if (await RolesService.RoleExistsAsync(roleModel.Name))
+        {
+            errorMessage = "Role already exists.";
+            return;
+        }
+
+        var result = await RolesService.CreateRoleAsync(roleModel.Name);
+
+        if (result.Succeeded)
+        {
+            NavigationManager.NavigateTo("/roles");
+        }
+        else
+        {
+            errorMessage = "Failed to create role.";
+        }
+    }
+
+    private void Cancel()
+    {
+        NavigationManager.NavigateTo("/roles");
+    }
+
+    public class RoleModel
+    {
+        [Required]
+        [StringLength(256, MinimumLength = 1)]
+        public string Name { get; set; }
+    }
+}

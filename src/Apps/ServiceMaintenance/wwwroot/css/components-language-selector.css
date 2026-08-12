@@ -1,0 +1,200 @@
+/* Existing modal and background styles remain the same */
+
+/* General styling for modal and background */
+.modal {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background-color: rgba(0, 0, 0, 0.4); /* Slightly darker background */
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    z-index: 999;
+    transition: opacity 0.3s ease;
+}
+
+.modal-overlay {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background-color: rgba(0, 0, 0, 0.5);
+}
+
+.modal-content {
+    background-color: var(--card-bg, #ffffff);
+    padding: 30px;
+    border-radius: 10px;
+    max-width: 400px;
+    width: 90%;
+    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    animation: fadeIn 0.3s ease-out;
+}
+
+.modal-title {
+    font-size: 24px;
+    font-weight: bold;
+    text-align: center;
+    margin-bottom: 20px;
+    color: var(--text-primary, #212529);
+}
+/* Keyframe for modal fade-in effect */
+@keyframes fadeIn {
+    from {
+        opacity: 0;
+    }
+
+    to {
+        opacity: 1;
+    }
+}
+
+/* Close button */
+.close-btn {
+    background: none;
+    border: none;
+    font-size: 28px;
+    cursor: pointer;
+    position: absolute;
+    top: 15px;
+    right: 15px;
+    color: var(--text-primary, #212529);
+    transition: color 0.3s ease;
+}
+
+    .close-btn:hover {
+        color: #ff6347; /* Highlight color on hover */
+    }
+
+/* Language selector styling */
+.language-selector {
+    display: flex;
+    flex-direction: column;
+    gap: 15px;
+    font-size: 18px;
+    font-family: 'Arial', sans-serif;
+}
+
+    .language-selector label {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        cursor: pointer;
+        transition: transform 0.3s ease;
+    }
+
+        .language-selector label:hover {
+            transform: scale(1.05); /* Slight zoom effect on hover */
+        }
+
+    .language-selector input {
+        margin-right: 15px;
+        transform: scale(1.3);
+    }
+
+.flag-icon {
+    width: 35px; /* Adjust flag size */
+    height: auto;
+    vertical-align: middle;
+    border: none; /* Remove the border */
+    border-radius: 0; /* Remove the border-radius (circle) */
+}
+/* Disable opacity for Chinese flag when radio button is disabled */
+.language-selector label input[disabled] + .flag-icon {
+    opacity: 0.5; /* Reduce opacity to make it look disabled */
+    pointer-events: none; /* Prevent interaction with the flag image */
+}
+
+/* Button with flag */
+.btn.no-background {
+    background-color: transparent;
+    border: none;
+    padding: 0;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    transition: transform 0.2s ease;
+}
+
+    .btn.no-background:hover {
+        transform: scale(1.1); /* Slight zoom on hover */
+    }
+
+.flag-icon-btn {
+    width: 40px;
+    height: auto;
+    margin-right: 10px;
+}
+
+/* Optional: Darker border on input radio to make it stand out */
+.language-selector input:checked + .flag-icon {
+    border: none; /* Remove border */
+}
+
+/* Modal background transition for smooth fade out */
+.modal.fade-out {
+    opacity: 0;
+}
+
+/* New Mobile-Responsive Styles */
+.language-selector-btn {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    background: transparent;
+    border: none;
+}
+
+.language-selector-content {
+    display: flex;
+    align-items: center;
+}
+
+.flag-icon {
+    width: 20px;
+    height: 14px;
+    margin-right: 5px;
+}
+
+.language-text {
+    font-size: 14px;
+    display: inline-block; /* Ensures text is inline with the flag */
+}
+
+/* Mobile responsive */
+@media (max-width: 767px) {
+    .language-selector-btn {
+        position: fixed;
+        top: 10px;
+        right: 10px;
+        z-index: 100;
+    }
+
+    .language-selector-content {
+        display: flex;
+        justify-content: center;
+        align-items: center;
+    }
+
+    .flag-icon {
+        width: 24px;
+        height: 18px;
+    }
+
+    .language-text {
+        display: inline-block;
+    }
+}
+
+/* Desktop */
+@media (min-width: 768px) {
+    .language-text {
+        display: none; /* Hide text on desktop */
+    }
+}

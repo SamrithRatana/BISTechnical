@@ -1,0 +1,26 @@
+{
+  "Logging": {
+    "LogLevel": {
+      "Default": "Warning",
+      "Microsoft.AspNetCore": "Warning",
+      "Microsoft.EntityFrameworkCore": "Error"
+    }
+  },
+  "ConnectionStrings": {
+    "UserManagementConnection": "Server=your-db-host,port;Database=EngineerUserDB;User Id=your_user;Password=your_password;Encrypt=True;TrustServerCertificate=True;"
+  },
+  "JWT": {
+    "ValidAudience": "https://your-audience.example.com",
+    "ValidIssuer": "https://your-issuer.example.com",
+    "Secret": "YourStrongAndSecureJwtSecretKeyGoesHereMinimum32Chars!",
+    "TokenValidityInHours": "8",
+    "RefreshTokenValidityInDays": "30"
+  },
+  "ApiBaseUrl": "https://your-issuer.example.com",
+  "AllowedHosts": "*",
+  "Kestrel": {
+    "Limits": {
+      "MaxRequestBodySize": 5368709120
+    }
+  }
+}
