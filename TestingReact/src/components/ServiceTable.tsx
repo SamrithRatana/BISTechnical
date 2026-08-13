@@ -1,14 +1,15 @@
 "use client";
 
-import React, { useState, useEffect, useCallback } from "react";
-import { Download, ChevronLeft, ChevronRight, Eye, Edit3, Search, RefreshCw, Plus, Printer, Trash2, ShieldCheck } from "lucide-react";
+import React, { useState, useCallback } from "react";
+import { Download, Eye, Edit3, Search, RefreshCw, Plus, Printer, Trash2, ShieldCheck } from "lucide-react";
 import toast from "react-hot-toast";
-import { fetchRepairServices, updateServiceStatus, deleteTechnicalService, RepairServiceItem, PaginatedResult, invalidateCachePrefix } from "@/services/api";
+import { fetchRepairServices, updateServiceStatus, deleteTechnicalService, RepairServiceItem, invalidateCachePrefix } from "@/services/api";
 import { getActionUserForStatus } from "@/services/types";
-import { fetchUserMap } from "@/services/userService";
 import { useRealtimeTickets } from "@/hooks/useRealtimeTickets";
 import { useDebouncedValue } from "@/hooks/useDebouncedValue";
 import { useSearchQueryParam } from "@/hooks/useSearchQueryParam";
+import { useInfiniteList } from "@/hooks/useInfiniteList";
+import InfiniteScrollStatus from "./InfiniteScrollStatus";
 import ServiceDetailModal from "./ServiceDetailModal";
 import ApproveRepairDialog from "./ApproveRepairDialog";
 import HighlightText from "./HighlightText";
@@ -269,16 +270,7 @@ export default function ServiceTable({
   requireApproval,
 }: ServiceTableProps) {
   const [searchTerm, setSearchTerm] = useState("");
-  const [currentPage, setCurrentPage] = useState(1);
-  const [pageSize, setPageSize] = useState(10);
-  const [isLoading, setIsLoading] = useState(true);
-  const [data, setData] = useState<PaginatedResult<RepairServiceItem>>({
-    items: [],
-    totalCount: 0,
-    pageNumber: 1,
-    pageSize: 10,
-    totalPages: 0,
-  });
+  const [pageSize, setPageSize] = useState(25);
 
   const [selectedItem, setSelectedItem] = useState<RepairServiceItem | null>(null);
   const [printItem, setPrintItem] = useState<RepairServiceItem | null>(null);
@@ -287,44 +279,50 @@ export default function ServiceTable({
   const effectiveFilter = activeTabKey || activeFilter;
 
   const debouncedSearch = useDebouncedValue(searchTerm, 300);
+  const term = debouncedSearch.trim();
 
-  useEffect(() => {
-    setCurrentPage(1);
-  }, [debouncedSearch, effectiveFilter]);
+  // Seeds the search box from `?q=` when arriving from the header's global
+  // search. The hook was imported but never called, so that navigation used to
+  // land on the page with the query silently dropped.
+  useSearchQueryParam(setSearchTerm);
 
-  const loadData = useCallback(async () => {
-    // Only show skeleton spinner if table is currently empty
-    if (!data.items || data.items.length === 0) {
-      setIsLoading(true);
-    }
-    const term = debouncedSearch.trim();
-    const result = await fetchRepairServices(currentPage, pageSize, effectiveFilter, term);
-    setData(result);
-    setIsLoading(false);
-  }, [currentPage, pageSize, effectiveFilter, debouncedSearch]);
-
-  useEffect(() => {
-    void loadData();
-    fetchUserMap().then(() => {
-      invalidateCachePrefix("repairservices");
-      void loadData();
-    }).catch(() => {});
-  }, [loadData]);
+  /**
+   * Note: the fetcher deliberately does NOT pre-warm `fetchUserMap()` —
+   * `fetchRepairServices` already awaits it internally and enriches the rows
+   * before returning, so doing it here too doubled every request this table made.
+   */
+  const {
+    items,
+    totalCount,
+    isLoading,
+    isLoadingMore,
+    reachedEnd,
+    limitReached,
+    scrollRootRef,
+    sentinelRef,
+    refresh: refreshLoaded,
+    setItems,
+    setTotalCount,
+  } = useInfiniteList<RepairServiceItem, HTMLDivElement, HTMLTableRowElement>({
+    fetchPage: (pageNumber, size) =>
+      fetchRepairServices(pageNumber, size, effectiveFilter, term),
+    pageSize,
+    // Filter/tab and search both restart the list from page 1.
+    resetKey: `${effectiveFilter}|${term}`,
+    getId: (i) => i?.id,
+  });
 
   // ✅ Real-time: auto-refresh when any user mutates a ticket relevant to this filter.
   // The hook returns a cleanup fn via useEffect internally — no leaks.
   const handleRealtimeUpdate = useCallback(() => {
     invalidateCachePrefix("repairservices");
-    void loadData();
-  }, [loadData]);
+    void refreshLoaded();
+  }, [refreshLoaded]);
 
   useRealtimeTickets(effectiveFilter, handleRealtimeUpdate);
 
   const handleSaveItem = (updated: RepairServiceItem) => {
-    setData((prev) => ({
-      ...prev,
-      items: (prev.items || []).map((i) => (i.id === updated.id ? updated : i)),
-    }));
+    setItems((prev) => prev.map((i) => (i.id === updated.id ? updated : i)));
   };
 
   const handleInlineStatusChange = async (item: RepairServiceItem, newStatus: string) => {
@@ -337,15 +335,12 @@ export default function ServiceTable({
 
     // Optimistic UI update
     const updated = { ...item, status: newStatus };
-    setData((prev) => ({
-      ...prev,
-      items: (prev.items || []).map((i) => (i.id === item.id ? updated : i)),
-    }));
+    setItems((prev) => prev.map((i) => (i.id === item.id ? updated : i)));
 
     // Send update request to server
     await updateServiceStatus(item, newStatus);
     // Reload dataset to ensure fresh state
-    loadData();
+    void refreshLoaded();
   };
 
   const [deleteConfirmItem, setDeleteConfirmItem] = useState<RepairServiceItem | null>(null);
@@ -382,14 +377,11 @@ export default function ServiceTable({
     setDeleteConfirmItem(null);
     if (success) {
       invalidateCachePrefix("repairservices");
-      void loadData();
+      void refreshLoaded();
     } else {
       // Optimistic fallback
-      setData((prev) => ({
-        ...prev,
-        items: (prev.items || []).filter((i) => i.id !== deleteConfirmItem.id),
-        totalCount: Math.max((prev.totalCount || 1) - 1, 0),
-      }));
+      setItems((prev) => prev.filter((i) => i.id !== deleteConfirmItem.id));
+      setTotalCount((prev) => Math.max(prev - 1, 0));
     }
   };
 
@@ -414,9 +406,9 @@ export default function ServiceTable({
   };
 
   const handleExportCSV = () => {
-    if (!data.items || data.items.length === 0) return;
+    if (items.length === 0) return;
     const headers = ["Ref No", "Service Date", "Company Name", "Item Name", "Serial Number", "Priority", "Status", "Receiver"];
-    const rows = data.items.map((i) => [
+    const rows = items.map((i) => [
       `"${i.reportNo || ""}"`,
       `"${i.serviceDate || ""}"`,
       `"${i.companyName || ""}"`,
@@ -459,16 +451,16 @@ export default function ServiceTable({
               type="text"
               placeholder="Search by Report No, Company, Serial..."
               value={searchTerm}
-              onChange={(e) => {
-                setSearchTerm(e.target.value);
-                setCurrentPage(1);
-              }}
+              onChange={(e) => setSearchTerm(e.target.value)}
               className="pl-9 pr-4 py-2 text-xs border border-slate-200 rounded-xl bg-white focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 w-64 md:w-80 dark:bg-slate-800 dark:border-slate-700 dark:text-slate-200"
             />
           </div>
 
           <button
-            onClick={loadData}
+            onClick={() => {
+              invalidateCachePrefix("repairservices");
+              void refreshLoaded();
+            }}
             className="p-2 text-slate-500 hover:bg-slate-100 rounded-xl transition-colors dark:text-slate-400 dark:hover:bg-slate-800"
             title="Reload API Data"
           >
@@ -495,8 +487,9 @@ export default function ServiceTable({
         </div>
       </div>
 
-      {/* Table Content — auto-scrolls internally within fixed viewport height */}
-      <div className="flex-1 overflow-x-auto overflow-y-auto min-h-0">
+      {/* Table Content — auto-scrolls internally within fixed viewport height.
+          This element is also the IntersectionObserver root for infinite scroll. */}
+      <div ref={scrollRootRef} className="flex-1 overflow-x-auto overflow-y-auto min-h-0">
         <table className="w-full text-left border-collapse min-w-full">
           <thead>
             <tr className="bg-slate-50 border-b border-slate-200/80 text-[11px] font-bold text-slate-500 uppercase tracking-wider dark:bg-slate-800/60 dark:border-slate-800 dark:text-slate-400">
@@ -521,8 +514,8 @@ export default function ServiceTable({
                   </td>
                 </tr>
               ))
-            ) : (data.items || []).length > 0 ? (
-              (data.items || []).map((row, idx) => (
+            ) : items.length > 0 ? (
+              items.map((row, idx) => (
                 <tr
                   key={row.id || idx}
                   onClick={() => {
@@ -632,68 +625,49 @@ export default function ServiceTable({
                 </td>
               </tr>
             )}
+
+            {/* Infinite-scroll sentinel — observing this row triggers the next
+                page fetch. Kept inside <tbody> so the markup stays valid. */}
+            {!isLoading && items.length > 0 && (
+              <tr ref={sentinelRef}>
+                <td colSpan={9} className="py-4 text-center">
+                  <InfiniteScrollStatus
+                    isLoadingMore={isLoadingMore}
+                    reachedEnd={reachedEnd}
+                    limitReached={limitReached}
+                    count={items.length}
+                  />
+                </td>
+              </tr>
+            )}
           </tbody>
         </table>
       </div>
 
-      {/* Pagination Bar */}
+      {/* Status Bar — infinite scroll replaces page controls, so this reports
+          how much of the result set is currently loaded. */}
       <div className="p-3 md:p-4 shrink-0 border-t border-slate-100 bg-slate-50/50 flex flex-wrap items-center justify-between gap-3 dark:border-slate-800 dark:bg-slate-900/50">
-        <div className="flex items-center gap-4">
-          <span className="text-xs text-slate-500 dark:text-slate-400">
-            Showing <strong className="text-slate-700 dark:text-slate-200">{(data.items || []).length > 0 ? (currentPage - 1) * pageSize + 1 : 0}</strong> to{" "}
-            <strong className="text-slate-700 dark:text-slate-200">
-              {Math.min(currentPage * pageSize, data.totalCount || (data.items || []).length)}
-            </strong> of <strong className="text-slate-700 dark:text-slate-200">{data.totalCount || (data.items || []).length}</strong> items
-          </span>
+        <span className="text-xs text-slate-500 dark:text-slate-400">
+          Loaded <strong className="text-slate-700 dark:text-slate-200">{items.length}</strong>
+          {totalCount > items.length && (
+            <> of <strong className="text-slate-700 dark:text-slate-200">{totalCount}</strong></>
+          )}{" "}
+          {items.length === 1 ? "item" : "items"}
+          {term && <> matching &ldquo;{term}&rdquo;</>}
+        </span>
 
-          <div className="flex items-center gap-1.5 text-xs text-slate-500 dark:text-slate-400">
-            <span>Rows per page:</span>
-            <select
-              value={pageSize}
-              onChange={(e) => {
-                setPageSize(Number(e.target.value));
-                setCurrentPage(1);
-              }}
-              className="px-2 py-1 border border-slate-200 dark:border-slate-700 rounded-lg bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-200 focus:outline-none focus:ring-1 focus:ring-blue-500 text-xs cursor-pointer"
-            >
-              <option value={10}>10</option>
-              <option value={25}>25</option>
-              <option value={50}>50</option>
-              <option value={100}>100</option>
-            </select>
-          </div>
-        </div>
-
-        <div className="flex items-center gap-1.5">
-          <button
-            onClick={() => setCurrentPage((p) => Math.max(p - 1, 1))}
-            disabled={currentPage === 1}
-            className="p-1.5 rounded-lg border border-slate-200 text-slate-600 hover:bg-slate-100 disabled:opacity-40 disabled:cursor-not-allowed dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"
+        <div className="flex items-center gap-1.5 text-xs text-slate-500 dark:text-slate-400">
+          <span>Load per scroll:</span>
+          <select
+            value={pageSize}
+            onChange={(e) => setPageSize(Number(e.target.value))}
+            className="px-2 py-1 border border-slate-200 dark:border-slate-700 rounded-lg bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-200 focus:outline-none focus:ring-1 focus:ring-blue-500 text-xs cursor-pointer"
           >
-            <ChevronLeft className="w-4 h-4" />
-          </button>
-
-          {Array.from({ length: Math.max(data.totalPages || 1, 1) }, (_, i) => i + 1).map((page) => (
-            <button
-              key={page}
-              onClick={() => setCurrentPage(page)}
-              className={`w-7 h-7 rounded-lg text-xs font-semibold transition-all ${
-                currentPage === page
-                  ? "bg-blue-600 text-white shadow-sm"
-                  : "text-slate-600 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800"
-              }`}
-            >
-              {page}
-            </button>
-          ))}
-
-          <button
-            onClick={() => setCurrentPage((p) => Math.min(p + 1, data.totalPages || 1))}
-            disabled={currentPage >= (data.totalPages || 1) || (data.totalPages || 1) === 0}
-            className="p-1.5 rounded-lg border border-slate-200 text-slate-600 hover:bg-slate-100 disabled:opacity-40 disabled:cursor-not-allowed dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"
-          >
-            <ChevronRight className="w-4 h-4" />
-          </button>
+            <option value={10}>10</option>
+            <option value={25}>25</option>
+            <option value={50}>50</option>
+            <option value={100}>100</option>
+          </select>
         </div>
       </div>
 
@@ -717,7 +691,7 @@ export default function ServiceTable({
           onClose={() => setApproveItem(null)}
           onApproved={() => {
             invalidateCachePrefix("repairservices");
-            void loadData();
+            void refreshLoaded();
           }}
         />
       )}

@@ -13,7 +13,7 @@
  */
 
 import { NextRequest, NextResponse } from "next/server";
-import { broadcast } from "@/services/eventBus";
+import { broadcast, type RealtimeResource } from "@/services/eventBus";
 
 const TECHNICAL_API_BASE =
   process.env.NEXT_PUBLIC_TECHNICAL_API_URL || "https://technicalservicesapi.camprotec.com.kh";
@@ -63,6 +63,25 @@ function inferStatusFromPath(pathString: string): string | undefined {
   if (p.includes("thirdpartyrepair"))     return "Repair by Third-Party";
   if (p.includes("receiveitem"))          return "Received";
   return undefined;
+}
+
+/**
+ * Infer which record type a mutation touched, so subscribers only refresh for
+ * events they actually care about.
+ *
+ * Order matters: several ticket-workflow endpoints contain "sparepart"
+ * ("awaitingsparepart", "sentspareparts", and the inspect-item spare-part
+ * sub-resource), and those act on a *ticket*, not the parts catalogue. So a
+ * successful status match wins before any path-prefix check runs.
+ */
+function inferResourceFromPath(pathString: string): RealtimeResource {
+  if (inferStatusFromPath(pathString)) return "ticket";
+
+  const p = pathString.toLowerCase();
+  if (p.startsWith("spareparts")) return "sparepart";
+  if (p.startsWith("items"))      return "item";
+  if (p.startsWith("customer"))   return "customer";
+  return "ticket";
 }
 
 // ---------------------------------------------------------------------------
@@ -161,10 +180,12 @@ export async function POST(
 
     // ✅ Broadcast to all SSE clients on success
     if (res.ok) {
+      const resource = inferResourceFromPath(pathString);
       const status = inferStatusFromPath(pathString);
       const isReceiveCreate = pathString.toLowerCase().includes("receiveitem");
       broadcast({
-        type: isReceiveCreate ? "ticket_created" : "status_changed",
+        type: resource === "ticket" && !isReceiveCreate ? "status_changed" : "ticket_created",
+        resource,
         status,
         at: new Date().toISOString(),
       });
@@ -212,10 +233,10 @@ export async function PUT(
 
     // ✅ Broadcast ticket_updated to all SSE clients on success
     if (res.ok) {
-      const status = inferStatusFromPath(pathString);
       broadcast({
         type: "ticket_updated",
-        status,
+        resource: inferResourceFromPath(pathString),
+        status: inferStatusFromPath(pathString),
         at: new Date().toISOString(),
       });
     }
@@ -259,6 +280,7 @@ export async function DELETE(
     if (res.ok) {
       broadcast({
         type: "ticket_deleted",
+        resource: inferResourceFromPath(pathString),
         at: new Date().toISOString(),
       });
     }

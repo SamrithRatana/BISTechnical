@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { broadcast } from '@/services/eventBus';
 
 const BASE = process.env.NEXT_PUBLIC_TECHNICAL_API_URL || 'https://technicalservicesapi.camprotec.com.kh';
 const VER  = process.env.NEXT_PUBLIC_API_VERSION        || '1.0';
@@ -18,6 +19,19 @@ export async function POST(req: NextRequest) {
       method: 'POST', headers: forwardHeaders(req), body, cache: 'no-store',
     });
     const data = await res.json().catch(() => ({}));
+
+    // Verifying a repair moves the ticket into "Finished". This route bypasses
+    // the generic proxy, so without broadcasting here the change was invisible
+    // to every other user until their next poll.
+    if (res.ok) {
+      broadcast({
+        type: 'status_changed',
+        resource: 'ticket',
+        status: 'Finished',
+        at: new Date().toISOString(),
+      });
+    }
+
     return NextResponse.json(data, { status: res.status });
   } catch {
     return NextResponse.json({ error: 'Failed to connect to backend' }, { status: 500 });

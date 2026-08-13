@@ -21,9 +21,26 @@ export type TicketEventType =
   | "ticket_deleted"
   | "status_changed";
 
+/**
+ * Which kind of record the event is about.
+ *
+ * Without this every mutation looked like a ticket event: saving a spare part
+ * refreshed all the ticket queues (which don't care) while the spare-parts
+ * list itself — the one screen that needed it — got nothing.
+ */
+export type RealtimeResource = "ticket" | "sparepart" | "item" | "customer";
+
 export interface TicketEvent {
   type: TicketEventType;
-  /** The status name the ticket now belongs to (e.g. "Inspection") */
+  /** Record type this event concerns. Defaults to "ticket" when absent. */
+  resource?: RealtimeResource;
+  /**
+   * The status the ticket now belongs to (e.g. "Inspection").
+   *
+   * Note this is the *destination* status only — the event carries no record
+   * of where the ticket came from, so subscribers must not use it to decide
+   * whether an event is theirs. See `useRealtimeTickets`.
+   */
   status?: string;
   /** Ticket ID affected */
   id?: string;

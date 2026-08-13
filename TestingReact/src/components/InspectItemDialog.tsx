@@ -36,9 +36,11 @@ import {
 } from "@/services/api";
 import { useFloatingPanel } from "@/hooks/useFloatingPanel";
 import { useDebouncedValue } from "@/hooks/useDebouncedValue";
+import { useInfiniteList } from "@/hooks/useInfiniteList";
 import HighlightText from "./HighlightText";
 import SparePartSpecModal from "./SparePartSpecModal";
 import ModernSelect from "./ModernSelect";
+import InfiniteScrollStatus from "./InfiniteScrollStatus";
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -116,9 +118,7 @@ export default function InspectItemDialog({ item, onClose, onSave }: InspectItem
 
   // Spare part search state
   const [partSearch,    setPartSearch]    = useState("");
-  const [allParts,      setAllParts]      = useState<SparePartItem[]>([]);
   const [dropdownOpen,  setDropdownOpen]  = useState(false);
-  const [partsLoading,  setPartsLoading]  = useState(false);
   const [viewPart,      setViewPart]      = useState<SparePartItem | null>(null);
 
   // The search dropdown is portaled with fixed coordinates rather than
@@ -140,22 +140,27 @@ export default function InspectItemDialog({ item, onClose, onSave }: InspectItem
   // Spare parts are searched on the server, not filtered from a preloaded
   // page: the catalog is longer than any single fetch, so a locally filtered
   // first page silently hides every part past it. The backend matches
-  // ItemName, SerialNumber, Description and UseFor.
+  // ItemName, SerialNumber, Description and UseFor. Results scroll-load via
+  // useInfiniteList (same hook the full inventory pages use) instead of
+  // stopping at a single fixed-size page, so a broad search stays reachable
+  // past the first batch.
   const debouncedPartSearch = useDebouncedValue(partSearch, 300);
+  const partSearchTerm = debouncedPartSearch.trim();
 
-  useEffect(() => {
-    let cancelled = false;
-    void (async () => {
-      setPartsLoading(true);
-      const res = await fetchSparePartsInventory(1, 25, debouncedPartSearch.trim());
-      if (cancelled) return;
-      setAllParts(res.items);
-      setPartsLoading(false);
-    })();
-    return () => { cancelled = true; };
-  }, [debouncedPartSearch]);
-
-  const filteredParts = allParts;
+  const {
+    items: filteredParts,
+    isLoading: partsLoading,
+    isLoadingMore: partsLoadingMore,
+    reachedEnd: partsReachedEnd,
+    limitReached: partsLimitReached,
+    scrollRootRef: partsScrollRootRef,
+    sentinelRef: partsSentinelRef,
+  } = useInfiniteList<SparePartItem, HTMLDivElement, HTMLDivElement>({
+    fetchPage: (pageNumber, size) => fetchSparePartsInventory(pageNumber, size, partSearchTerm),
+    pageSize: 25,
+    resetKey: partSearchTerm,
+    getId: (p) => p.id,
+  });
 
   // `item` comes from the Inspecting page's paged search endpoint, which is
   // a different, narrower projection than the by-id endpoint — it carries
@@ -453,57 +458,73 @@ export default function InspectItemDialog({ item, onClose, onSave }: InspectItem
                       width: searchCoords.width,
                       transform: searchCoords.placement === "top" ? "translateY(-100%)" : undefined,
                     }}
-                    className={`z-[100] bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl shadow-xl overflow-hidden max-h-52 overflow-y-auto ${
+                    className={`z-[100] bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl shadow-xl overflow-hidden ${
                       searchCoords.placement === "top" ? "dropdown-panel-in-top" : "dropdown-panel-in"
                     }`}
                   >
-                    {partsLoading ? (
-                      <div className="flex items-center justify-center py-6">
-                        <Loader2 className="w-5 h-5 animate-spin text-slate-400" />
-                      </div>
-                    ) : filteredParts.length === 0 ? (
-                      <p className="px-4 py-3 text-xs text-slate-400">No spare parts found.</p>
-                    ) : (
-                      filteredParts.slice(0, 12).map((part) => {
-                        const stock = getStockBadge(part.quantity ?? 0);
-                        return (
-                          <div
-                            key={part.id}
-                            onClick={() => handleAddPart(part)}
-                            className="w-full flex items-center gap-2 px-3 py-2 hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors text-left cursor-pointer"
-                          >
-                            {part.pictureUrl ? (
-                              <img src={part.pictureUrl} alt="" className="w-8 h-8 object-cover rounded-lg border border-slate-200 shrink-0" />
-                            ) : (
-                              <div className="w-8 h-8 bg-slate-100 dark:bg-slate-800 rounded-lg border border-slate-200 dark:border-slate-700 flex items-center justify-center shrink-0">
-                                <Package className="w-4 h-4 text-slate-400" />
+                    {/* Separate scroll container from searchPanelRef above: useInfiniteList's
+                        sentinel needs its actual scrolling ancestor as the IntersectionObserver
+                        root, while useFloatingPanel's outside-click check still works on this
+                        inner div via `.contains()` on the outer wrapper. */}
+                    <div ref={partsScrollRootRef} className="max-h-52 overflow-y-auto">
+                      {partsLoading ? (
+                        <div className="flex items-center justify-center py-6">
+                          <Loader2 className="w-5 h-5 animate-spin text-slate-400" />
+                        </div>
+                      ) : filteredParts.length === 0 ? (
+                        <p className="px-4 py-3 text-xs text-slate-400">No spare parts found.</p>
+                      ) : (
+                        <>
+                          {filteredParts.map((part) => {
+                            const stock = getStockBadge(part.quantity ?? 0);
+                            return (
+                              <div
+                                key={part.id}
+                                onClick={() => handleAddPart(part)}
+                                className="w-full flex items-center gap-2 px-3 py-2 hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors text-left cursor-pointer"
+                              >
+                                {part.pictureUrl ? (
+                                  <img src={part.pictureUrl} alt="" className="w-8 h-8 object-cover rounded-lg border border-slate-200 shrink-0" />
+                                ) : (
+                                  <div className="w-8 h-8 bg-slate-100 dark:bg-slate-800 rounded-lg border border-slate-200 dark:border-slate-700 flex items-center justify-center shrink-0">
+                                    <Package className="w-4 h-4 text-slate-400" />
+                                  </div>
+                                )}
+                                <div className="flex-1 min-w-0">
+                                  <p className="text-xs font-medium text-slate-900 dark:text-slate-100 truncate">
+                                    <HighlightText text={part.itemName} query={partSearch} />
+                                  </p>
+                                  <p className="text-[10px] text-slate-500 truncate">
+                                    <HighlightText text={part.useFor} query={partSearch} />
+                                  </p>
+                                </div>
+                                <span className={`shrink-0 text-[10px] font-bold px-2 py-0.5 rounded-full border ${stock.cls}`}>{stock.label}</span>
+                                <button
+                                  type="button"
+                                  title="View specification"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    setViewPart(part);
+                                    setDropdownOpen(false);
+                                  }}
+                                  className="shrink-0 p-1.5 rounded-lg text-slate-400 hover:text-blue-600 hover:bg-blue-50 dark:hover:bg-slate-700 dark:hover:text-blue-400 transition-colors"
+                                >
+                                  <Eye className="w-3.5 h-3.5" />
+                                </button>
                               </div>
-                            )}
-                            <div className="flex-1 min-w-0">
-                              <p className="text-xs font-medium text-slate-900 dark:text-slate-100 truncate">
-                                <HighlightText text={part.itemName} query={partSearch} />
-                              </p>
-                              <p className="text-[10px] text-slate-500 truncate">
-                                <HighlightText text={part.useFor} query={partSearch} />
-                              </p>
-                            </div>
-                            <span className={`shrink-0 text-[10px] font-bold px-2 py-0.5 rounded-full border ${stock.cls}`}>{stock.label}</span>
-                            <button
-                              type="button"
-                              title="View specification"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                setViewPart(part);
-                                setDropdownOpen(false);
-                              }}
-                              className="shrink-0 p-1.5 rounded-lg text-slate-400 hover:text-blue-600 hover:bg-blue-50 dark:hover:bg-slate-700 dark:hover:text-blue-400 transition-colors"
-                            >
-                              <Eye className="w-3.5 h-3.5" />
-                            </button>
+                            );
+                          })}
+                          <div ref={partsSentinelRef} className="px-3 py-2 text-center border-t border-slate-100 dark:border-slate-800">
+                            <InfiniteScrollStatus
+                              isLoadingMore={partsLoadingMore}
+                              reachedEnd={partsReachedEnd}
+                              limitReached={partsLimitReached}
+                              count={filteredParts.length}
+                            />
                           </div>
-                        );
-                      })
-                    )}
+                        </>
+                      )}
+                    </div>
                   </div>,
                   document.body
                 )}

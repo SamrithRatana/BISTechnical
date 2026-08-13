@@ -10,28 +10,21 @@
  *  - DELETE: deleteCustomer()
  */
 
-import React, { useState, useEffect, useCallback } from "react";
+import React, { useState, useCallback } from "react";
 import PageWrapper from "@/components/PageWrapper";
-import { Search, Plus, RefreshCw, ChevronLeft, ChevronRight, Edit3, Trash2, X, Save, Building2, User, Phone, MapPin } from "lucide-react";
-import { fetchCustomerCenter, createCustomer, updateCustomer, deleteCustomer, type CustomerItem, type PaginatedResult } from "@/services/api";
+import { Search, Plus, RefreshCw, Edit3, Trash2, X, Save, Building2, User, Phone, MapPin } from "lucide-react";
+import { fetchCustomerCenter, createCustomer, updateCustomer, deleteCustomer, invalidateCachePrefix, type CustomerItem } from "@/services/api";
+import { useRealtimeResource } from "@/hooks/useRealtimeTickets";
 import HighlightText from "@/components/HighlightText";
 import ModernSelect from "@/components/ModernSelect";
 import { useDebouncedValue } from "@/hooks/useDebouncedValue";
+import { useInfiniteList } from "@/hooks/useInfiniteList";
+import InfiniteScrollStatus from "@/components/InfiniteScrollStatus";
 
 export default function CustomerCenterPage() {
   const [search, setSearch] = useState("");
-  const [currentPage, setCurrentPage] = useState(1);
-  const pageSize = 10;
-  const [isLoading, setIsLoading] = useState(true);
+  const pageSize = 25;
   const [isSaving, setIsSaving] = useState(false);
-
-  const [data, setData] = useState<PaginatedResult<CustomerItem>>({
-    items: [],
-    totalCount: 0,
-    pageNumber: 1,
-    pageSize: 10,
-    totalPages: 0,
-  });
 
   // Modal states
   const [showModal, setShowModal] = useState(false);
@@ -48,21 +41,35 @@ export default function CustomerCenterPage() {
 
   const debouncedSearch = useDebouncedValue(search, 300);
 
-  useEffect(() => {
-    setCurrentPage(1);
-  }, [debouncedSearch]);
+  const term = debouncedSearch.trim();
 
-  const loadData = useCallback(async () => {
-    setIsLoading(true);
-    const term = debouncedSearch.trim();
-    const result = await fetchCustomerCenter(currentPage, pageSize, term);
-    setData(result);
-    setIsLoading(false);
-  }, [currentPage, pageSize, debouncedSearch]);
+  const {
+    items,
+    totalCount,
+    isLoading,
+    isLoadingMore,
+    reachedEnd,
+    limitReached,
+    scrollRootRef,
+    sentinelRef,
+    refresh: loadData,
+    setItems,
+    setTotalCount,
+  } = useInfiniteList<CustomerItem, HTMLDivElement, HTMLTableRowElement>({
+    fetchPage: (pageNumber, size) => fetchCustomerCenter(pageNumber, size, term),
+    pageSize,
+    resetKey: term,
+    getId: (c) => c?.id,
+  });
 
-  useEffect(() => {
+  // Live updates so another user's add/edit/delete shows up here without a
+  // manual reload.
+  const handleRealtimeUpdate = useCallback(() => {
+    invalidateCachePrefix("customers");
     void loadData();
   }, [loadData]);
+
+  useRealtimeResource("customer", handleRealtimeUpdate);
 
   const handleOpenAdd = () => {
     setSelectedCustomer(null);
@@ -110,10 +117,9 @@ export default function CustomerCenterPage() {
     } else {
       // Optimistic update fallback
       if (selectedCustomer?.id) {
-        setData((prev) => ({
-          ...prev,
-          items: prev.items.map((c) => (c.id === selectedCustomer.id ? { ...c, ...formData } as CustomerItem : c)),
-        }));
+        setItems((prev) =>
+          prev.map((c) => (c.id === selectedCustomer.id ? { ...c, ...formData } as CustomerItem : c))
+        );
       } else {
         const newTemp: CustomerItem = {
           id: "temp-" + Date.now(),
@@ -124,7 +130,8 @@ export default function CustomerCenterPage() {
           customerType: formData.customerType || "Corporate",
           isActive: true,
         };
-        setData((prev) => ({ ...prev, items: [newTemp, ...prev.items], totalCount: prev.totalCount + 1 }));
+        setItems((prev) => [newTemp, ...prev]);
+        setTotalCount((prev) => prev + 1);
       }
       setShowModal(false);
     }
@@ -142,24 +149,15 @@ export default function CustomerCenterPage() {
       void loadData();
     } else {
       // Optimistic deletion fallback
-      setData((prev) => ({
-        ...prev,
-        items: prev.items.filter((c) => c.id !== selectedCustomer.id),
-        totalCount: Math.max(prev.totalCount - 1, 0),
-      }));
+      setItems((prev) => prev.filter((c) => c.id !== selectedCustomer.id));
+      setTotalCount((prev) => Math.max(prev - 1, 0));
       setShowDeleteConfirm(false);
     }
   };
 
-  const filtered = (data.items || []).filter((c) => {
-    if (!c) return false;
-    const term = (search || "").toLowerCase();
-    const company = (c.companyName || "").toLowerCase();
-    const contact = (c.contactName || "").toLowerCase();
-    const phone = (c.phoneNumber || "").toLowerCase();
-
-    return company.includes(term) || contact.includes(term) || phone.includes(term);
-  });
+  // No client-side re-filtering — `fetchCustomerCenter` already applies the
+  // search server-side. Re-filtering the loaded rows (against the undebounced
+  // term) hid rows mid-keystroke and capped results at one page.
 
   return (
     <PageWrapper
@@ -176,10 +174,7 @@ export default function CustomerCenterPage() {
                 type="text"
                 placeholder="Search company, contact person, phone..."
                 value={search}
-                onChange={(e) => {
-                  setSearch(e.target.value);
-                  setCurrentPage(1);
-                }}
+                onChange={(e) => setSearch(e.target.value)}
                 className="pl-9 pr-4 py-2 text-xs border border-slate-200 rounded-xl bg-white focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 w-64 md:w-80 dark:bg-slate-800 dark:border-slate-700 dark:text-slate-200"
               />
             </div>
@@ -202,8 +197,8 @@ export default function CustomerCenterPage() {
           </button>
         </div>
 
-        {/* Table Content */}
-        <div className="flex-1 overflow-x-auto overflow-y-auto min-h-0">
+        {/* Table Content — also the IntersectionObserver root for infinite scroll */}
+        <div ref={scrollRootRef} className="flex-1 overflow-x-auto overflow-y-auto min-h-0">
           <table className="w-full text-left border-collapse text-xs">
             <thead>
               <tr className="bg-slate-50 dark:bg-slate-800/60 border-b border-slate-200/80 dark:border-slate-800 text-[11px] font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider">
@@ -224,8 +219,8 @@ export default function CustomerCenterPage() {
                     </td>
                   </tr>
                 ))
-              ) : filtered.length > 0 ? (
-                filtered.map((c, idx) => (
+              ) : items.length > 0 ? (
+                items.map((c, idx) => (
                   <tr key={c.id || idx} className="hover:bg-slate-50 dark:hover:bg-slate-800/40 transition-colors">
                     <td className="py-2.5 sm:py-3 px-4 font-bold text-slate-900 dark:text-slate-100">
                       <HighlightText text={c.companyName} query={search} />
@@ -271,37 +266,34 @@ export default function CustomerCenterPage() {
                   </td>
                 </tr>
               )}
+
+              {/* Infinite-scroll sentinel — observing this row pulls the next batch. */}
+              {!isLoading && items.length > 0 && (
+                <tr ref={sentinelRef}>
+                  <td colSpan={6} className="py-4 text-center">
+                    <InfiniteScrollStatus
+                      isLoadingMore={isLoadingMore}
+                      reachedEnd={reachedEnd}
+                      limitReached={limitReached}
+                      count={items.length}
+                    />
+                  </td>
+                </tr>
+              )}
             </tbody>
           </table>
         </div>
 
-        {/* Pagination Bar */}
+        {/* Status Bar — infinite scroll replaces the page controls */}
         <div className="p-4 border-t border-slate-100 bg-slate-50/50 flex items-center justify-between dark:border-slate-800 dark:bg-slate-900/50 shrink-0">
           <span className="text-xs text-slate-500 dark:text-slate-400">
-            Showing <strong className="text-slate-700 dark:text-slate-200">1</strong> to{" "}
-            <strong className="text-slate-700 dark:text-slate-200">{filtered.length}</strong> of{" "}
-            <strong className="text-slate-700 dark:text-slate-200">{data.totalCount || filtered.length}</strong> items
+            Loaded <strong className="text-slate-700 dark:text-slate-200">{items.length}</strong>
+            {totalCount > items.length && (
+              <> of <strong className="text-slate-700 dark:text-slate-200">{totalCount}</strong></>
+            )}{" "}
+            {items.length === 1 ? "customer" : "customers"}
+            {term && <> matching &ldquo;{term}&rdquo;</>}
           </span>
-
-          <div className="flex items-center gap-1.5">
-            <button
-              onClick={() => setCurrentPage((p) => Math.max(p - 1, 1))}
-              disabled={currentPage === 1}
-              className="p-1.5 rounded-lg border border-slate-200 text-slate-600 hover:bg-slate-100 disabled:opacity-40 disabled:cursor-not-allowed dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"
-            >
-              <ChevronLeft className="w-4 h-4" />
-            </button>
-            <span className="px-2.5 py-1 text-xs font-semibold rounded bg-blue-600 text-white">
-              {currentPage}
-            </span>
-            <button
-              onClick={() => setCurrentPage((p) => Math.min(p + 1, data.totalPages || 1))}
-              disabled={currentPage >= (data.totalPages || 1)}
-              className="p-1.5 rounded-lg border border-slate-200 text-slate-600 hover:bg-slate-100 disabled:opacity-40 disabled:cursor-not-allowed dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"
-            >
-              <ChevronRight className="w-4 h-4" />
-            </button>
-          </div>
         </div>
       </div>
 

@@ -9,7 +9,7 @@
  *  - View details via ServiceDetailModal
  */
 
-import React, { useState, useEffect, useCallback } from "react";
+import React, { useState, useCallback } from "react";
 import PageWrapper from "@/components/PageWrapper";
 import HighlightText from "@/components/HighlightText";
 import ServiceDetailModal from "@/components/ServiceDetailModal";
@@ -18,19 +18,18 @@ import { getActionUserForStatus } from "@/services/types";
 import { getCurrentUserGuid } from "@/services/userService";
 import { useRealtimeTickets } from "@/hooks/useRealtimeTickets";
 import { useDebouncedValue } from "@/hooks/useDebouncedValue";
+import { useInfiniteList } from "@/hooks/useInfiniteList";
+import InfiniteScrollStatus from "@/components/InfiniteScrollStatus";
 import {
   fetchRepairServices,
   updateServiceStatus,
   type RepairServiceItem,
-  type PaginatedResult,
 } from "@/services/api";
 import {
   Search,
   RefreshCw,
   Eye,
   ShieldCheck,
-  ChevronLeft,
-  ChevronRight,
   Download,
   CheckCircle,
   Loader2,
@@ -55,12 +54,7 @@ const PRIORITY_BADGE: Record<string, string> = {
 
 export default function ApproveVerifyPage() {
   const [searchTerm,   setSearchTerm]   = useState("");
-  const [currentPage,  setCurrentPage]  = useState(1);
-  const pageSize                        = 10;
-  const [isLoading,    setIsLoading]    = useState(true);
-  const [data,         setData]         = useState<PaginatedResult<RepairServiceItem>>({
-    items: [], totalCount: 0, pageNumber: 1, pageSize, totalPages: 0,
-  });
+  const pageSize                        = 25;
 
   const [viewItem,    setViewItem]    = useState<RepairServiceItem | null>(null);
   const [printItem,   setPrintItem]   = useState<RepairServiceItem | null>(null);
@@ -73,22 +67,24 @@ export default function ApproveVerifyPage() {
   };
 
   const debouncedSearch = useDebouncedValue(searchTerm, 300);
+  const term = debouncedSearch.trim();
 
-  useEffect(() => {
-    setCurrentPage(1);
-  }, [debouncedSearch]);
-
-  const loadData = useCallback(async () => {
-    if (!data.items || data.items.length === 0) {
-      setIsLoading(true);
-    }
-    const term = debouncedSearch.trim();
-    const res = await fetchRepairServices(currentPage, pageSize, "Finished", term);
-    setData(res);
-    setIsLoading(false);
-  }, [currentPage, pageSize, debouncedSearch]);
-
-  useEffect(() => { void loadData(); }, [loadData]);
+  const {
+    items,
+    totalCount,
+    isLoading,
+    isLoadingMore,
+    reachedEnd,
+    limitReached,
+    scrollRootRef,
+    sentinelRef,
+    refresh: loadData,
+  } = useInfiniteList<RepairServiceItem, HTMLDivElement, HTMLTableRowElement>({
+    fetchPage: (pageNumber, size) => fetchRepairServices(pageNumber, size, "Finished", term),
+    pageSize,
+    resetKey: term,
+    getId: (i) => i?.id,
+  });
 
   // ✅ Real-time auto-refresh
   const handleRealtimeUpdate = useCallback(() => { void loadData(); }, [loadData]);
@@ -136,9 +132,9 @@ export default function ApproveVerifyPage() {
   };
 
   const handleExportCSV = () => {
-    if (!data.items.length) return;
+    if (!items.length) return;
     const headers = ["Ref No", "Finished Date", "Company", "Item", "Serial", "Priority", "Verified By"];
-    const rows = data.items.map((i) => [
+    const rows = items.map((i) => [
       `"${i.reportNo}"`, `"${i.finishedDate ?? i.serviceDate}"`,
       `"${i.companyName}"`, `"${i.itemName}"`, `"${i.serialNumber}"`,
       `"${i.servicePriority}"`, `"${i.verifiedByName ?? i.repairByName}"`,
@@ -170,7 +166,7 @@ export default function ApproveVerifyPage() {
                 type="text"
                 placeholder="Search by Ref No, Company, Serial..."
                 value={searchTerm}
-                onChange={(e) => { setSearchTerm(e.target.value); setCurrentPage(1); }}
+                onChange={(e) => setSearchTerm(e.target.value)}
                 className="pl-9 pr-4 py-2 text-xs border border-slate-200 rounded-xl bg-white focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 w-72 dark:bg-slate-800 dark:border-slate-700 dark:text-slate-200"
               />
             </div>
@@ -191,8 +187,8 @@ export default function ApproveVerifyPage() {
           </button>
         </div>
 
-        {/* Table */}
-        <div className="flex-1 overflow-x-auto overflow-y-auto min-h-0">
+        {/* Table — also the IntersectionObserver root for infinite scroll */}
+        <div ref={scrollRootRef} className="flex-1 overflow-x-auto overflow-y-auto min-h-0">
           <table className="w-full text-left border-collapse min-w-full text-xs">
             <thead>
               <tr className="bg-slate-50 dark:bg-slate-800/60 border-b border-slate-200/80 dark:border-slate-800 text-[11px] font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider">
@@ -215,8 +211,8 @@ export default function ApproveVerifyPage() {
                     </td>
                   </tr>
                 ))
-              ) : data.items.length > 0 ? (
-                data.items.map((row) => (
+              ) : items.length > 0 ? (
+                items.map((row) => (
                   <tr
                     key={row.id}
                     onClick={() => setViewItem(row)}
@@ -287,34 +283,34 @@ export default function ApproveVerifyPage() {
                   </td>
                 </tr>
               )}
+
+              {/* Infinite-scroll sentinel — observing this row pulls the next batch. */}
+              {!isLoading && items.length > 0 && (
+                <tr ref={sentinelRef}>
+                  <td colSpan={8} className="py-4 text-center">
+                    <InfiniteScrollStatus
+                      isLoadingMore={isLoadingMore}
+                      reachedEnd={reachedEnd}
+                      limitReached={limitReached}
+                      count={items.length}
+                    />
+                  </td>
+                </tr>
+              )}
             </tbody>
           </table>
         </div>
 
-        {/* Pagination */}
+        {/* Status Bar — infinite scroll replaces the page controls */}
         <div className="p-4 shrink-0 border-t border-slate-100 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-900/50 flex items-center justify-between">
           <span className="text-xs text-slate-500 dark:text-slate-400">
-            Showing <strong className="text-slate-700 dark:text-slate-200">{data.items.length > 0 ? (currentPage - 1) * pageSize + 1 : 0}</strong> to{" "}
-            <strong className="text-slate-700 dark:text-slate-200">{Math.min(currentPage * pageSize, data.totalCount)}</strong> of{" "}
-            <strong className="text-slate-700 dark:text-slate-200">{data.totalCount}</strong> items
+            Loaded <strong className="text-slate-700 dark:text-slate-200">{items.length}</strong>
+            {totalCount > items.length && (
+              <> of <strong className="text-slate-700 dark:text-slate-200">{totalCount}</strong></>
+            )}{" "}
+            {items.length === 1 ? "item" : "items"}
+            {term && <> matching &ldquo;{term}&rdquo;</>}
           </span>
-          <div className="flex items-center gap-1.5">
-            <button
-              onClick={() => setCurrentPage((p) => Math.max(p - 1, 1))}
-              disabled={currentPage === 1}
-              className="p-1.5 rounded-lg border border-slate-200 text-slate-600 hover:bg-slate-100 disabled:opacity-40 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"
-            >
-              <ChevronLeft className="w-4 h-4" />
-            </button>
-            <span className="px-2.5 py-1 text-xs font-semibold rounded bg-blue-600 text-white">{currentPage}</span>
-            <button
-              onClick={() => setCurrentPage((p) => Math.min(p + 1, data.totalPages || 1))}
-              disabled={currentPage >= (data.totalPages || 1)}
-              className="p-1.5 rounded-lg border border-slate-200 text-slate-600 hover:bg-slate-100 disabled:opacity-40 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"
-            >
-              <ChevronRight className="w-4 h-4" />
-            </button>
-          </div>
         </div>
       </div>
 

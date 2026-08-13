@@ -12,13 +12,16 @@
  *  - ACTIONS (View, Edit, Delete)
  */
 
-import React, { useState, useEffect, useCallback } from "react";
+import React, { useState, useCallback } from "react";
 import ModernSelect from "@/components/ModernSelect";
 import { useDebouncedValue } from "@/hooks/useDebouncedValue";
+import { useRealtimeResource } from "@/hooks/useRealtimeTickets";
+import { useInfiniteList } from "@/hooks/useInfiniteList";
+import InfiniteScrollStatus from "@/components/InfiniteScrollStatus";
 import PageWrapper from "@/components/PageWrapper";
 import HighlightText from "@/components/HighlightText";
-import { Download, ChevronLeft, ChevronRight, Eye, Edit3, Trash2, Search, Plus, RefreshCw, AlertTriangle, X } from "lucide-react";
-import { fetchItemsInventory, type ItemModel, type PaginatedResult, invalidateCachePrefix } from "@/services/api";
+import { Download, Eye, Edit3, Trash2, Search, Plus, RefreshCw, AlertTriangle, X } from "lucide-react";
+import { fetchItemsInventory, type ItemModel, invalidateCachePrefix } from "@/services/api";
 
 function getAuthHeaders() {
   const headers: Record<string, string> = { 'Content-Type': 'application/json' };
@@ -30,21 +33,11 @@ function getAuthHeaders() {
 }
 export default function ReceivedInventoryPage() {
   const [searchTerm, setSearchTerm] = useState("");
-  const [currentPage, setCurrentPage] = useState(1);
-  const pageSize = 10;
-  const [isLoading, setIsLoading] = useState(true);
+  const pageSize = 25;
   const [selectedItem, setSelectedItem] = useState<ItemModel | null>(null);
   const [activeModal, setActiveModal] = useState<"view" | "edit" | "delete" | null>(null);
   const [isSaving, setIsSaving] = useState(false);
   const [modalError, setModalError] = useState<string | null>(null);
-
-  const [data, setData] = useState<PaginatedResult<ItemModel>>({
-    items: [],
-    totalCount: 0,
-    pageNumber: 1,
-    pageSize: 10,
-    totalPages: 0,
-  });
 
   // Edit / Add Form State
   const [formState, setFormState] = useState<ItemModel>({
@@ -56,33 +49,37 @@ export default function ReceivedInventoryPage() {
 
   const debouncedSearch = useDebouncedValue(searchTerm, 300);
 
-  useEffect(() => {
-    setCurrentPage(1);
-  }, [debouncedSearch]);
+  const term = debouncedSearch.trim();
 
-  const loadData = useCallback(async () => {
-    if (!data.items || data.items.length === 0) {
-      setIsLoading(true);
-    }
-    const term = debouncedSearch.trim();
-    const result = await fetchItemsInventory(currentPage, pageSize, term);
-    setData(result);
-    setIsLoading(false);
-  }, [currentPage, pageSize, debouncedSearch]);
+  const {
+    items,
+    totalCount,
+    isLoading,
+    isLoadingMore,
+    reachedEnd,
+    limitReached,
+    scrollRootRef,
+    sentinelRef,
+    refresh: loadData,
+  } = useInfiniteList<ItemModel, HTMLDivElement, HTMLTableRowElement>({
+    fetchPage: (pageNumber, size) => fetchItemsInventory(pageNumber, size, term),
+    pageSize,
+    resetKey: term,
+    getId: (i) => i?.id,
+  });
 
-  useEffect(() => {
+  // Live updates so another user's add/edit/delete shows up here without a
+  // manual reload.
+  const handleRealtimeUpdate = useCallback(() => {
+    invalidateCachePrefix("items");
     void loadData();
   }, [loadData]);
 
-  const filteredItems = (data.items || []).filter((item) => {
-    if (!item) return false;
-    const term = (searchTerm || "").toLowerCase();
-    const name = (item.itemName || "").toLowerCase();
-    const serial = (item.serialNumber || "").toLowerCase();
-    const type = (item.itemType || "").toLowerCase();
+  useRealtimeResource("item", handleRealtimeUpdate);
 
-    return name.includes(term) || serial.includes(term) || type.includes(term);
-  });
+  // No client-side re-filtering — `fetchItemsInventory` already applies the
+  // search server-side, and re-filtering the loaded rows (against the
+  // undebounced term) hid rows mid-keystroke and capped results at one page.
 
   const handleCreateOrUpdate = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -138,9 +135,9 @@ export default function ReceivedInventoryPage() {
   };
 
   const handleExportCSV = () => {
-    if (!data.items || data.items.length === 0) return;
+    if (items.length === 0) return;
     const headers = ["Item Name", "Serial Number", "Item Type"];
-    const rows = data.items.map((i) => [
+    const rows = items.map((i) => [
       `"${i.itemName || ""}"`,
       `"${i.serialNumber || ""}"`,
       `"${i.itemType || ""}"`,
@@ -170,10 +167,7 @@ export default function ReceivedInventoryPage() {
                 type="text"
                 placeholder="Search by Item Name, Serial Number, Type..."
                 value={searchTerm}
-                onChange={(e) => {
-                  setSearchTerm(e.target.value);
-                  setCurrentPage(1);
-                }}
+                onChange={(e) => setSearchTerm(e.target.value)}
                 className="pl-9 pr-4 py-2 text-xs border border-slate-200 rounded-xl bg-white focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 w-64 md:w-80 dark:bg-slate-800 dark:border-slate-700 dark:text-slate-200"
               />
             </div>
@@ -210,8 +204,9 @@ export default function ReceivedInventoryPage() {
           </div>
         </div>
 
-        {/* Table Content — matches ItemModelList.razor exact column layout */}
-        <div className="flex-1 overflow-x-auto overflow-y-auto min-h-0">
+        {/* Table Content — matches ItemModelList.razor exact column layout.
+            Also the IntersectionObserver root for infinite scroll. */}
+        <div ref={scrollRootRef} className="flex-1 overflow-x-auto overflow-y-auto min-h-0">
           <table className="w-full text-left border-collapse min-w-full text-xs">
             <thead>
               <tr className="bg-slate-50 border-b border-slate-200/80 text-[11px] font-bold text-slate-500 uppercase tracking-wider dark:bg-slate-800/60 dark:border-slate-800 dark:text-slate-400">
@@ -231,8 +226,8 @@ export default function ReceivedInventoryPage() {
                     </td>
                   </tr>
                 ))
-              ) : filteredItems.length > 0 ? (
-                filteredItems.map((item, idx) => (
+              ) : items.length > 0 ? (
+                items.map((item, idx) => (
                   <tr
                     key={item.id || idx}
                     className="hover:bg-slate-50/80 transition-colors dark:hover:bg-slate-800/40"
@@ -295,37 +290,34 @@ export default function ReceivedInventoryPage() {
                   </td>
                 </tr>
               )}
+
+              {/* Infinite-scroll sentinel — observing this row pulls the next batch. */}
+              {!isLoading && items.length > 0 && (
+                <tr ref={sentinelRef}>
+                  <td colSpan={4} className="py-4 text-center">
+                    <InfiniteScrollStatus
+                      isLoadingMore={isLoadingMore}
+                      reachedEnd={reachedEnd}
+                      limitReached={limitReached}
+                      count={items.length}
+                    />
+                  </td>
+                </tr>
+              )}
             </tbody>
           </table>
         </div>
 
-        {/* Pagination Bar */}
+        {/* Status Bar — infinite scroll replaces the page controls */}
         <div className="p-4 border-t border-slate-100 bg-slate-50/50 flex items-center justify-between dark:border-slate-800 dark:bg-slate-900/50 shrink-0">
           <span className="text-xs text-slate-500 dark:text-slate-400">
-            Showing <strong className="text-slate-700 dark:text-slate-200">1</strong> to{" "}
-            <strong className="text-slate-700 dark:text-slate-200">{filteredItems.length}</strong> of{" "}
-            <strong className="text-slate-700 dark:text-slate-200">{data.totalCount || filteredItems.length}</strong> items
+            Loaded <strong className="text-slate-700 dark:text-slate-200">{items.length}</strong>
+            {totalCount > items.length && (
+              <> of <strong className="text-slate-700 dark:text-slate-200">{totalCount}</strong></>
+            )}{" "}
+            {items.length === 1 ? "item" : "items"}
+            {term && <> matching &ldquo;{term}&rdquo;</>}
           </span>
-
-          <div className="flex items-center gap-1.5">
-            <button
-              onClick={() => setCurrentPage((p) => Math.max(p - 1, 1))}
-              disabled={currentPage === 1}
-              className="p-1.5 rounded-lg border border-slate-200 text-slate-600 hover:bg-slate-100 disabled:opacity-40 disabled:cursor-not-allowed dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"
-            >
-              <ChevronLeft className="w-4 h-4" />
-            </button>
-            <span className="px-2.5 py-1 text-xs font-semibold rounded bg-blue-600 text-white">
-              {currentPage}
-            </span>
-            <button
-              onClick={() => setCurrentPage((p) => Math.min(p + 1, data.totalPages || 1))}
-              disabled={currentPage >= (data.totalPages || 1)}
-              className="p-1.5 rounded-lg border border-slate-200 text-slate-600 hover:bg-slate-100 disabled:opacity-40 disabled:cursor-not-allowed dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"
-            >
-              <ChevronRight className="w-4 h-4" />
-            </button>
-          </div>
         </div>
       </div>
 

@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect, useCallback } from "react";
+import React, { useState, useCallback } from "react";
 import PageWrapper from "@/components/PageWrapper";
 import HighlightText from "@/components/HighlightText";
 import {
@@ -24,10 +24,13 @@ import {
   updateSparePart,
   deleteSparePart,
   insertManualStockOut,
-  SparePartItem,
-  PaginatedResult
+  invalidateCachePrefix,
+  SparePartItem
 } from "@/services/api";
 import { useDebouncedValue } from "@/hooks/useDebouncedValue";
+import { useRealtimeResource } from "@/hooks/useRealtimeTickets";
+import { useInfiniteList } from "@/hooks/useInfiniteList";
+import InfiniteScrollStatus from "@/components/InfiniteScrollStatus";
 
 // Simple SVG Code128 Barcode Graphic
 function BarcodeSvg({ value }: { value: string }) {
@@ -70,16 +73,7 @@ function BarcodeSvg({ value }: { value: string }) {
 
 export default function SparePartsPage() {
   const [search, setSearch] = useState("");
-  const [currentPage, setCurrentPage] = useState(1);
-  const pageSize = 10;
-  const [isLoading, setIsLoading] = useState(true);
-  const [data, setData] = useState<PaginatedResult<SparePartItem>>({
-    items: [],
-    totalCount: 0,
-    pageNumber: 1,
-    pageSize: 10,
-    totalPages: 0,
-  });
+  const pageSize = 25;
 
   // Modal states
   const [activeModal, setActiveModal] = useState<"stockIn" | "stockOut" | "edit" | "delete" | null>(null);
@@ -99,28 +93,37 @@ export default function SparePartsPage() {
   });
 
   const debouncedSearch = useDebouncedValue(search, 300);
+  const term = debouncedSearch.trim();
 
-  useEffect(() => {
-    setCurrentPage(1);
-  }, [debouncedSearch]);
+  const {
+    items,
+    totalCount,
+    isLoading,
+    isLoadingMore,
+    reachedEnd,
+    limitReached,
+    scrollRootRef,
+    sentinelRef,
+    refresh: loadData,
+    setItems,
+  } = useInfiniteList<SparePartItem, HTMLDivElement, HTMLTableRowElement>({
+    fetchPage: (pageNumber, size) => fetchSparePartsInventory(pageNumber, size, term),
+    pageSize,
+    resetKey: term,
+    getId: (p) => p?.id,
+  });
 
-  const loadData = useCallback(async () => {
-    if (!data.items || data.items.length === 0) {
-      setIsLoading(true);
-    }
-    const term = debouncedSearch.trim();
-    const result = await fetchSparePartsInventory(currentPage, pageSize, term);
-    setData(result);
-    setIsLoading(false);
-  }, [currentPage, pageSize, debouncedSearch]);
-
-  useEffect(() => {
+  // Live updates so another user's add/edit/delete (or a stock-out) shows up
+  // here without a manual reload.
+  const handleRealtimeUpdate = useCallback(() => {
+    invalidateCachePrefix("spareparts");
     void loadData();
   }, [loadData]);
 
+  useRealtimeResource("sparepart", handleRealtimeUpdate);
+
   const handleCreateOrUpdate = async (e: React.FormEvent) => {
     e.preventDefault();
-    setIsLoading(true);
     let success = false;
 
     const userId = "00000000-0000-0000-0000-000000000000";
@@ -138,35 +141,29 @@ export default function SparePartsPage() {
       setActiveModal(null);
     } else {
       // Optimistic client update fallback
-      const updatedList = formState.id
-        ? (data.items || []).map((p) => (p.id === formState.id ? { ...p, ...formState } : p))
-        : [...(data.items || []), { ...formState, id: "temp-" + Date.now() } as SparePartItem];
-      setData((prev) => ({ ...prev, items: updatedList }));
-      setIsLoading(false);
+      setItems((prev) =>
+        formState.id
+          ? prev.map((p) => (p.id === formState.id ? { ...p, ...formState } : p))
+          : [...prev, { ...formState, id: "temp-" + Date.now() } as SparePartItem]
+      );
       setActiveModal(null);
     }
   };
 
   const handleDelete = async () => {
     if (!selectedPart?.id) return;
-    setIsLoading(true);
     const success = await deleteSparePart(selectedPart.id);
     if (success) {
       void loadData();
     } else {
       // Optimistic delete
-      setData((prev) => ({
-        ...prev,
-        items: (prev.items || []).filter((p) => p.id !== selectedPart.id),
-      }));
+      setItems((prev) => prev.filter((p) => p.id !== selectedPart.id));
     }
-    setIsLoading(false);
     setActiveModal(null);
   };
 
   const handleStockInSubmit = async () => {
     if (!selectedPart) return;
-    setIsLoading(true);
     const currentQty = selectedPart.quantity ?? 0;
     const updatedPart: SparePartItem = {
       ...selectedPart,
@@ -175,21 +172,16 @@ export default function SparePartsPage() {
 
     const success = await updateSparePart(updatedPart);
     if (success) {
-      loadData();
+      void loadData();
     } else {
       // Optimistic update
-      setData((prev) => ({
-        ...prev,
-        items: (prev.items || []).map((p) => (p.id === selectedPart.id ? updatedPart : p)),
-      }));
+      setItems((prev) => prev.map((p) => (p.id === selectedPart.id ? updatedPart : p)));
     }
-    setIsLoading(false);
     setActiveModal(null);
   };
 
   const handleStockOutSubmit = async () => {
     if (!selectedPart) return;
-    setIsLoading(true);
     const currentQty = selectedPart.quantity ?? 0;
     const success = await insertManualStockOut(selectedPart.id, quantityInput, reasonInput);
     if (success) {
@@ -200,23 +192,15 @@ export default function SparePartsPage() {
         ...selectedPart,
         quantity: Math.max(0, currentQty - quantityInput),
       };
-      setData((prev) => ({
-        ...prev,
-        items: (prev.items || []).map((p) => (p.id === selectedPart.id ? updatedPart : p)),
-      }));
+      setItems((prev) => prev.map((p) => (p.id === selectedPart.id ? updatedPart : p)));
     }
-    setIsLoading(false);
     setActiveModal(null);
   };
 
-  const filtered = (data.items || []).filter((p) => {
-    if (!p) return false;
-    const term    = (search || "").toLowerCase();
-    const name    = (p.itemName ?? "").toLowerCase();
-    const partNo  = (p.serialNumber ?? p.partNumber ?? "").toLowerCase();
-    const useFor  = (p.useFor ?? p.description ?? "").toLowerCase();
-    return name.includes(term) || partNo.includes(term) || useFor.includes(term);
-  });
+  // No client-side re-filtering: the backend's /spareparts/search already
+  // matches ItemName, SerialNumber, Description and UserFor. Filtering the
+  // loaded rows again here (against the *undebounced* term) used to hide rows
+  // mid-keystroke and cap results at whatever one page happened to contain.
 
   const getImageUrl = (url?: string) => {
     if (!url) return "";
@@ -280,8 +264,8 @@ export default function SparePartsPage() {
           </div>
         </div>
 
-        {/* Table Content */}
-        <div className="flex-1 overflow-x-auto overflow-y-auto min-h-0">
+        {/* Table Content — also the IntersectionObserver root for infinite scroll */}
+        <div ref={scrollRootRef} className="flex-1 overflow-x-auto overflow-y-auto min-h-0">
           <table className="w-full text-left border-collapse min-w-full text-xs">
             <thead>
               <tr className="bg-slate-50 dark:bg-slate-800/60 border-b border-slate-200/80 dark:border-slate-800 text-[11px] font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider">
@@ -306,8 +290,8 @@ export default function SparePartsPage() {
                     </td>
                   </tr>
                 ))
-              ) : filtered.length > 0 ? (
-                filtered.map((part, idx) => {
+              ) : items.length > 0 ? (
+                items.map((part, idx) => {
                   const image  = part.pictureUrl;
                   const name   = part.itemName ?? "N/A";
                   const partNo = part.serialNumber ?? part.partNumber ?? `SP-${idx + 100}`;
@@ -461,8 +445,35 @@ export default function SparePartsPage() {
                   </td>
                 </tr>
               )}
+
+              {/* Infinite-scroll sentinel — observing this row pulls the next batch. */}
+              {!isLoading && items.length > 0 && (
+                <tr ref={sentinelRef}>
+                  <td colSpan={10} className="py-4 text-center">
+                    <InfiniteScrollStatus
+                      isLoadingMore={isLoadingMore}
+                      reachedEnd={reachedEnd}
+                      limitReached={limitReached}
+                      count={items.length}
+                    />
+                  </td>
+                </tr>
+              )}
             </tbody>
           </table>
+        </div>
+
+        {/* Status Bar — infinite scroll replaces page controls (this page
+            previously had none at all, capping it at the first page). */}
+        <div className="p-3 md:p-4 shrink-0 border-t border-slate-100 bg-slate-50/50 flex items-center justify-between gap-3 dark:border-slate-800 dark:bg-slate-900/50">
+          <span className="text-xs text-slate-500 dark:text-slate-400">
+            Loaded <strong className="text-slate-700 dark:text-slate-200">{items.length}</strong>
+            {totalCount > items.length && (
+              <> of <strong className="text-slate-700 dark:text-slate-200">{totalCount}</strong></>
+            )}{" "}
+            {items.length === 1 ? "part" : "parts"}
+            {term && <> matching &ldquo;{term}&rdquo;</>}
+          </span>
         </div>
 
         {/* ── CREATE / EDIT DIALOG ── */}
@@ -747,7 +758,7 @@ export default function SparePartsPage() {
                     <input
                       type="number"
                       min="1"
-                      max={selectedPart.quantity ?? (selectedPart as any).Quantity ?? 0}
+                      max={selectedPart.quantity ?? (selectedPart as SparePartItem & { Quantity?: number }).Quantity ?? 0}
                       value={quantityInput}
                       onChange={(e) => setQuantityInput(Math.max(1, parseInt(e.target.value) || 1))}
                       className="w-full px-3 py-2 text-sm border border-slate-200 dark:border-slate-700 rounded-xl bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 focus:ring-2 focus:ring-blue-500/20 outline-none"

@@ -24,6 +24,8 @@ import {
   normaliseServicePriority,
 } from "@/services/types";
 import { fetchUserMap, resolveUserNameSync, getCurrentUserGuid } from "@/services/userService";
+import { useInfiniteList } from "@/hooks/useInfiniteList";
+import InfiniteScrollStatus from "./InfiniteScrollStatus";
 import {
   X,
   Wrench,
@@ -475,26 +477,51 @@ function EditContent({
 
   // ── Company Autocomplete state ──
   const [showCompanyDropdown, setShowCompanyDropdown] = useState(false);
-  const [companies, setCompanies] = useState<CustomerItem[]>([]);
-  const [totalCompanies, setTotalCompanies] = useState(0);
+  const [companySearchQuery, setCompanySearchQuery] = useState("");
 
   // ── Item Autocomplete state ──
   const [showItemDropdown, setShowItemDropdown] = useState(false);
-  const [itemModels, setItemModels] = useState<ItemModel[]>([]);
-  const [totalItems, setTotalItems] = useState(0);
   const [isCreatingItem, setIsCreatingItem] = useState(false);
   const [itemSearchQuery, setItemSearchQuery] = useState("");
 
-  const handleCompanySearch = async (val: string) => {
+  const companyTerm = companySearchQuery.trim();
+  const {
+    items: companies,
+    totalCount: totalCompanies,
+    isLoadingMore: companiesLoadingMore,
+    reachedEnd: companiesReachedEnd,
+    limitReached: companiesLimitReached,
+    scrollRootRef: companyScrollRootRef,
+    sentinelRef: companySentinelRef,
+  } = useInfiniteList<CustomerItem, HTMLDivElement, HTMLDivElement>({
+    fetchPage: (pageNumber, size) => fetchCustomerCenter(pageNumber, size, companyTerm),
+    pageSize: 50,
+    resetKey: companyTerm,
+    getId: (c) => c.id,
+    disabled: companyTerm.length < 1,
+  });
+
+  const itemTerm = itemSearchQuery.trim();
+  const {
+    items: itemModels,
+    totalCount: totalItems,
+    isLoadingMore: itemsLoadingMore,
+    reachedEnd: itemsReachedEnd,
+    limitReached: itemsLimitReached,
+    scrollRootRef: itemScrollRootRef,
+    sentinelRef: itemSentinelRef,
+  } = useInfiniteList<ItemModel, HTMLDivElement, HTMLDivElement>({
+    fetchPage: (pageNumber, size) => fetchItemsInventory(pageNumber, size, itemTerm),
+    pageSize: 20,
+    resetKey: itemTerm,
+    getId: (m) => m.id,
+    disabled: itemTerm.length < 1,
+  });
+
+  const handleCompanySearch = (val: string) => {
     setFormData({ ...formData, companyName: val, customerId: undefined });
-    if (val.trim().length >= 1) {
-      setShowCompanyDropdown(true);
-      const res = await fetchCustomerCenter(1, 50, val.trim());
-      setCompanies(res.items);
-      setTotalCompanies(res.items.length);
-    } else {
-      setShowCompanyDropdown(false);
-    }
+    setCompanySearchQuery(val);
+    setShowCompanyDropdown(val.trim().length >= 1);
   };
 
   const handleSelectCompany = (comp: CustomerItem) => {
@@ -513,17 +540,10 @@ function EditContent({
   // resolved itemId — clearing it here stops a stale id (pointing at the
   // item the user *used to* have selected) from silently riding along to
   // submit once the visible text no longer matches it.
-  const handleItemSearch = async (val: string, field: "itemName" | "serialNumber") => {
+  const handleItemSearch = (val: string, field: "itemName" | "serialNumber") => {
     setFormData({ ...formData, [field]: val, itemId: undefined });
     setItemSearchQuery(val);
-    if (val.trim().length >= 1) {
-      setShowItemDropdown(true);
-      const res = await fetchItemsInventory(1, 20, val.trim());
-      setItemModels(res.items);
-      setTotalItems(res.items.length);
-    } else {
-      setShowItemDropdown(false);
-    }
+    setShowItemDropdown(val.trim().length >= 1);
   };
 
   const handleSelectItem = (item: ItemModel) => {
@@ -604,14 +624,17 @@ function EditContent({
               onChange={(e) => handleCompanySearch(e.target.value)}
               onFocus={() => {
                 if ((formData.companyName || "").trim().length >= 1) {
-                  void handleCompanySearch(formData.companyName);
+                  handleCompanySearch(formData.companyName);
                 }
               }}
               className={inputCls}
               placeholder="Type company name..."
             />
             {showCompanyDropdown && companies.length > 0 && (
-              <div className="absolute left-0 right-0 top-full mt-1 z-50 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl shadow-xl max-h-60 overflow-y-auto text-xs">
+              <div
+                ref={companyScrollRootRef}
+                className="absolute left-0 right-0 top-full mt-1 z-50 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl shadow-xl max-h-60 overflow-y-auto text-xs"
+              >
                 <div className="sticky top-0 bg-slate-50 dark:bg-slate-800 px-3 py-2 border-b border-slate-200 dark:border-slate-700 flex items-center justify-between font-semibold text-slate-600 dark:text-slate-300">
                   <span className="flex items-center gap-1.5">
                     <Building2 className="w-3.5 h-3.5 text-blue-500" />
@@ -647,6 +670,14 @@ function EditContent({
                     )}
                   </div>
                 ))}
+                <div ref={companySentinelRef} className="px-3 py-2 text-center">
+                  <InfiniteScrollStatus
+                    isLoadingMore={companiesLoadingMore}
+                    reachedEnd={companiesReachedEnd}
+                    limitReached={companiesLimitReached}
+                    count={companies.length}
+                  />
+                </div>
               </div>
             )}
           </div>
@@ -680,14 +711,17 @@ function EditContent({
               onChange={(e) => handleItemSearch(e.target.value, "itemName")}
               onFocus={() => {
                 if ((formData.itemName || "").trim().length >= 1) {
-                  void handleItemSearch(formData.itemName, "itemName");
+                  handleItemSearch(formData.itemName, "itemName");
                 }
               }}
               className={inputCls}
               placeholder="Type item model name..."
             />
             {showItemDropdown && itemModels.length > 0 && (
-              <div className="absolute left-0 right-0 top-full mt-1 z-50 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl shadow-xl max-h-60 overflow-y-auto text-xs">
+              <div
+                ref={itemScrollRootRef}
+                className="absolute left-0 right-0 top-full mt-1 z-50 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl shadow-xl max-h-60 overflow-y-auto text-xs"
+              >
                 <div className="sticky top-0 bg-slate-50 dark:bg-slate-800 px-3 py-2 border-b border-slate-200 dark:border-slate-700 flex items-center justify-between font-semibold text-slate-600 dark:text-slate-300">
                   <span className="flex items-center gap-1.5">
                     <Package className="w-3.5 h-3.5 text-emerald-500" />
@@ -715,6 +749,14 @@ function EditContent({
                     </div>
                   </div>
                 ))}
+                <div ref={itemSentinelRef} className="px-3 py-2 text-center">
+                  <InfiniteScrollStatus
+                    isLoadingMore={itemsLoadingMore}
+                    reachedEnd={itemsReachedEnd}
+                    limitReached={itemsLimitReached}
+                    count={itemModels.length}
+                  />
+                </div>
               </div>
             )}
             {showItemDropdown && itemModels.length === 0 && (formData.itemName || "").trim().length >= 1 && (
@@ -747,7 +789,7 @@ function EditContent({
               onChange={(e) => handleItemSearch(e.target.value, "serialNumber")}
               onFocus={() => {
                 if ((formData.serialNumber || "").trim().length >= 1) {
-                  void handleItemSearch(formData.serialNumber, "serialNumber");
+                  handleItemSearch(formData.serialNumber, "serialNumber");
                 }
               }}
               className={`${inputCls} font-mono`}
