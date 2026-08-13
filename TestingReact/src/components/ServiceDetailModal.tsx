@@ -11,6 +11,7 @@ import {
   fetchCustomerCenter,
   fetchItemsInventory,
   fetchServiceById,
+  fetchSparePartById,
   createItem,
   deleteTechnicalService,
   invalidateCachePrefix,
@@ -26,6 +27,14 @@ import {
 import { fetchUserMap, resolveUserNameSync, getCurrentUserGuid } from "@/services/userService";
 import { useInfiniteList } from "@/hooks/useInfiniteList";
 import InfiniteScrollStatus from "./InfiniteScrollStatus";
+import { useI18n } from "@/i18n/LanguageProvider";
+import type { TranslationKey } from "@/i18n/translations";
+import {
+  translatePriority,
+  translateServiceLocation,
+  translateServiceType,
+  translateStatus,
+} from "@/i18n/statusLabel";
 import {
   X,
   Wrench,
@@ -128,18 +137,21 @@ function getStatusBadgeClass(status: string) {
   return "bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300";
 }
 
+// Returns a translation key rather than a finished label: this is a plain
+// function, not a component, so it can't call useI18n() itself — the caller
+// already has `t` in scope and resolves it at the point of render.
 function resolveStockBadge(
   serviceStatus: string,
   condition?: string,
   stockQty = 0
-): { label: string; bg: string; fg: string } {
+): { labelKey: TranslationKey; bg: string; fg: string } {
   if (serviceStatus === "Sent Spareparts")
-    return { label: "បានបញ្ជូលគ្រប់ចំនួន", bg: "#28a745", fg: "#fff" };
+    return { labelKey: "stockBadge.allDispatched", bg: "#28a745", fg: "#fff" };
   if (condition === "Fix")
-    return { label: "ជួសជុលមិនកាត់ស្តុក", bg: "#6f42c1", fg: "#fff" };
+    return { labelKey: "stockBadge.noStockDeduction", bg: "#6f42c1", fg: "#fff" };
   if (stockQty <= 0)
-    return { label: "អស់ស្តុក", bg: "#dc3545", fg: "#fff" };
-  return { label: "មានស្តុក", bg: "#28a745", fg: "#fff" };
+    return { labelKey: "stockBadge.outOfStock", bg: "#dc3545", fg: "#fff" };
+  return { labelKey: "stockBadge.inStock", bg: "#28a745", fg: "#fff" };
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -216,8 +228,16 @@ function InfoRow({ label, value }: { label: string; value?: string | number | nu
 // VIEW MODE — matches RepairServiceViewDialog.razor exactly
 // ─────────────────────────────────────────────────────────────────────────────
 function ViewContent({ item }: { item: RepairServiceItem }) {
-  const totalQty = (item.sparePartItems ?? []).reduce((s, p) => s + p.quantity, 0);
-  const grandTotal = (item.sparePartItems ?? []).reduce(
+  const { t } = useI18n();
+  // The API serialises the backend's `SparepartItems` property as camelCase
+  // `sparepartItems` (lowercase p), not `sparePartItems` — every other spare
+  // -part reader in this app (ServiceTable, ApproveRepairDialog,
+  // InspectItemDialog, PrintPreviewSidebar) already checks both casings.
+  // This view previously checked only `sparePartItems`, which never exists,
+  // so the spare-parts table silently never rendered.
+  const spareParts = item.sparePartItems ?? item.sparepartItems ?? [];
+  const totalQty = spareParts.reduce((s, p) => s + p.quantity, 0);
+  const grandTotal = spareParts.reduce(
     (s, p) => s + (p.defaultPrice ?? 0) * p.quantity,
     0
   );
@@ -227,28 +247,28 @@ function ViewContent({ item }: { item: RepairServiceItem }) {
       {/* ── Audit Timeline table ── */}
       <table className="w-full mb-4 rounded-xl overflow-hidden border border-slate-200 dark:border-slate-700">
         <tbody>
-          <InfoRow label="លេខយោង (Ref No)" value={item.reportNo} />
-          <TimelineRow label="ទទួលម៉ាស៊ីន (Received)" date={item.serviceDate} byName={item.createdByName} byGuid={item.createBy || item.userId} />
-          <TimelineRow label="វិនិច្ឆ័យ (Inspection)" date={item.inspectDate} byName={item.inspectByName} byGuid={item.inspectBy || item.inspectingBy} />
-          <TimelineRow label="រង់ចាំគ្រឿងបន្លាស់ (Awaiting Spare)" date={item.awaitingSparepartDate} byName={item.setAwaitingSparepartByName} byGuid={item.setAwaitingSparepartBy} />
-          <TimelineRow label="រង់ចាំអតិថិជន (Await Customer)" date={item.awaitingCustomerConfirmDate} byName={item.setAwaitingCustomerConfirmByName} byGuid={item.setAwaitingCustomerConfirmBy} />
-          <TimelineRow label="Sale Confirmed" date={item.saleConfirmedDate} byName={item.setSaleConfirmedByName} byGuid={item.setSaleConfirmedBy} />
-          <TimelineRow label="បានបញ្ជូនបន្លាស់ (Sent Spareparts)" date={item.sentSparepartsDate} byName={item.setSentSparepartsByName} byGuid={item.setSentSparepartsBy} />
-          <TimelineRow label="អនុម័តជួសជុល (Approve Repair)" date={item.repairDate} byName={item.repairByName} byGuid={item.repairBy} />
-          <TimelineRow label="Third-party date" date={item.thirdPartyRepairDate} byName={item.thirdPartyRepairByName} byGuid={item.thirdPartyRepairBy} />
-          <TimelineRow label="រួចរាល់ (Finished)" date={item.finishedDate} byName={item.verifiedByName || item.repairByName} byGuid={item.verifiedBy || item.repairBy} />
-          <TimelineRow label="អតិថិជនមិនព្រម (Rejected)" date={item.customerRejectedDate} byName={item.setCustomerRejectedByName} byGuid={item.setCustomerRejectedBy} />
-          <TimelineRow label="ជួសជុលមិនបាន (Unrepairable)" date={item.unrepairableDate} byName={item.setUnrepairableByName} byGuid={item.setUnrepairableBy} />
+          <InfoRow label={t("field.refNo")} value={item.reportNo} />
+          <TimelineRow label={t("detail.tlReceived")} date={item.serviceDate} byName={item.createdByName} byGuid={item.createBy || item.userId} />
+          <TimelineRow label={t("detail.tlInspection")} date={item.inspectDate} byName={item.inspectByName} byGuid={item.inspectBy || item.inspectingBy} />
+          <TimelineRow label={t("detail.tlAwaitingSpare")} date={item.awaitingSparepartDate} byName={item.setAwaitingSparepartByName} byGuid={item.setAwaitingSparepartBy} />
+          <TimelineRow label={t("detail.tlAwaitCustomer")} date={item.awaitingCustomerConfirmDate} byName={item.setAwaitingCustomerConfirmByName} byGuid={item.setAwaitingCustomerConfirmBy} />
+          <TimelineRow label={t("detail.tlSaleConfirmed")} date={item.saleConfirmedDate} byName={item.setSaleConfirmedByName} byGuid={item.setSaleConfirmedBy} />
+          <TimelineRow label={t("detail.tlSentSpareparts")} date={item.sentSparepartsDate} byName={item.setSentSparepartsByName} byGuid={item.setSentSparepartsBy} />
+          <TimelineRow label={t("detail.tlApproveRepair")} date={item.repairDate} byName={item.repairByName} byGuid={item.repairBy} />
+          <TimelineRow label={t("detail.tlThirdParty")} date={item.thirdPartyRepairDate} byName={item.thirdPartyRepairByName} byGuid={item.thirdPartyRepairBy} />
+          <TimelineRow label={t("detail.tlFinished")} date={item.finishedDate} byName={item.verifiedByName || item.repairByName} byGuid={item.verifiedBy || item.repairBy} />
+          <TimelineRow label={t("detail.tlRejected")} date={item.customerRejectedDate} byName={item.setCustomerRejectedByName} byGuid={item.setCustomerRejectedBy} />
+          <TimelineRow label={t("detail.tlUnrepairable")} date={item.unrepairableDate} byName={item.setUnrepairableByName} byGuid={item.setUnrepairableBy} />
           {(() => {
             const days = item.daysTaken ?? calculateDaysTaken(item);
             if (days == null) return null;
             return (
               <tr className="border-b border-slate-100 dark:border-slate-800">
                 <td className="py-2 px-3 text-xs font-semibold text-slate-500 dark:text-slate-400 w-48">
-                  រយះពេល (Duration)
+                  {t("detail.duration")}
                 </td>
                 <td className="py-2 px-3 text-xs text-slate-800 dark:text-slate-200">
-                  {days} day{days !== 1 ? "s" : ""}
+                  {days === 1 ? t("detail.day", { count: days }) : t("detail.days", { count: days })}
                 </td>
               </tr>
             );
@@ -257,87 +277,87 @@ function ViewContent({ item }: { item: RepairServiceItem }) {
           {/* Customer Info Section */}
           <SectionHeader
             icon={<Building2 className="w-3.5 h-3.5 text-blue-500" />}
-            label="ព័ត៌មានអតិថិជន (Customer Info)"
+            label={t("detail.customerInfo")}
           />
-          <InfoRow label="ឈ្មោះស្ថាប័ន (Company)" value={item.companyName} />
-          <InfoRow label="អាសយដ្ឋាន (Address)" value={item.address} />
-          <InfoRow label="ឈ្មោះអ្នកទំនាក់ (Contact)" value={item.contactName} />
-          <InfoRow label="លេខទូរស័ព្ទ (Phone)" value={item.phoneNumber} />
+          <InfoRow label={t("field.companyName")} value={item.companyName} />
+          <InfoRow label={t("field.address")} value={item.address} />
+          <InfoRow label={t("field.contactName")} value={item.contactName} />
+          <InfoRow label={t("field.phoneNumber")} value={item.phoneNumber} />
 
           {/* Machine Info Section */}
           <SectionHeader
             icon={<Package className="w-3.5 h-3.5 text-blue-500" />}
-            label="ព័ត៌មានម៉ាស៊ីន (Machine Info)"
+            label={t("detail.machineInfo")}
           />
-          <InfoRow label="ឈ្មោះម៉ាស៊ីន (Item)" value={item.itemName} />
-          <InfoRow label="លេខម៉ាស៊ីន (Serial)" value={item.serialNumber} />
-          <InfoRow label="សំណើអតិថិជន (Request)" value={item.customerRequest} />
-          <InfoRow label="វិនិច្ឆ័យ (Inspection)" value={item.inspection} />
-          <InfoRow label="ដំណោះស្រាយ (Solution)" value={item.solution} />
+          <InfoRow label={t("field.itemName")} value={item.itemName} />
+          <InfoRow label={t("field.serialNumber")} value={item.serialNumber} />
+          <InfoRow label={t("field.customerRequest")} value={item.customerRequest} />
+          <InfoRow label={t("field.inspection")} value={item.inspection} />
+          <InfoRow label={t("field.solution")} value={item.solution} />
 
           {/* Repair Status Section */}
           <SectionHeader
             icon={<Wrench className="w-3.5 h-3.5 text-blue-500" />}
-            label="ព័ត៌មានស្ថានភាពជួសជុល (Repair Status)"
+            label={t("detail.repairStatus")}
           />
-          <InfoRow label="ទីតាំងសេវាកម្ម (Location)" value={item.serviceLocation} />
-          <InfoRow label="ប្រភេទសេវាកម្ម (Type)" value={item.serviceType} />
-          <InfoRow label="អាទិភាព (Priority)" value={item.servicePriority} />
+          <InfoRow label={t("field.serviceLocation")} value={translateServiceLocation(item.serviceLocation, t)} />
+          <InfoRow label={t("field.serviceType")} value={translateServiceType(item.serviceType, t)} />
+          <InfoRow label={t("field.priority")} value={translatePriority(item.servicePriority, t)} />
           {item.status && (
             <tr className="border-b border-slate-100 dark:border-slate-800">
               <td className="py-2 px-3 text-xs font-semibold text-slate-500 dark:text-slate-400 w-48">
-                ស្ថានភាព (Status)
+                {t("field.status")}
               </td>
               <td className="py-2 px-3">
                 <span
                   className={`inline-block text-[11px] font-semibold px-2 py-0.5 rounded-full ${getStatusBadgeClass(item.status)}`}
                 >
-                  {item.status}
+                  {translateStatus(item.status, t)}
                 </span>
               </td>
             </tr>
           )}
           <tr className="border-b border-slate-100 dark:border-slate-800">
             <td className="py-2 px-3 text-xs font-semibold text-slate-500 dark:text-slate-400 w-48">
-              មានកុងត្រា (Contract)
+              {t("detail.contract")}
             </td>
             <td className="py-2 px-3 text-xs text-slate-800 dark:text-slate-200">
-              {item.hasContract ? "Yes" : "No"}
+              {item.hasContract ? t("value.yes") : t("value.no")}
             </td>
           </tr>
           {item.isThirdPartyRepair && (
             <tr className="border-b border-slate-100 dark:border-slate-800">
               <td className="py-2 px-3 text-xs font-semibold text-slate-500 dark:text-slate-400 w-48">
-                Third-party repair
+                {t("detail.thirdPartyRepair")}
               </td>
-              <td className="py-2 px-3 text-xs text-slate-800 dark:text-slate-200">Yes</td>
+              <td className="py-2 px-3 text-xs text-slate-800 dark:text-slate-200">{t("value.yes")}</td>
             </tr>
           )}
         </tbody>
       </table>
 
       {/* ── Spare Parts Table ── */}
-      {(item.sparePartItems ?? []).length > 0 && (
+      {spareParts.length > 0 && (
         <div className="mt-4">
           <h3 className="text-xs font-bold text-slate-700 dark:text-slate-200 mb-2 flex items-center gap-1.5">
             <Wrench className="w-3.5 h-3.5 text-blue-500" />
-            SparePart Details
+            {t("detail.sparePartDetails")}
           </h3>
           <div className="overflow-x-auto rounded-xl border border-slate-200 dark:border-slate-700">
             <table className="w-full text-xs">
               <thead>
                 <tr className="bg-blue-600 text-white">
-                  <th className="px-2 py-2 text-center w-10">Img</th>
-                  <th className="px-3 py-2 text-left">Item Name</th>
-                  <th className="px-3 py-2 text-left">Use For</th>
-                  <th className="px-2 py-2 text-center w-10">Qty</th>
-                  <th className="px-2 py-2 text-center w-20">Condition</th>
-                  <th className="px-2 py-2 text-right w-20">Price</th>
-                  <th className="px-2 py-2 text-center w-28">Stock</th>
+                  <th className="px-2 py-2 text-center w-10">{t("inspect.colImage")}</th>
+                  <th className="px-3 py-2 text-left">{t("field.itemName")}</th>
+                  <th className="px-3 py-2 text-left">{t("field.useFor")}</th>
+                  <th className="px-2 py-2 text-center w-10">{t("inspect.colQty")}</th>
+                  <th className="px-2 py-2 text-center w-20">{t("field.condition")}</th>
+                  <th className="px-2 py-2 text-right w-20">{t("field.price")}</th>
+                  <th className="px-2 py-2 text-center w-28">{t("field.stock")}</th>
                 </tr>
               </thead>
               <tbody>
-                {(item.sparePartItems ?? []).map((sp) => {
+                {spareParts.map((sp) => {
                   const badge = resolveStockBadge(
                     item.status,
                     sp.condition,
@@ -393,10 +413,10 @@ function ViewContent({ item }: { item: RepairServiceItem }) {
                           className="group relative inline-block text-[11px] font-bold px-2 py-0.5 rounded-full cursor-default whitespace-nowrap"
                           style={{ background: badge.bg, color: badge.fg }}
                         >
-                          {badge.label}
+                          {t(badge.labelKey)}
                           {sp.stockQuantity != null && (
                             <span className="pointer-events-none absolute bottom-full left-1/2 -translate-x-1/2 mb-1 z-50 hidden group-hover:block bg-black/75 text-white text-[10px] rounded px-2 py-0.5 whitespace-nowrap">
-                              {sp.stockQuantity} in stock
+                              {t("spec.inStock", { qty: sp.stockQuantity })}
                             </span>
                           )}
                         </span>
@@ -408,7 +428,7 @@ function ViewContent({ item }: { item: RepairServiceItem }) {
               <tfoot>
                 <tr className="bg-slate-50 dark:bg-slate-800/50 font-bold border-t-2 border-slate-200 dark:border-slate-700">
                   <td colSpan={3} className="px-3 py-2 text-right text-slate-500 dark:text-slate-400 text-xs">
-                    Total:
+                    {t("detail.total")}
                   </td>
                   <td className="px-2 py-2 text-center text-slate-800 dark:text-slate-200 text-xs">
                     {totalQty}
@@ -471,6 +491,7 @@ function EditContent({
   onClose: () => void;
   handleSubmit: (e: React.FormEvent) => void;
 }) {
+  const { t } = useI18n();
   const inputCls =
     "w-full px-3 py-2 text-xs border border-slate-200 dark:border-slate-700 rounded-xl bg-white dark:bg-slate-800 dark:text-slate-100 focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 outline-none";
   const labelCls = "text-xs font-semibold text-slate-700 dark:text-slate-300";
@@ -575,7 +596,22 @@ function EditContent({
   };
 
   return (
-    <form onSubmit={handleSubmit} className="flex-1 flex flex-col min-h-0 overflow-hidden">
+    <form
+      onSubmit={handleSubmit}
+      // Enter in a single-line input implicitly submits its form. Company
+      // Name, Item / Model Name and Serial Number are all search fields with
+      // their own result dropdowns, so pressing Enter to "search" instead
+      // saved the ticket and closed the modal — while a dropdown was open and
+      // the user hadn't picked a row yet. Saving is deliberate here: the Save
+      // button below. Textareas keep Enter as a newline, and Enter on the
+      // focused Save button still fires its click.
+      onKeyDown={(e) => {
+        if (e.key === "Enter" && e.target instanceof HTMLInputElement) {
+          e.preventDefault();
+        }
+      }}
+      className="flex-1 flex flex-col min-h-0 overflow-hidden"
+    >
       <div className="flex-1 overflow-y-auto p-4 sm:p-6 space-y-5">
         {saveSuccess && (
           <div className="p-3 bg-emerald-50 text-emerald-800 border border-emerald-200 rounded-xl text-xs flex items-center gap-2 font-medium">
@@ -594,11 +630,11 @@ function EditContent({
           the field most often corrected on arrival. */}
       <div>
         <p className="text-[11px] font-bold text-slate-400 uppercase tracking-wider mb-2 flex items-center gap-1.5">
-          <Calendar className="w-3.5 h-3.5" /> Service Date
+          <Calendar className="w-3.5 h-3.5" /> {t("detail.serviceDate")}
         </p>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
           <div className="space-y-1">
-            <label className={labelCls}>Service Date &amp; Time *</label>
+            <label className={labelCls}>{t("detail.serviceDateTime")} *</label>
             <input
               type="datetime-local"
               value={toLocalDatetimeValue(formData.serviceDate)}
@@ -612,11 +648,11 @@ function EditContent({
       {/* Customer Info */}
       <div>
         <p className="text-[11px] font-bold text-slate-400 uppercase tracking-wider mb-2 flex items-center gap-1.5">
-          <Building2 className="w-3.5 h-3.5" /> Customer Info
+          <Building2 className="w-3.5 h-3.5" /> {t("detail.customerInfo")}
         </p>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
           <div className="space-y-1 relative">
-            <label className={labelCls}>Company Name *</label>
+            <label className={labelCls}>{t("field.companyName")} *</label>
             <input
               type="text"
               value={formData.companyName || ""}
@@ -628,7 +664,7 @@ function EditContent({
                 }
               }}
               className={inputCls}
-              placeholder="Type company name..."
+              placeholder={t("detail.typeCompany")}
             />
             {showCompanyDropdown && companies.length > 0 && (
               <div
@@ -638,7 +674,7 @@ function EditContent({
                 <div className="sticky top-0 bg-slate-50 dark:bg-slate-800 px-3 py-2 border-b border-slate-200 dark:border-slate-700 flex items-center justify-between font-semibold text-slate-600 dark:text-slate-300">
                   <span className="flex items-center gap-1.5">
                     <Building2 className="w-3.5 h-3.5 text-blue-500" />
-                    Found <strong>{totalCompanies}</strong> companies
+                    {t("detail.foundCompanies", { count: totalCompanies })}
                   </span>
                   <button
                     type="button"
@@ -682,13 +718,13 @@ function EditContent({
             )}
           </div>
           <div className="space-y-1">
-            <label className={labelCls}>Contact Name</label>
+            <label className={labelCls}>{t("field.contactName")}</label>
             <input type="text" value={formData.contactName || ""}
               disabled
               className={`${inputCls} disabled:bg-slate-100 disabled:text-slate-500 disabled:cursor-not-allowed dark:disabled:bg-slate-800/60 dark:disabled:text-slate-500`} />
           </div>
           <div className="space-y-1">
-            <label className={labelCls}>Address</label>
+            <label className={labelCls}>{t("field.address")}</label>
             <input type="text" value={formData.address || ""}
               disabled
               className={`${inputCls} disabled:bg-slate-100 disabled:text-slate-500 disabled:cursor-not-allowed dark:disabled:bg-slate-800/60 dark:disabled:text-slate-500`} />
@@ -699,11 +735,11 @@ function EditContent({
       {/* Machine Info */}
       <div>
         <p className="text-[11px] font-bold text-slate-400 uppercase tracking-wider mb-2 flex items-center gap-1.5">
-          <Package className="w-3.5 h-3.5" /> Machine Info
+          <Package className="w-3.5 h-3.5" /> {t("detail.machineInfo")}
         </p>
         <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
           <div className="space-y-1 md:col-span-2 relative">
-            <label className={labelCls}>Item / Model Name *</label>
+            <label className={labelCls}>{t("detail.itemModelName")} *</label>
             <input
               type="text"
               value={formData.itemName || ""}
@@ -715,7 +751,7 @@ function EditContent({
                 }
               }}
               className={inputCls}
-              placeholder="Type item model name..."
+              placeholder={t("detail.typeItemModel")}
             />
             {showItemDropdown && itemModels.length > 0 && (
               <div
@@ -725,7 +761,7 @@ function EditContent({
                 <div className="sticky top-0 bg-slate-50 dark:bg-slate-800 px-3 py-2 border-b border-slate-200 dark:border-slate-700 flex items-center justify-between font-semibold text-slate-600 dark:text-slate-300">
                   <span className="flex items-center gap-1.5">
                     <Package className="w-3.5 h-3.5 text-emerald-500" />
-                    Found <strong>{totalItems}</strong> items
+                    {t("detail.foundItems", { count: totalItems })}
                   </span>
                   <button
                     type="button"
@@ -762,7 +798,7 @@ function EditContent({
             {showItemDropdown && itemModels.length === 0 && (formData.itemName || "").trim().length >= 1 && (
               <div className="absolute left-0 right-0 top-full mt-1 z-50 bg-white dark:bg-slate-900 border border-amber-300 dark:border-amber-800 rounded-xl shadow-xl text-xs p-3 space-y-2">
                 <p className="text-amber-700 dark:text-amber-400">
-                  No existing item matches &ldquo;{formData.itemName}&rdquo;.
+                  {t("detail.noItemMatches", { name: formData.itemName ?? "" })}
                 </p>
                 <button
                   type="button"
@@ -770,18 +806,20 @@ function EditContent({
                   disabled={isCreatingItem}
                   className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-white bg-emerald-600 rounded-lg hover:bg-emerald-700 transition-colors disabled:opacity-60"
                 >
-                  {isCreatingItem ? "Creating..." : `+ Create "${formData.itemName}" as new item`}
+                  {isCreatingItem
+                    ? t("detail.creating")
+                    : t("detail.createNewItem", { name: formData.itemName ?? "" })}
                 </button>
               </div>
             )}
             {formData.itemId && (
               <p className="text-[11px] text-emerald-600 dark:text-emerald-400 flex items-center gap-1">
-                <CheckCircle2 className="w-3 h-3" /> Linked to existing item record
+                <CheckCircle2 className="w-3 h-3" /> {t("detail.linkedToItem")}
               </p>
             )}
           </div>
           <div className="space-y-1 relative">
-            <label className={labelCls}>Serial Number *</label>
+            <label className={labelCls}>{t("field.serialNumber")} *</label>
             <input
               type="text"
               value={formData.serialNumber || ""}
@@ -793,7 +831,7 @@ function EditContent({
                 }
               }}
               className={`${inputCls} font-mono`}
-              placeholder="Type serial number..."
+              placeholder={t("detail.typeSerial")}
             />
           </div>
         </div>
@@ -804,10 +842,10 @@ function EditContent({
             overwrites those columns with whatever it receives. */}
         <div className="grid grid-cols-1 gap-3 mt-3">
           <div className="space-y-1">
-            <label className={labelCls}>Customer Request / Issue</label>
+            <label className={labelCls}>{t("detail.customerRequestIssue")}</label>
             <textarea rows={2} value={formData.customerRequest || ""}
               onChange={(e) => setFormData({ ...formData, customerRequest: e.target.value })}
-              className={inputCls} placeholder="Issue reported by customer..." />
+              className={inputCls} placeholder={t("detail.issueReported")} />
           </div>
         </div>
       </div>
@@ -815,11 +853,11 @@ function EditContent({
       {/* Service / Status */}
       <div>
         <p className="text-[11px] font-bold text-slate-400 uppercase tracking-wider mb-2 flex items-center gap-1.5">
-          <Wrench className="w-3.5 h-3.5" /> Service Status
+          <Wrench className="w-3.5 h-3.5" /> {t("detail.serviceStatus")}
         </p>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
           <div className="space-y-1">
-            <label className={labelCls}>Priority</label>
+            <label className={labelCls}>{t("field.priority")}</label>
             {/* Values must be the backend's own spelling ("Normal", not
                 "NORMAL") — the API returns title case, and an option list in
                 a different casing never matches, leaving the ticket's real
@@ -827,15 +865,23 @@ function EditContent({
             <ModernSelect
               value={normaliseServicePriority(formData.servicePriority)}
               onChange={(v) => setFormData({ ...formData, servicePriority: v })}
-              options={SERVICE_PRIORITIES.map((p) => ({ value: p.name, label: p.name }))}
+              // Only the label is translated — `value` stays the backend's
+              // own spelling, per the casing note above.
+              options={SERVICE_PRIORITIES.map((p) => ({
+                value: p.name,
+                label: translatePriority(p.name, t),
+              }))}
             />
           </div>
           <div className="space-y-1">
-            <label className={labelCls}>Service Location</label>
+            <label className={labelCls}>{t("field.serviceLocation")}</label>
             <ModernSelect
               value={formData.serviceLocation || "CompanyService"}
               onChange={(v) => setFormData({ ...formData, serviceLocation: v })}
-              options={SERVICE_LOCATIONS.map((loc) => ({ value: loc, label: loc }))}
+              options={SERVICE_LOCATIONS.map((loc) => ({
+                value: loc,
+                label: translateServiceLocation(loc, t),
+              }))}
             />
           </div>
         </div>
@@ -844,13 +890,13 @@ function EditContent({
             <input type="checkbox" checked={!!formData.hasContract}
               onChange={(e) => setFormData({ ...formData, hasContract: e.target.checked })}
               className="rounded" />
-            Has Contract
+            {t("detail.hasContract")}
           </label>
           <label className="flex items-center gap-2 text-xs text-slate-600 dark:text-slate-400 cursor-pointer">
             <input type="checkbox" checked={!!formData.isThirdPartyRepair}
               onChange={(e) => setFormData({ ...formData, isThirdPartyRepair: e.target.checked })}
               className="rounded" />
-            Third-Party Repair
+            {t("detail.thirdPartyRepair")}
           </label>
         </div>
       </div>
@@ -860,12 +906,12 @@ function EditContent({
       <div className="sticky bottom-0 z-20 px-6 py-3.5 bg-slate-50/90 dark:bg-slate-900/90 backdrop-blur border-t border-slate-100 dark:border-slate-800 flex items-center justify-end gap-3 shrink-0">
         <button type="button" onClick={onClose}
           className="px-4 py-2 text-xs font-semibold text-slate-700 dark:text-slate-300 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors shadow-sm">
-          Cancel
+          {t("action.cancel")}
         </button>
         <button type="submit" disabled={isSaving}
           className="inline-flex items-center gap-1.5 px-5 py-2 text-xs font-semibold text-white bg-blue-600 rounded-xl hover:bg-blue-700 shadow-md shadow-blue-500/20 transition-all disabled:opacity-60">
           <Save className="w-3.5 h-3.5" />
-          {isSaving ? "Saving..." : "Save Changes"}
+          {isSaving ? t("action.saving") : t("detail.saveChanges")}
         </button>
       </div>
     </form>
@@ -889,6 +935,7 @@ export default function ServiceDetailModal({ item, onClose, mode = "view", onSav
   const [showConfirmDelete, setShowConfirmDelete] = useState(false);
   const [fullItem, setFullItem] = useState<RepairServiceItem | null>(null);
   const [, setForceUpdate] = useState(0);
+  const { t } = useI18n();
 
   useEffect(() => {
     if (item) {
@@ -925,9 +972,44 @@ export default function ServiceDetailModal({ item, onClose, mode = "view", onSav
           }
         }
       }
+
+      // GetServiceAsync's SparepartItems only carries
+      // Id/SparepartId/Description/Quantity/Condition/Remarks — ItemName,
+      // UseFor, PictureUrl and stock Quantity live on the separate
+      // Spareparts catalog table and must be looked up per id (mirrors
+      // InspectItemDialog's LoadSelectedSparePartsOnly-style enrichment).
+      // Without this, the view dialog's spare-parts table renders rows with
+      // a real quantity/condition but a blank name, image and price.
+      const rawParts = (full.sparePartItems ?? full.sparepartItems ?? []) as unknown as Array<
+        Record<string, unknown>
+      >;
+      // The raw row is spread through rather than rebuilt field by field:
+      // saving this ticket resends these lines verbatim, so fields this view
+      // never displays (isHoldStatus, description) must survive the round
+      // trip or the save would silently blank them.
+      const enrichedParts: SparePartItemDetail[] = rawParts.length
+        ? await Promise.all(
+            rawParts.map(async (p) => {
+              const sparePartId = (p.sparePartId ?? p.sparepartId) as string | undefined;
+              const catalog = sparePartId ? await fetchSparePartById(sparePartId) : null;
+              return {
+                ...p,
+                id: (p.id as string) ?? "",
+                sparePartId: sparePartId ?? "",
+                quantity: (p.quantity as number) ?? 0,
+                itemName: catalog?.itemName || (p.description as string) || "",
+                useFor: catalog?.useFor ?? "",
+                pictureUrl: catalog?.pictureUrl ?? "",
+                defaultPrice: catalog?.defaultPrice ?? 0,
+                stockQuantity: catalog?.quantity ?? 0,
+              } as SparePartItemDetail;
+            })
+          )
+        : [];
+
       if (cancelled) return;
 
-      const merged = { ...full, itemId: resolvedItemId ?? full.itemId };
+      const merged = { ...full, itemId: resolvedItemId ?? full.itemId, sparePartItems: enrichedParts };
       setFullItem(merged);
       setFormData((prev) => ({ ...prev, ...merged }));
     })();
@@ -947,7 +1029,7 @@ export default function ServiceDetailModal({ item, onClose, mode = "view", onSav
     // fabricated/placeholder id that would fail server-side or mislink the
     // ticket to the wrong device.
     if (!formData.itemId) {
-      setSubmitError("Select an item from the dropdown, or create a new one, before saving.");
+      setSubmitError(t("detail.selectItemFirst"));
       return;
     }
 
@@ -1023,7 +1105,9 @@ export default function ServiceDetailModal({ item, onClose, mode = "view", onSav
         if (!res.ok) {
           const errText = await res.text().catch(() => "");
           console.error(`Save failed (${res.status}):`, errText);
-          setSubmitError(`Save failed (${res.status}). ${errText || "Please check the form and try again."}`);
+          setSubmitError(
+            t("detail.saveFailed", { status: res.status, detail: errText || t("detail.checkForm") })
+          );
           setIsSaving(false);
           return;
         }
@@ -1053,9 +1137,7 @@ export default function ServiceDetailModal({ item, onClose, mode = "view", onSav
           // record failed to load rather than that a value needs picking —
           // and there is no field here to fix it in. Refuse rather than send
           // a guess, which would flip a chargeable repair to free.
-          setSubmitError(
-            "Cannot save — this ticket's service type could not be read. Reload the page and try again."
-          );
+          setSubmitError(t("detail.serviceTypeUnreadable"));
           setIsSaving(false);
           return;
         }
@@ -1068,9 +1150,7 @@ export default function ServiceDetailModal({ item, onClose, mode = "view", onSav
           formData.statusId;
 
         if (!statusId) {
-          setSubmitError(
-            `Cannot save — unrecognised ticket status "${formData.status ?? ""}". Reload the page and try again.`
-          );
+          setSubmitError(t("detail.unrecognisedStatus", { status: formData.status ?? "" }));
           setIsSaving(false);
           return;
         }
@@ -1105,7 +1185,9 @@ export default function ServiceDetailModal({ item, onClose, mode = "view", onSav
         if (!res.ok) {
           const errText = await res.text().catch(() => "");
           console.error(`Save failed (${res.status}):`, errText);
-          setSubmitError(`Save failed (${res.status}). ${errText || "Please check the form and try again."}`);
+          setSubmitError(
+            t("detail.saveFailed", { status: res.status, detail: errText || t("detail.checkForm") })
+          );
           setIsSaving(false);
           return;
         }
@@ -1125,7 +1207,7 @@ export default function ServiceDetailModal({ item, onClose, mode = "view", onSav
       }, 600);
     } catch (err: unknown) {
       console.error("Submit error:", err);
-      setSubmitError(err instanceof Error ? err.message : "Network error — could not reach the server.");
+      setSubmitError(err instanceof Error ? err.message : t("detail.networkError"));
       setIsSaving(false);
     }
   };
@@ -1147,16 +1229,16 @@ export default function ServiceDetailModal({ item, onClose, mode = "view", onSav
             </div>
             <div>
               <h2 className="text-sm font-bold text-slate-900 dark:text-slate-100 flex items-center gap-2">
-                {isView ? "ព័ត៌មានលម្អិត (Service Detail)" : "Edit Service Ticket"}
+                {isView ? t("detail.viewTitle") : t("detail.editTitle")}
                 <span className="font-mono text-xs px-2 py-0.5 rounded bg-blue-100 text-blue-700 dark:bg-blue-950 dark:text-blue-300">
                   {item.reportNo || "TICKET"}
                 </span>
               </h2>
               <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
-                Received: {fmtDate(item.serviceDate) ?? "N/A"}
+                {t("detail.receivedPrefix")} {fmtDate(item.serviceDate) ?? "N/A"}
                 &nbsp;·&nbsp;
                 <span className={`text-[11px] font-semibold px-1.5 py-0.5 rounded-full ${getStatusBadgeClass(item.status)}`}>
-                  {item.status}
+                  {translateStatus(item.status, t)}
                 </span>
               </p>
             </div>
@@ -1170,16 +1252,16 @@ export default function ServiceDetailModal({ item, onClose, mode = "view", onSav
               className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
             >
               {isView ? (
-                <><Edit3 className="w-3.5 h-3.5" /> Edit</>
+                <><Edit3 className="w-3.5 h-3.5" /> {t("action.edit")}</>
               ) : (
-                <><Eye className="w-3.5 h-3.5" /> View</>
+                <><Eye className="w-3.5 h-3.5" /> {t("action.view")}</>
               )}
             </button>
             <button
               type="button"
               onClick={() => setShowConfirmDelete(true)}
               className="p-1.5 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50 dark:hover:bg-slate-800 transition-colors"
-              title="Delete Ticket"
+              title={t("action.deleteTicket")}
             >
               <Trash2 className="w-4 h-4" />
             </button>
@@ -1218,9 +1300,12 @@ export default function ServiceDetailModal({ item, onClose, mode = "view", onSav
                 <Trash2 className="w-6 h-6" />
               </div>
               <div className="text-center space-y-1">
-                <h3 className="text-sm font-bold text-slate-900 dark:text-slate-100">Delete Service Ticket</h3>
+                <h3 className="text-sm font-bold text-slate-900 dark:text-slate-100">{t("table.deleteTicketTitle")}</h3>
                 <p className="text-xs text-slate-500 dark:text-slate-400">
-                  Are you sure you want to delete ticket <strong className="font-mono text-blue-600 dark:text-blue-400">{item.reportNo}</strong> ({item.companyName})? This action cannot be undone.
+                  {t("table.deleteTicketBody", {
+                    ref: item.reportNo ?? "",
+                    company: item.companyName ?? "",
+                  })}
                 </p>
               </div>
               <div className="flex items-center justify-end gap-3 pt-2 border-t border-slate-100 dark:border-slate-800">
@@ -1229,7 +1314,7 @@ export default function ServiceDetailModal({ item, onClose, mode = "view", onSav
                   onClick={() => setShowConfirmDelete(false)}
                   className="px-4 py-2 text-xs font-semibold text-slate-700 dark:text-slate-300 bg-slate-100 dark:bg-slate-800 rounded-xl hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors"
                 >
-                  Cancel
+                  {t("action.cancel")}
                 </button>
                 <button
                   type="button"
@@ -1245,7 +1330,7 @@ export default function ServiceDetailModal({ item, onClose, mode = "view", onSav
                   disabled={isDeleting}
                   className="px-5 py-2 text-xs font-semibold text-white bg-rose-600 rounded-xl hover:bg-rose-700 shadow-md shadow-rose-500/20 transition-all disabled:opacity-60"
                 >
-                  {isDeleting ? "Deleting..." : "Confirm Delete"}
+                  {isDeleting ? t("table.deleting") : t("table.confirmDelete")}
                 </button>
               </div>
             </div>

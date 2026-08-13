@@ -18,6 +18,12 @@ export interface SparePartItemDetail {
   sparePartId: string;
   itemName?: string;
   useFor?: string;
+  /**
+   * The line's own stored text, distinct from the catalog part's `itemName`.
+   * Kept even when a row is enriched from the catalog, because saving a
+   * ticket round-trips this value straight back into the Description column.
+   */
+  description?: string;
   /** How many units were used on this ticket */
   quantity: number;
   /** "Fix" | "New" | "Used" — see Condition ComboBox in InspectItemList.razor */
