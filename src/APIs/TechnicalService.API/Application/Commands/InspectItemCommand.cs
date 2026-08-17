@@ -42,7 +42,13 @@ public class InspectItemCommand : IRequest<bool>
         string inspection, string solution, int serviceTypeId,
         List<SparepartItem> spareparts)
     {
-        _sparepartItems = spareparts.ToSparepartItemsDTO().ToList();
+        // Null, not just empty: `spareparts` is optional on the wire, and the
+        // web client omits the property entirely when an inspection is saved
+        // without any parts (JSON.stringify drops undefined keys). Because
+        // ToSparepartItemsDTO is an iterator, a null list threw a
+        // NullReferenceException on the .ToList() below rather than at the call
+        // that caused it — an unhandled 500 for what is an ordinary inspection.
+        _sparepartItems = spareparts?.ToSparepartItemsDTO().ToList() ?? new List<SparepartItemDTO>();
         Id = id;
         InspectDate = inspectDate;
         InspectBy = inspectBy;

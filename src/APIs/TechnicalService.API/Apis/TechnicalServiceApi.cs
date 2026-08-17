@@ -35,9 +35,22 @@ public static class TechnicalServiceApi
         api.MapPost("/spareparts", CreateSparepartAsync);
         api.MapPut("/spareparts", UpdateSparepartAsync);
         api.MapGet("/spareparts/used-in-services", GetSparePartsUsedInServicesAsync);
-        api.MapGet("/technicalservices/servicetypes", GetServiceTypesAsync);
-        api.MapGet("/technicalservices/servicepriorities", GetServicePrioritiesAsync);
-        api.MapGet("/technicalservices/servicestatuses", GetServiceStatusesAsync);
+        // Seeded lookup tables — they only change when a migration reseeds them,
+        // but the UI asks for them on every page load. Cached server-side so the
+        // repeat asks never reach the (remote) database.
+        api.MapGet("/technicalservices/servicetypes", GetServiceTypesAsync)
+           .CacheOutput(Extensions.LookupCachePolicy);
+        api.MapGet("/technicalservices/servicepriorities", GetServicePrioritiesAsync)
+           .CacheOutput(Extensions.LookupCachePolicy);
+        api.MapGet("/technicalservices/servicestatuses", GetServiceStatusesAsync)
+           .CacheOutput(Extensions.LookupCachePolicy);
+
+        // Dashboard stat tiles. Must be declared before the
+        // "/technicalservices/{serviceId:Guid}" route is matched — the Guid
+        // constraint already keeps them apart, but keeping literal segments
+        // above parameterised ones avoids depending on that.
+        api.MapGet("/technicalservices/dashboard-stats", GetDashboardStatsAsync)
+           .CacheOutput(Extensions.DashboardCachePolicy);
 
         // Services - Basic and Search
         api.MapGet("/technicalservices", GetServicesAsync);
@@ -109,10 +122,20 @@ public static class TechnicalServiceApi
         api.MapGet("/rentalservice/search", SearchRentalServicesAsync);
         api.MapGet("/rentalservice/{id:Guid}", GetRentalServiceAsync);
 
-        api.MapGet("/rentalitemdetail/{id:Guid}", async (Guid id, ITechnicalServiceQueries queries) =>
+        api.MapGet("/rentalitemdetail/{id:Guid}",
+            async Task<Results<Ok<RentalItemDetail>, NotFound>> (Guid id, ITechnicalServiceQueries queries) =>
         {
-            var rentalItemDetail = await queries.GetRentalItemDetailAsync(id);
-            return TypedResults.Ok(rentalItemDetail);
+            // GetRentalItemDetailAsync throws when the rental item is missing,
+            // and this handler had no 404 path at all, so an unknown id was an
+            // unhandled 500.
+            try
+            {
+                return TypedResults.Ok(await queries.GetRentalItemDetailAsync(id));
+            }
+            catch (KeyNotFoundException)
+            {
+                return TypedResults.NotFound();
+            }
         });
 
         api.MapGet("/rentalitemdetail", async ([FromQuery] DateTime? fromDate, [FromQuery] DateTime? toDate, ITechnicalServiceQueries queries) =>
@@ -422,6 +445,12 @@ public static class TechnicalServiceApi
     {
         var serviceStatuses = await queries.GetServiceStatusesAsync();
         return TypedResults.Ok(serviceStatuses);
+    }
+
+    public static async Task<Ok<DashboardStats>> GetDashboardStatsAsync(ITechnicalServiceQueries queries)
+    {
+        var stats = await queries.GetDashboardStatsAsync();
+        return TypedResults.Ok(stats);
     }
 
     public static async Task<Ok<PagedResult<Service>>> GetServicesAsync(
@@ -1057,14 +1086,19 @@ public static class TechnicalServiceApi
     public static async Task<Results<Ok<RentalItem>, NotFound>> GetRentalItemAsync(
         Guid id, ITechnicalServiceQueries queries)
     {
-        var rentalItem = await queries.GetRentalItemAsync(id);
-
-        if (rentalItem == null)
+        // The query signals "no such row" by throwing, never by returning null
+        // (see TechnicalServiceQueries.GetRentalItemAsync) — so the null check
+        // that used to be here was dead code and an unknown id escaped as an
+        // unhandled 500. Caught the same way GetServiceAsync does it: asking
+        // for a record that isn't there is a 404, not a fault.
+        try
+        {
+            return TypedResults.Ok(await queries.GetRentalItemAsync(id));
+        }
+        catch (KeyNotFoundException)
         {
             return TypedResults.NotFound();
         }
-
-        return TypedResults.Ok(rentalItem);
     }
 
     public static async Task<Results<Ok, BadRequest<string>>> CreateRentalServiceAsync(CreateRentalServiceRequest request, [AsParameters] TechnicalServices services)
@@ -1125,14 +1159,16 @@ public static class TechnicalServiceApi
     public static async Task<Results<Ok<RentalService>, NotFound>> GetRentalServiceAsync(
         Guid id, ITechnicalServiceQueries queries)
     {
-        var rentalService = await queries.GetRentalServiceAsync(id);
-
-        if (rentalService == null)
+        // Same as GetRentalItemAsync above: the query throws rather than
+        // returning null, so an unknown id was surfacing as a 500.
+        try
+        {
+            return TypedResults.Ok(await queries.GetRentalServiceAsync(id));
+        }
+        catch (KeyNotFoundException)
         {
             return TypedResults.NotFound();
         }
-
-        return TypedResults.Ok(rentalService);
     }
 
     // Search endpoint methods

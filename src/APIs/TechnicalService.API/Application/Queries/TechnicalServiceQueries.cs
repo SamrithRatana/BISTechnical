@@ -1,4 +1,4 @@
-﻿using Microsoft.AspNetCore.Http.HttpResults;
+using Microsoft.AspNetCore.Http.HttpResults;
 using TechnicalService.API.Apis;
 using TechnicalService.Domain.AggregatesModel.RentalAggregate;
 
@@ -15,6 +15,46 @@ public class TechnicalServiceQueries(TechnicalServiceContext context)
 
     public async Task<IEnumerable<ServiceStatus>> GetServiceStatusesAsync() =>
         await context.ServiceStatuses.Select(c => new ServiceStatus(c.Id, c.Name)).ToListAsync();
+
+    /// <summary>
+    /// Every dashboard stat tile in one query.
+    ///
+    /// Conditional COUNTs inside a single aggregate rather than one query per
+    /// tile: SQL Server reads Services once and the API makes one round trip to
+    /// a database that is on the other side of the internet, which is where the
+    /// latency actually lives.
+    ///
+    /// Date boundaries are half-open (>= start, &lt; end) rather than
+    /// `.Date ==` — casting the column to date in the predicate would rule out
+    /// the IX_Services_ServiceDate seek, the same reasoning as in
+    /// SearchServicesAsync.
+    /// </summary>
+    public async Task<DashboardStats> GetDashboardStatsAsync()
+    {
+        var today = DateTime.Today;
+        var tomorrow = today.AddDays(1);
+        var monthStart = new DateTime(today.Year, today.Month, 1);
+        var nextMonthStart = monthStart.AddMonths(1);
+
+        return await context.Services
+            .AsNoTracking()
+            .GroupBy(_ => 1)
+            .Select(g => new DashboardStats
+            {
+                TodayCount = g.Count(s => s.ServiceDate >= today && s.ServiceDate < tomorrow),
+                ReceivedCount = g.Count(s => s.Status.Name == "Item Recieved"),
+                WaitingCustomerCount = g.Count(s => s.Status.Name == "Awaiting Customer Confirm"),
+                WaitingSpareCount = g.Count(s => s.Status.Name == "Awaiting Sparepart"),
+                FinishedCount = g.Count(s => s.Status.Name == "Finished"),
+                FinishedThisMonthCount = g.Count(s =>
+                    s.FinishedDate.HasValue &&
+                    s.FinishedDate.Value >= monthStart &&
+                    s.FinishedDate.Value < nextMonthStart),
+            })
+            // An empty Services table produces no group at all, and the tiles
+            // should read 0 rather than the endpoint returning null.
+            .FirstOrDefaultAsync() ?? new DashboardStats();
+    }
 
     // UPDATED: Now returns PagedResult<Service>
     public async Task<PagedResult<Service>> GetServicesAsync(int pageNumber, int pageSize)
@@ -1079,13 +1119,14 @@ public class TechnicalServiceQueries(TechnicalServiceContext context)
     {
         var items = context.Items.AsNoTracking().AsQueryable();
 
-        // Apply search filter
+        // Apply search filter — see SearchServicesAsync for why the column is
+        // compared directly instead of via ToLower().
         if (!string.IsNullOrWhiteSpace(query.SearchTerm))
         {
-            var searchLower = query.SearchTerm.ToLower();
+            var search = query.SearchTerm.Trim();
             items = items.Where(i =>
-                i.ItemName.ToLower().Contains(searchLower) ||
-                i.SerialNumber.ToLower().Contains(searchLower));
+                i.ItemName.Contains(search) ||
+                i.SerialNumber.Contains(search));
         }
 
         // Apply item type filter
@@ -1130,15 +1171,16 @@ public class TechnicalServiceQueries(TechnicalServiceContext context)
     {
         var spareparts = context.Spareparts.AsNoTracking().AsQueryable();
 
-        // Apply search filter
+        // Apply search filter — see SearchServicesAsync for why the column is
+        // compared directly instead of via ToLower().
         if (!string.IsNullOrWhiteSpace(query.SearchTerm))
         {
-            var searchLower = query.SearchTerm.ToLower();
+            var search = query.SearchTerm.Trim();
             spareparts = spareparts.Where(s =>
-                s.ItemName.ToLower().Contains(searchLower) ||
-                s.SerialNumber.ToLower().Contains(searchLower) ||
-                s.Description.ToLower().Contains(searchLower) ||
-                s.UserFor.ToLower().Contains(searchLower));
+                s.ItemName.Contains(search) ||
+                s.SerialNumber.Contains(search) ||
+                s.Description.Contains(search) ||
+                s.UserFor.Contains(search));
         }
 
         // Apply LinkItemId filter
@@ -1156,7 +1198,7 @@ public class TechnicalServiceQueries(TechnicalServiceContext context)
             "description" => query.SortDescending
                 ? spareparts.OrderByDescending(s => s.Description)
                 : spareparts.OrderBy(s => s.Description),
-            "quantity" => query.SortDescending // ✅ ADD THIS CASE
+            "quantity" => query.SortDescending
                 ? spareparts.OrderByDescending(s => s.Quantity)
                 : spareparts.OrderBy(s => s.Quantity),
             _ => query.SortDescending
@@ -1179,7 +1221,7 @@ public class TechnicalServiceQueries(TechnicalServiceContext context)
                 PictureUrl = p.PictureUrl,
                 LinkItemId = p.LinkItemId,
                 Quantity = p.Quantity,
-                DefaultPrice = p.DefaultPrice // ✅ ADD
+                DefaultPrice = p.DefaultPrice
             })
             .ToListAsync();
 
@@ -1188,13 +1230,12 @@ public class TechnicalServiceQueries(TechnicalServiceContext context)
 
     public async Task<PagedResult<Service>> SearchServicesAsync(ServiceSearchQuery query)
     {
+        // No Include() calls: this method ends in a Select() projection, so EF
+        // builds exactly the joins the projection needs and ignores Include
+        // anyway. Listing them only implied the whole graph was being
+        // materialised, including every SparepartItem row.
         var services = context.Services
             .AsNoTracking()
-            .Include(s => s.Item)
-            .Include(s => s.ServiceType)
-            .Include(s => s.ServicePriority)
-            .Include(s => s.Status)
-            .Include(s => s.SparepartItems)
             .AsQueryable();
 
         bool isProcessFiltering = query.UseProcessDateFiltering &&
@@ -1204,10 +1245,13 @@ public class TechnicalServiceQueries(TechnicalServiceContext context)
                                   query.StatusesForProcessFiltering.Any();
 
         bool isStatusFiltering = !query.UseProcessDateFiltering &&
-                                 !string.IsNullOrWhiteSpace(query.Status);
+                                 !string.IsNullOrWhiteSpace(query.Status) &&
+                                 query.Status != "All";
 
-        // STEP 1: Apply Status filter
-        if (isStatusFiltering)
+        bool hasUserActionFilter = query.UserIds != null && query.UserIds.Any();
+
+        // STEP 1: Apply Status filter (Only apply current status filter if NOT filtering by user action history)
+        if (isStatusFiltering && !hasUserActionFilter)
         {
             var statuses = query.Status.Split(',').Select(s => s.Trim()).ToArray();
             services = services.Where(s => statuses.Contains(s.Status.Name));
@@ -1223,10 +1267,16 @@ public class TechnicalServiceQueries(TechnicalServiceContext context)
                      s.CreateBy.HasValue && query.UserIds.Contains(s.CreateBy.Value)) ||
                     (query.UserFilterStatuses.Contains("Inspection") &&
                      s.InspectBy.HasValue && query.UserIds.Contains(s.InspectBy.Value)) ||
+                    (query.UserFilterStatuses.Contains("Inspecting") &&
+                     s.InspectingBy.HasValue && query.UserIds.Contains(s.InspectingBy.Value)) ||
+                    (query.UserFilterStatuses.Contains("Sale Confirmed") &&
+                     s.SetSaleConfirmedBy.HasValue && query.UserIds.Contains(s.SetSaleConfirmedBy.Value)) ||
                     (query.UserFilterStatuses.Contains("Awaiting Customer Confirm") &&
                      s.SetAwaitingCustomerConfirmBy.HasValue && query.UserIds.Contains(s.SetAwaitingCustomerConfirmBy.Value)) ||
                     (query.UserFilterStatuses.Contains("Awaiting Sparepart") &&
                      s.SetAwaitingSparepartBy.HasValue && query.UserIds.Contains(s.SetAwaitingSparepartBy.Value)) ||
+                    (query.UserFilterStatuses.Contains("Sent Spareparts") &&
+                     s.SetSentSparepartsBy.HasValue && query.UserIds.Contains(s.SetSentSparepartsBy.Value)) ||
                     (query.UserFilterStatuses.Contains("Repairing") &&
                      s.RepairBy.HasValue && query.UserIds.Contains(s.RepairBy.Value)) ||
                     (query.UserFilterStatuses.Contains("Finished") &&
@@ -1244,8 +1294,11 @@ public class TechnicalServiceQueries(TechnicalServiceContext context)
                 services = services.Where(s =>
                     (s.CreateBy.HasValue && query.UserIds.Contains(s.CreateBy.Value)) ||
                     (s.InspectBy.HasValue && query.UserIds.Contains(s.InspectBy.Value)) ||
+                    (s.InspectingBy.HasValue && query.UserIds.Contains(s.InspectingBy.Value)) ||
+                    (s.SetSaleConfirmedBy.HasValue && query.UserIds.Contains(s.SetSaleConfirmedBy.Value)) ||
                     (s.SetAwaitingCustomerConfirmBy.HasValue && query.UserIds.Contains(s.SetAwaitingCustomerConfirmBy.Value)) ||
                     (s.SetAwaitingSparepartBy.HasValue && query.UserIds.Contains(s.SetAwaitingSparepartBy.Value)) ||
+                    (s.SetSentSparepartsBy.HasValue && query.UserIds.Contains(s.SetSentSparepartsBy.Value)) ||
                     (s.RepairBy.HasValue && query.UserIds.Contains(s.RepairBy.Value)) ||
                     (s.VerifiedBy.HasValue && query.UserIds.Contains(s.VerifiedBy.Value)) ||
                     (s.SetCustomerRejectedBy.HasValue && query.UserIds.Contains(s.SetCustomerRejectedBy.Value)) ||
@@ -1281,10 +1334,21 @@ public class TechnicalServiceQueries(TechnicalServiceContext context)
         if (query.ForceServiceDateOnly)
         {
             // ✅ Always Created mode: ALWAYS filter by ServiceDate only, regardless of status
+            //
+            // Half-open range instead of `.Date >=` / `.Date <=`: comparing
+            // ServiceDate.Date emits CAST(ServiceDate AS date), and a function
+            // over the column blocks index seeks. `>= from && < to+1day` covers
+            // exactly the same calendar days while staying sargable.
             if (query.FromDate.HasValue)
-                services = services.Where(s => s.ServiceDate.Date >= query.FromDate.Value.Date);
+            {
+                var fromDate = query.FromDate.Value.Date;
+                services = services.Where(s => s.ServiceDate >= fromDate);
+            }
             if (query.ToDate.HasValue)
-                services = services.Where(s => s.ServiceDate.Date <= query.ToDate.Value.Date);
+            {
+                var dayAfterTo = query.ToDate.Value.Date.AddDays(1);
+                services = services.Where(s => s.ServiceDate < dayAfterTo);
+            }
         }
         else if (isProcessFiltering)
         {
@@ -1296,10 +1360,16 @@ public class TechnicalServiceQueries(TechnicalServiceContext context)
                     s.ServiceDate.Date >= fromDate && s.ServiceDate.Date <= toDate) ||
                 (query.StatusesForProcessFiltering.Contains("Inspection") &&
                     s.InspectDate.HasValue && s.InspectDate.Value.Date >= fromDate && s.InspectDate.Value.Date <= toDate) ||
+                (query.StatusesForProcessFiltering.Contains("Inspecting") &&
+                    s.InspectingDate.HasValue && s.InspectingDate.Value.Date >= fromDate && s.InspectingDate.Value.Date <= toDate) ||
+                (query.StatusesForProcessFiltering.Contains("Sale Confirmed") &&
+                    s.SaleConfirmedDate.HasValue && s.SaleConfirmedDate.Value.Date >= fromDate && s.SaleConfirmedDate.Value.Date <= toDate) ||
                 (query.StatusesForProcessFiltering.Contains("Awaiting Customer Confirm") &&
                     s.AwaitingCustomerConfirmDate.HasValue && s.AwaitingCustomerConfirmDate.Value.Date >= fromDate && s.AwaitingCustomerConfirmDate.Value.Date <= toDate) ||
                 (query.StatusesForProcessFiltering.Contains("Awaiting Sparepart") &&
                     s.AwaitingSparepartDate.HasValue && s.AwaitingSparepartDate.Value.Date >= fromDate && s.AwaitingSparepartDate.Value.Date <= toDate) ||
+                (query.StatusesForProcessFiltering.Contains("Sent Spareparts") &&
+                    s.SentSparepartsDate.HasValue && s.SentSparepartsDate.Value.Date >= fromDate && s.SentSparepartsDate.Value.Date <= toDate) ||
                 (query.StatusesForProcessFiltering.Contains("Repairing") &&
                     s.RepairDate.HasValue && s.RepairDate.Value.Date >= fromDate && s.RepairDate.Value.Date <= toDate) ||
                 (query.StatusesForProcessFiltering.Contains("Finished") &&
@@ -1366,13 +1436,20 @@ public class TechnicalServiceQueries(TechnicalServiceContext context)
         {
             if (query.DateFilter != null && !string.IsNullOrWhiteSpace(query.DateFilter))
             {
+                // Half-open ranges rather than `.Date ==` / `.Date >=`, so these
+                // stay sargable against the ServiceDate index.
                 var today = DateTime.Today;
+                var tomorrow = today.AddDays(1);
+                var yesterday = today.AddDays(-1);
+                var weekAgo = today.AddDays(-7);
+                var monthAgo = today.AddMonths(-1);
+
                 services = query.DateFilter switch
                 {
-                    "Today" => services.Where(s => s.ServiceDate.Date == today),
-                    "Yesterday" => services.Where(s => s.ServiceDate.Date == today.AddDays(-1)),
-                    "LastWeek" => services.Where(s => s.ServiceDate.Date >= today.AddDays(-7) && s.ServiceDate.Date < today),
-                    "LastMonth" => services.Where(s => s.ServiceDate.Date >= today.AddMonths(-1) && s.ServiceDate.Date < today),
+                    "Today" => services.Where(s => s.ServiceDate >= today && s.ServiceDate < tomorrow),
+                    "Yesterday" => services.Where(s => s.ServiceDate >= yesterday && s.ServiceDate < today),
+                    "LastWeek" => services.Where(s => s.ServiceDate >= weekAgo && s.ServiceDate < today),
+                    "LastMonth" => services.Where(s => s.ServiceDate >= monthAgo && s.ServiceDate < today),
                     _ => services
                 };
             }
@@ -1385,28 +1462,46 @@ public class TechnicalServiceQueries(TechnicalServiceContext context)
                     services = services.Where(s => s.Status.Name == "Finished");
             }
 
+            // Half-open range keeps the ServiceDate index usable — see the
+            // ForceServiceDateOnly branch above.
             if (query.FromDate.HasValue)
-                services = services.Where(s => s.ServiceDate.Date >= query.FromDate.Value.Date);
+            {
+                var fromDate = query.FromDate.Value.Date;
+                services = services.Where(s => s.ServiceDate >= fromDate);
+            }
 
             if (query.ToDate.HasValue)
-                services = services.Where(s => s.ServiceDate.Date <= query.ToDate.Value.Date);
+            {
+                var dayAfterTo = query.ToDate.Value.Date.AddDays(1);
+                services = services.Where(s => s.ServiceDate < dayAfterTo);
+            }
         }
 
         // STEP 6: Apply search filter
+        //
+        // Deliberately NOT lower-cased. `x.ToLower().Contains(t)` translates to
+        // LOWER([x]) LIKE '%t%', and wrapping the column in a function forces
+        // SQL Server to evaluate it row by row, ruling out any index use.
+        // Comparing the column directly lets the database match using its own
+        // collation, which is case-insensitive by default (CI in
+        // SQL_Latin1_General_CP1_CI_AS) — so results are unchanged.
         if (!string.IsNullOrWhiteSpace(query.SearchTerm))
         {
-            var searchLower = query.SearchTerm.ToLower();
+            var search = query.SearchTerm.Trim();
             services = services.Where(s =>
-                s.CompanyName.ToLower().Contains(searchLower) ||
-                s.ContactName.ToLower().Contains(searchLower) ||
-                s.ReportNo.ToLower().Contains(searchLower) ||
-                s.Item.ItemName.ToLower().Contains(searchLower) ||
-                s.Item.SerialNumber.ToLower().Contains(searchLower) ||
-                (s.CustomerRequest != null && s.CustomerRequest.ToLower().Contains(searchLower)));
+                s.CompanyName.Contains(search) ||
+                s.ContactName.Contains(search) ||
+                s.ReportNo.Contains(search) ||
+                s.Item.ItemName.Contains(search) ||
+                s.Item.SerialNumber.Contains(search) ||
+                (s.CustomerRequest != null && s.CustomerRequest.Contains(search)));
         }
 
         if (!string.IsNullOrWhiteSpace(query.SerialNumber))
-            services = services.Where(s => s.Item.SerialNumber.ToLower().Contains(query.SerialNumber.ToLower()));
+        {
+            var serialNumber = query.SerialNumber.Trim();
+            services = services.Where(s => s.Item.SerialNumber.Contains(serialNumber));
+        }
 
         if (!string.IsNullOrWhiteSpace(query.ServiceType))
             services = services.Where(s => s.ServiceType.Name == query.ServiceType);
@@ -1431,8 +1526,16 @@ public class TechnicalServiceQueries(TechnicalServiceContext context)
                 : services.OrderBy(s => s.ServiceDate)
         };
 
-        // STEP 8: Count AFTER all filtering
-        var totalCount = await services.CountAsync();
+        // STEP 8: Count AFTER all filtering.
+        //
+        // Skipped for infinite-scroll batches after the first: the total does
+        // not change between batches, so re-counting the whole filtered set on
+        // every scroll was a second full pass for a number the caller already
+        // holds. With a free-text search — which scans rather than seeks — that
+        // second pass costs as much as the page itself.
+        var totalCount = query.IncludeTotalCount
+            ? await services.CountAsync()
+            : 0;
 
         // STEP 9: Apply pagination and project to DTO
         var results = await services
@@ -1701,7 +1804,10 @@ public class TechnicalServiceQueries(TechnicalServiceContext context)
     }
     public async Task<PagedResult<Service>> GetAllServicesAsync()
     {
-        var query = context.Services.AsQueryable();
+        // Read-only projection: without AsNoTracking, EF built a change-tracking
+        // entry for every row in Services (3,600+ and growing) on each call, for
+        // entities nothing here ever mutates.
+        var query = context.Services.AsNoTracking().AsQueryable();
         var totalCount = await query.CountAsync();
 
         // Get ALL items without Skip/Take

@@ -11,6 +11,24 @@
       "StockIn": 0
     }
   },
+  // JWT bearer validation. Set Enabled to true and fill Key/Issuer/Audience
+  // with the same values the User Management API signs tokens with (matching
+  // JWT_SECRET / JWT_ISSUER / JWT_AUDIENCE in TestingReact/.env.local) to
+  // require an authenticated caller on every endpoint. Left false, the API
+  // accepts anonymous requests.
+  "Jwt": {
+    "Enabled": false,
+    "Key": "your_jwt_signing_key",
+    "Issuer": "https://user.example.com",
+    "Audience": "https://technicalsystem.example.com"
+  },
+  // Sentry error + performance monitoring. Paste the DSN from
+  // Sentry → Settings → Projects → <project> → Client Keys. Empty = disabled.
+  "Sentry": {
+    "Dsn": "",
+    "TracesSampleRate": 0.1,
+    "AttachStacktrace": true
+  },
   "Logging": {
     "LogLevel": {
       "Default": "Information",

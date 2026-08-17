@@ -56,5 +56,38 @@ class ServiceEntityTypeConfiguration : IEntityTypeConfiguration<Service>
         serviceConfiguration
             .Navigation("_sparepartItems")
             .UsePropertyAccessMode(PropertyAccessMode.Field);
+
+        // ReportNo defaulted to nvarchar(max), which SQL Server refuses to use
+        // as an index key (1700-byte limit) — so the sort column below could
+        // not be indexed at all until it was bounded. 100 is far above the
+        // report-number format actually in use.
+        serviceConfiguration
+            .Property(s => s.ReportNo)
+            .HasMaxLength(100);
+
+        // ── Indexes for the search/list queries ──────────────────────────────
+        // Every ticket list the UI renders runs the same shape: filter by
+        // status, order by ReportNo descending, page. ServiceStatusId already
+        // had an FK index, but the sort column had none — so SQL Server sorted
+        // the whole filtered set on every request, on every scroll batch, for
+        // every user.
+        //
+        // The composite covers that query directly: seek the status, then read
+        // ReportNo already in order, skipping the sort entirely. The
+        // single-column ReportNo index serves lookups that don't filter by
+        // status (e.g. the header's global search).
+        serviceConfiguration
+            .HasIndex("_serviceStatusId", nameof(Service.ReportNo))
+            .HasDatabaseName("IX_Services_Status_ReportNo");
+
+        serviceConfiguration
+            .HasIndex(s => s.ReportNo)
+            .HasDatabaseName("IX_Services_ReportNo");
+
+        // ServiceDate is the fallback sort and the column every report date
+        // range filters on.
+        serviceConfiguration
+            .HasIndex(s => s.ServiceDate)
+            .HasDatabaseName("IX_Services_ServiceDate");
     }
 }

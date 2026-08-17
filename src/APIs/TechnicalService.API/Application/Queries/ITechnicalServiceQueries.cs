@@ -25,6 +25,9 @@ public interface ITechnicalServiceQueries
     Task<PagedResult<RentalService>> SearchRentalServicesAsync(RentalServiceSearchQuery query);
     Task<List<CompanyStatusSummary>> GetMonthlyReportCompanySummaryAsync(
     DateTime fromDate, DateTime toDate, string? serviceLocation);
+
+    // Dashboard
+    Task<DashboardStats> GetDashboardStatsAsync();
     // Service metadata
     Task<IEnumerable<ServiceType>> GetServiceTypesAsync();
     Task<IEnumerable<ServicePriority>> GetServicePrioritiesAsync();
