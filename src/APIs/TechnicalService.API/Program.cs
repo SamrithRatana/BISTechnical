@@ -85,5 +85,29 @@ app.MapHealthChecks("/health/ready");
 var repairs = app.NewVersionedApi("Repairs");
 repairs.MapRepairsApiV1();
 
+// `UseAuthentication()`/`UseAuthorization()` above enforce nothing on their
+// own. Authentication only *reads* a token if one is presented; authorization
+// only acts where an endpoint asks for it. With no endpoint asking, every route
+// here served anonymous callers even with `Jwt:Enabled` set to true — so the
+// flag looked like a working security switch and turning it on would have
+// changed no behaviour whatsoever. Verified against production on 2026-08-17: a
+// GET to /api/technicalservices/search with no Authorization header returned
+// 200 and the full ticket table. This is the half that makes the flag real.
+//
+// Applied to the whole versioned group rather than per endpoint, so a route
+// added later is covered by default instead of by remembering to opt in. The
+// health checks are mapped above and outside this group, so container probes
+// and load balancers keep working anonymously.
+//
+// Still gated on the same flag, and still shipped OFF. Requiring a token is a
+// breaking change for any caller that isn't sending one, so enabling it is a
+// deployment decision that belongs with whoever can confirm the frontend's
+// tokens carry the configured Issuer and Audience — see the `Jwt` section of
+// appsettings.json.
+if (app.Configuration.GetSection("Jwt").GetValue("Enabled", false))
+{
+    repairs.RequireAuthorization();
+}
+
 app.UseDefaultOpenApi();
 app.Run();

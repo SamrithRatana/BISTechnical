@@ -75,6 +75,14 @@ internal static class Extensions
     /// and flipping every one of them to 401 without the matching frontend
     /// configuration would take the whole app down. Set <c>Jwt:Enabled</c> to
     /// true (and fill in Key/Issuer/Audience) to enforce it.
+    ///
+    /// This half only registers the scheme, and registering a scheme protects
+    /// nothing: authentication reads a token when one is presented, it does not
+    /// demand one. The demand is <c>RequireAuthorization()</c> on the endpoint
+    /// group in <c>Program.cs</c>, gated on this same flag — which was missing
+    /// entirely until 2026-08-17, so this switch read as a working security
+    /// control while enabling it would have changed nothing. If you are adding
+    /// a new endpoint group, it needs that call too, or it is public.
     /// </summary>
     private static void AddApiSecurity(this IServiceCollection services, IConfiguration configuration)
     {

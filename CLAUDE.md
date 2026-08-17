@@ -452,6 +452,25 @@ system", "not a registered user") rather than being invented.
   require and validate the bearer token. Until it does, treat every ticket,
   customer and machine record as publicly readable.
 
+  **Root cause found and half-fixed.** `TechnicalService.API` already had JWT
+  bearer validation behind a `Jwt:Enabled` flag, with Key/Issuer/Audience
+  filled in — but **no endpoint anywhere called `RequireAuthorization()`**
+  (grep across `src/`: zero hits). `UseAuthentication()` only *reads* a token
+  when one is presented and `UseAuthorization()` only acts where an endpoint
+  asks, so with nothing asking, turning the flag on would have changed no
+  behaviour at all. It read as a working security switch and was not one.
+  `Program.cs` now calls `repairs.RequireAuthorization()` under that same flag,
+  so the switch is real.
+
+  **The flag is still `false` and the exposure is still open** — that is a
+  deployment decision, not a code one. Before flipping it, confirm the tokens
+  the frontend actually holds carry `iss = https://user.camprotec.com.kh` and
+  `aud = https://technicalsystem.camprotec.com.kh`; every proxy route forwards
+  the header but only `if (authHeader)`, so a caller that sends none currently
+  succeeds and would start 401ing. Health checks are mapped outside the group
+  and stay anonymous. Any *new* endpoint group needs its own
+  `RequireAuthorization()` or it is public.
+
   (`user.camprotec.com.kh/api/UserManagement` also answers 200 unauthenticated
   but returned **no rows**, so it may be gated differently — check it properly
   rather than assuming either way.)
