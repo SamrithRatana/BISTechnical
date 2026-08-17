@@ -13,7 +13,7 @@
  * Layout is *not* one of the decisions a page makes: that lives in the .xlsx.
  */
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { Workbook } from "exceljs";
 import toast from "react-hot-toast";
 import { Download, Printer, Loader2 } from "lucide-react";
@@ -23,8 +23,24 @@ import ReportFilterBar, {
   type ReportFilterKind,
   type ReportFilterValues,
 } from "@/components/ReportFilterBar";
+import { useDebouncedValue } from "@/hooks/useDebouncedValue";
 import { useI18n } from "@/i18n/LanguageProvider";
 import { fillTemplate, downloadWorkbook, type TemplateGroup } from "@/services/excelTemplate";
+
+/**
+ * How long the date inputs must be quiet before the report reloads.
+ *
+ * A native `<input type="date">` raises change as each segment completes, so
+ * typing a year runs through 0002 → 0020 → 0202 → 2026 — four complete, valid
+ * dates, and before this, four full report requests, three of them for periods
+ * the user never asked for and the first of which can scan a two-thousand-year
+ * range. The search box in `ReportFilterBar` has always debounced at 400ms;
+ * this is the same treatment for the other input that feeds the same query.
+ *
+ * The status / type / location dropdowns are deliberately NOT debounced: each
+ * click is one deliberate choice, and delaying it only feels slow.
+ */
+const DATE_INPUT_DEBOUNCE_MS = 400;
 
 /** What a page must produce for a given period. */
 export interface ReportData {
@@ -85,37 +101,68 @@ export default function TemplateReportView({
   const [loading, setLoading] = useState(true);
   const [exporting, setExporting] = useState(false);
 
+  /**
+   * Which request the displayed workbook belongs to.
+   *
+   * Fetch plus `fillTemplate` is not instant, and nothing made these calls
+   * mutually exclusive: two overlapping loads both resolved and both called
+   * `setWorkbook`, so the report showed whichever *finished* last rather than
+   * whichever was *asked for* last. Widen a range (slow) then narrow it
+   * (fast) and the screen settles on the wide result while the inputs read
+   * narrow — a wrong report that looks completely legitimate, which on a page
+   * whose whole purpose is checking a number is worse than being slow.
+   *
+   * A counter rather than an AbortController because the cost being avoided is
+   * the stale *render*, not the request: cancelling would mean threading a
+   * signal through all eight pages' `load` functions, and a superseded
+   * response is discarded here either way.
+   */
+  const latestRequest = useRef(0);
+
   const build = useCallback(
     async (from: Date, to: Date, active: ReportFilterValues) => {
+      const requestId = ++latestRequest.current;
       setLoading(true);
       try {
         const { groups, summary } = await load(from, to, active);
-        setWorkbook(
-          await fillTemplate({
-            templateUrl: `/templates/${template}.xlsx`,
-            title,
-            subtitle: subtitle(from, to),
-            groups,
-            labels: { subtotal: t("report.total"), grandTotal: t("report.grandTotal") },
-            summary,
-            format,
-          })
-        );
+        const filled = await fillTemplate({
+          templateUrl: `/templates/${template}.xlsx`,
+          title,
+          subtitle: subtitle(from, to),
+          groups,
+          labels: { subtotal: t("report.total"), grandTotal: t("report.grandTotal") },
+          summary,
+          format,
+        });
+        // Superseded while we were building: drop it silently. The newer
+        // request owns the screen, including its own loading state.
+        if (requestId !== latestRequest.current) return;
+        setWorkbook(filled);
       } catch {
+        if (requestId !== latestRequest.current) return;
         setWorkbook(null);
         toast.error(t("report.loadFailed"));
       } finally {
-        setLoading(false);
+        // Only the newest request may clear the spinner — otherwise an early
+        // straggler returning mid-flight shows the previous workbook as though
+        // the load had finished.
+        if (requestId === latestRequest.current) setLoading(false);
       }
     },
     [load, template, title, subtitle, format, t]
   );
 
+  // Debounced so a half-typed year doesn't run the report three times on its
+  // way to the year the user meant. Both are seeded with the real value, so the
+  // first load still fires immediately on mount.
+  const debouncedFrom = useDebouncedValue(fromDate, DATE_INPUT_DEBOUNCE_MS);
+  const debouncedTo = useDebouncedValue(toDate, DATE_INPUT_DEBOUNCE_MS);
+
   useEffect(() => {
     // Nested so the effect body itself never calls setState synchronously.
-    const run = () => void build(fromDate, toDate, filterValues);
+    const run = () => void build(debouncedFrom, debouncedTo, filterValues);
     run();
-  }, [build, fromDate, toDate, filterValues]);
+  }, [build, debouncedFrom, debouncedTo, filterValues]);
 
   const handleExport = async () => {
     if (!workbook) return;
