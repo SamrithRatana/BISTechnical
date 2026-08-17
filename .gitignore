@@ -26,3 +26,6 @@ DevExpress_License.txt
 
 # Local Claude Code settings (machine-specific)
 .claude/settings.local.json
+
+# Git Bash crash dumps — build/tooling artifacts, never source.
+*.stackdump
