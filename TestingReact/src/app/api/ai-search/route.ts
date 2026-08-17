@@ -92,29 +92,49 @@ export const maxDuration = 60;
  * `gemini-flash-latest` follows as an alias that always resolves to a current
  * Flash model, so a retirement can't empty the front of the list. The lite
  * models sit near the end on purpose — a slightly worse answer beats no answer,
- * but only once the full models are spent. (They previously sat second, which
- * meant every question fell to lite quality the moment the leader hit quota.)
+ * but only once the full models are spent.
  *
- * `gemini-3.1-pro-preview` is last despite being the most capable entry, and
- * that is not a mistake: Pro reasons for noticeably longer, and this route runs
- * behind a search box under a hard `AGENT_BUDGET_MS` wall-clock budget. A slow
- * answer here is a *lost* answer, because the budget aborts it and the question
- * degrades to a plain keyword search. Placing it last means it is reached only
- * when every Flash model is spent — the one situation where waiting beats not
- * answering at all.
+ * That paragraph was true of the *comment* and false of the *array* for a long
+ * time: the three lite entries actually sat in slots 1-3 with 3.7-flash seventh,
+ * so every question was answered at lite quality by a deprecated model while
+ * this note claimed otherwise. Re-measure before trusting either.
+ *
+ * Measured 2026-08-17, one tool-calling round per model, on the project key
+ * (`thinkingLevel: "low"`, see `generationConfig` below):
+ *
+ *   3.7-flash 1.9s · flash-latest 1.7s · 3-flash-preview 2.0s · 3.5-flash 1.8s
+ *   3.5-flash-lite 1.2s · flash-lite-latest 1.3s · 3.1-flash-lite 2.7s
+ *   3.6-flash 21-45s
+ *
+ * `gemini-3.6-flash` is last on that measurement alone. It answers correctly and
+ * carries its own free-tier allowance, so it is worth keeping as the final
+ * fallback, but one round of it can consume most of `AGENT_BUDGET_MS` — it can
+ * realistically only finish a question that needs a single tool call.
+ *
+ * Deliberately NOT in this list, each verified against the live API rather than
+ * assumed — re-check before re-adding:
+ * - `gemini-3.1-pro-preview` / `gemini-pro-latest` — **no free tier at all**
+ *   (ai.google.dev/pricing: "Free Tier: Not available"). Both answer 429 in
+ *   ~0.5s on an unbilled key, every time. They were the two strongest-looking
+ *   entries and could never once have produced an answer.
+ * - `gemini-3.1-flash-lite-preview` — listed as shut down on the models page.
+ *   It still answers today, which is exactly how a dead entry survives a review.
+ * - `gemini-2.5-flash` / `gemini-2.5-flash-lite` — 404, "no longer available to
+ *   new users".
+ *
+ * `gemini-3.1-flash-lite` is deprecated (shutdown 2027-05-07, superseded by
+ * `gemini-3.5-flash-lite`) and is kept only for the extra daily allowance,
+ * below the model that replaces it.
  */
 const GEMINI_MODELS = [
-  "gemini-3.1-flash-lite",
-  "gemini-3.5-flash-lite",
-  "gemini-flash-lite-latest",
-  "gemini-3.6-flash",
-  "gemini-3.1-flash-lite-preview",
-  "gemini-3-flash-preview",
   "gemini-3.7-flash",
   "gemini-flash-latest",
+  "gemini-3-flash-preview",
   "gemini-3.5-flash",
-  "gemini-pro-latest",
-  "gemini-3.1-pro-preview",
+  "gemini-3.5-flash-lite",
+  "gemini-flash-lite-latest",
+  "gemini-3.1-flash-lite",
+  "gemini-3.6-flash",
 ];
 
 /** Claude Opus 5, used when Anthropic is the configured provider. */
@@ -833,6 +853,12 @@ export interface AiSearchDegraded {
     | "quotaExceeded"
     | "unavailable"
     | "notConfigured"
+    /**
+     * The request carried no usable bearer token. Kept separate from
+     * `unavailable` because it is the one reason on this list the user can
+     * act on themselves.
+     */
+    | "notSignedIn"
     /** Image models were reachable but their allowance is spent for now. */
     | "imageQuotaExceeded"
     /**
@@ -1072,7 +1098,20 @@ async function runGeminiAgent(
           toolConfig: { functionCallingConfig: { mode: "AUTO" } },
           // Current Gemini models spend part of the output budget on internal
           // reasoning, so this has to leave room for both that and the answer.
-          generationConfig: { temperature: 0.2, maxOutputTokens: 4096 },
+          //
+          // `thinkingLevel: "low"` is the single biggest speed lever here, and
+          // it costs nothing in correctness for this workload: the reasoning is
+          // "pick a tool, read the rows, summarise", not multi-step deduction.
+          // Measured on `gemini-3.5-flash`, same tool-calling request: 6.7s
+          // without it, 1.8s with. Accepted by every model in GEMINI_MODELS —
+          // verified individually, because an unsupported value is a 400 that
+          // this loop reports as a provider failure and silently falls past.
+          // `"minimal"` is NOT accepted (400 on 3.7-flash); don't tighten it.
+          generationConfig: {
+            temperature: 0.2,
+            thinkingConfig: { thinkingLevel: "low" },
+            maxOutputTokens: 4096,
+          },
         }),
       }
     );
@@ -1294,8 +1333,24 @@ export async function POST(req: NextRequest) {
   }
 
   // The caller's own token is forwarded to every backend read, so the
-  // assistant can never surface a row this user couldn't already open.
+  // assistant can never surface a row this user couldn't already open — which
+  // only holds if there IS one. Answering an unauthenticated question used to
+  // fall back to a hardcoded admin login inside `backend.ts`, so the guarantee
+  // was decorative; the gate is what makes it real. Checked after the image
+  // branch above, which reads no workshop data and needs no identity.
   const authorization = req.headers.get("authorization");
+  if (!authorization?.startsWith("Bearer ")) {
+    // 401 rather than a 200 degradation, because unlike a spent quota this is a
+    // refusal to act, and the browser/proxy layers should be able to see it as
+    // one. The envelope is still the normal shape so the panel can explain it.
+    return NextResponse.json(
+      {
+        filters: plainSearch(query),
+        degraded: { reason: "notSignedIn" } satisfies AiSearchDegraded,
+      },
+      { status: 401 }
+    );
+  }
 
   let usersPromise: Promise<UserRecord[]> | null = null;
   const ctx: ToolContext = {
@@ -1324,9 +1379,12 @@ export async function POST(req: NextRequest) {
       };
     }
   }
-  if (!activeUser && users.length > 0) {
-    activeUser = users.find((u) => u.userName.toLowerCase() === "admin") || users[0];
-  }
+  // No guessing past this point. This used to fall back to the `admin` account
+  // (or simply the first row of the directory) when the token's claims didn't
+  // match anyone, so "who am I?" could answer with a stranger's name and roles
+  // — stated with the same confidence as a real lookup. An unidentifiable
+  // caller now gets no identity block at all, and the model says it doesn't
+  // know rather than naming the wrong person.
 
   const userContextPrompt = activeUser
     ? `\n\nCURRENT LOGGED-IN USER IDENTITY:
@@ -1336,7 +1394,9 @@ export async function POST(req: NextRequest) {
 - Roles: ${activeUser.roles.join(", ") || "User"}
 
 When the user asks "who am I", "what is my name", "what is my username", "តើខ្ញុំមានឈ្មោះអ្វី", "ខ្ញុំមាន User ជាអ្វី", or similar questions, answer them directly using this identity.`
-    : "";
+    : `\n\nCURRENT LOGGED-IN USER IDENTITY: could not be resolved from this session's token.
+
+If the user asks who they are, say plainly that you cannot confirm which account they are signed in as, and suggest they check the profile menu in the header. Do not name a user, a role or an account from the directory as if it were theirs — a confident wrong name is worse than admitting you cannot tell.`;
 
   const effectiveSystemPrompt = `${SYSTEM_PROMPT}${userContextPrompt}`;
 

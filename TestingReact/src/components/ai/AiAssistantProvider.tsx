@@ -182,7 +182,11 @@ export function AiAssistantProvider({ children }: { children: React.ReactNode })
             }),
             signal: controller.signal,
           });
-          if (!res.ok) throw new Error(`HTTP ${res.status}`);
+          // 401 is the one non-OK status that carries a real explanation: the
+          // route refuses to read the workshop's data without the caller's own
+          // token. Throwing it into the generic catch would tell the user the
+          // AI is broken, when what they need to do is sign in again.
+          if (!res.ok && res.status !== 401) throw new Error(`HTTP ${res.status}`);
           const data = await res.json();
 
           const filters = data.filters as SmartQueryResult;

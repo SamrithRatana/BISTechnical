@@ -245,3 +245,102 @@ Reference implementation is the separate `aura-soft-ui` demo app (port 3001).
   `activeSessions` from `/api/system-activity`.
 - **Flex items holding wide content need `min-w-0`**, or `overflow-x-auto` on
   an inner scroller is ignored and the whole document scrolls sideways.
+
+# AI Assistant — Gemini audit (2026-08-17)
+
+Audit of the one Gemini integration, `TestingReact/src/app/api/ai-search/`.
+Route-level detail lives in `TestingReact/src/app/CLAUDE.md`; not repeated here.
+
+## What was already right (don't "fix" it again)
+
+- **One integration, server-side only.** Nothing in `./src` (.NET) touches
+  Gemini; nothing reaches the browser bundle. The key is `GEMINI_API_KEY` with
+  no `NEXT_PUBLIC_` prefix, so Next cannot inline it.
+- **The model reads the data; the frontend never supplies it.** The client
+  posts `{ query, model?, imageModel?, history? }` and nothing else — no rows,
+  no filtered client state. Tools in `tools.ts` execute real `no-store` reads
+  against the ASP.NET services, and `count_tickets` uses the backend's own
+  `totalCount` rather than counting a page.
+
+## What was fixed, and why
+
+- **Hardcoded admin credentials removed** (`backend.ts`). `getJson` fell back
+  to a committed `admin` password whenever the caller had no token or a backend
+  returned 401 — so an unauthenticated POST was answered from admin-scoped
+  rows, and the per-user visibility guarantee was decorative. `POST` now 401s
+  without a bearer token (`degraded: "notSignedIn"`, new i18n key
+  `header.aiSignedOut` in en + km). **The password is still in git history
+  (commit `093d8f4`) — rotate it.**
+- **Identity no longer guessed.** `activeUser` fell back to the `admin` account
+  or `users[0]` when the token matched nobody, so "who am I?" could confidently
+  name a stranger. Unresolvable callers now get an explicit "say you can't
+  tell" instruction instead of an identity block.
+- **`GEMINI_MODELS` reordered and pruned.** The file's comment claimed
+  "strongest first, 3.7-flash leads, lite models near the end"; the array had
+  three lite models in slots 1–3 and `3.7-flash` seventh. Every question was
+  being answered by `gemini-3.1-flash-lite` — a *deprecated* model — at the
+  bottom of the quality range. Now genuinely strongest-first.
+- **`thinkingLevel: "low"` added** to `generationConfig`. Measured 6.7s → 1.8s
+  on `gemini-3.5-flash` for an identical tool-calling request, with no
+  correctness cost for a workload that is "pick a tool, read rows, summarise".
+
+## Verified against the live API, not from memory (2026-08-17)
+
+- **Both Pro entries had no free tier at all** — `gemini-3.1-pro-preview` and
+  `gemini-pro-latest` (which resolves to `gemini-3.1-pro`) answer 429 in ~0.5s
+  on an unbilled key, every time. They were the two strongest-looking entries
+  in the rotation and could never once have produced an answer. Removed.
+- **`gemini-3.6-flash` is 21–45s per round** — it works, but under
+  `AGENT_BUDGET_MS` (50s) it can only ever finish a single-tool question. Kept
+  last for its separate allowance, never in the fast path.
+- `gemini-3.1-flash-lite-preview` is listed as shut down but **still answers
+  today** — which is exactly how a dead entry survives a review. Removed.
+- `gemini-2.5-flash` / `-flash-lite` now 404 ("no longer available to new
+  users"). Every model carries a 1,048,576-token input window.
+- **The free-tier rate-limit table is no longer published** — `/rate-limits`
+  defers to AI Studio. The "20/day per model" figure in `route.ts` is folklore;
+  treat it as an estimate, not a fact.
+
+## Known issues left unresolved
+
+- **The admin password is in git history.** Removing it from the working tree
+  does not remove it from `git log`, and the repo is on GitHub. Rotating the
+  account is the only real fix; that is an ops action, not a code change.
+- **`grounded: true` does not mean "verified against data"** — it means the
+  model answered rather than falling back to keyword search. A greeting is
+  `grounded: true` having run zero tools. Deliberately not changed: the panel
+  keys "show the answer text" off this flag, so tying it to tool execution
+  would blank out every legitimate general answer.
+- **`gemini-2.5-flash-image` shuts down 2026-10-02** (in `image.ts`'s
+  `IMAGE_MODELS`). Not urgent — every image model is paid-only, so the free
+  install answers pictures via Pollinations anyway.
+- **The image path is not behind the auth gate**, by design: it reads no
+  workshop data and has a keyless fallback, so gating it would remove the only
+  thing an unconfigured install can still do.
+
+## Conventions to keep
+
+- **Never add a Gemini model from memory.** Probe it first — 404 means retired
+  for that project, 429 means it exists and the allowance is spent, and *200
+  does not mean supported* (a shut-down model can still answer). The measured
+  latencies live in the `GEMINI_MODELS` header comment; re-measure rather than
+  trusting them.
+- **Check free-tier availability separately from existence.** `ListModels`
+  happily returns models the free tier will never serve. `ai.google.dev/pricing`
+  is the source for "Free Tier: Not available"; a 429 in ~0.5s on a cold key is
+  the live tell.
+- **A comment describing intent is not the code.** The model ordering was
+  documented correctly and implemented backwards for long enough that the
+  comment was quoted as evidence. Read the array.
+- **The assistant answers with the caller's token or not at all.** No service
+  account, no admin fallback, no "just for dev" shortcut — that is precisely
+  what was there before and it silently defeated the whole design.
+- **A failed lookup must reach the model as an error, never as an empty
+  result.** `{ items: [] }` reads as "there is nothing there" and gets
+  confidently reported as zero; `runTool`'s error string makes it say the
+  system was unreachable instead.
+- **`NEXT_PUBLIC_TECHNICAL_API_URL` points at `http://localhost:8000` in
+  `.env.local`** — the local .NET API. With it not running, every ticket/parts
+  tool fails and the assistant correctly says "unreachable". That is a local
+  config state, not a regression; start the API or override the var to the
+  remote host when testing the assistant.

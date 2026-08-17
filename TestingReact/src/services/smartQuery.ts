@@ -91,6 +91,12 @@ export interface SmartQueryDegraded {
     | "quotaExceeded"
     | "unavailable"
     | "notConfigured"
+    /**
+     * No usable session token. The assistant reads every row with the caller's
+     * own credentials, so it declines rather than answering from some other
+     * account's view of the data.
+     */
+    | "notSignedIn"
     /** An image request specifically — the picture models, not the text ones. */
     | "imageQuotaExceeded"
     /**

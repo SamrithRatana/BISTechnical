@@ -128,6 +128,12 @@ const en = {
   "header.aiQuotaWait": "AI daily limit reached — try again in {time}. Showing a normal search instead.",
   /** Same, when the provider didn't say how long the wait is. */
   "header.aiQuotaUnknown": "AI daily limit reached — showing a normal search instead. Try again later.",
+  /**
+   * The assistant reads the system with the signed-in user's own token, so it
+   * cannot answer without one. Distinct from `aiFailed`: this one the user can
+   * actually fix, by signing in again.
+   */
+  "header.aiSignedOut": "Your session has expired — sign in again to ask the assistant.",
   "header.aiUnderstood": "Understood as:",
   "header.aiClear": "Clear AI filters",
   /** Right-side assistant panel. */
@@ -913,6 +919,7 @@ const km: Record<TranslationKey, string> = {
   "header.aiFailed": "AI មិនអាចយល់បានទេ — កំពុងស្វែងរកធម្មតាជំនួស។",
   "header.aiQuotaWait": "AI ប្រើអស់កូតាប្រចាំថ្ងៃហើយ — សូមព្យាយាមម្តងទៀតក្នុងរយៈពេល {time}។ កំពុងស្វែងរកធម្មតាជំនួស។",
   "header.aiQuotaUnknown": "AI ប្រើអស់កូតាប្រចាំថ្ងៃហើយ — កំពុងស្វែងរកធម្មតាជំនួស។ សូមព្យាយាមម្តងទៀតពេលក្រោយ។",
+  "header.aiSignedOut": "សម័យប្រើប្រាស់របស់អ្នកបានផុតកំណត់ — សូមចូលប្រើម្តងទៀត ដើម្បីសួរ AI។",
   "header.aiUnderstood": "យល់ថា៖",
   "header.aiClear": "សម្អាតតម្រង AI",
   "ai.panelTitle": "ជំនួយការ AI",

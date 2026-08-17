@@ -155,10 +155,21 @@ Next.js App Router tree for a repair/service-item workflow tracker (item intake,
   **Nothing in this path submits** — every id resolves to a handler that opens
   or fills and stops, so save/edit/delete remain the user's click. `MAX_ACTIONS`
   caps one reply at 6 steps.
+- **Requires a signed-in caller.** `POST` without an `Authorization: Bearer`
+  header returns **401** with `degraded: "notSignedIn"` and no data. It reads
+  every row with the caller's own token, so there is nothing to answer with
+  otherwise — see the `backend.ts` note below for what this replaced.
 - Provider: Gemini (`GEMINI_API_KEY`) first, falling through `GEMINI_MODELS` on
   429/503/404; Anthropic (`ANTHROPIC_API_KEY`) if no Gemini key. With neither,
   and past the `AGENT_BUDGET_MS` wall-clock budget, it degrades to a plain
   keyword search (`grounded: false`) instead of erroring.
+- `GEMINI_MODELS` is ordered strongest-first and is **free-tier only** —
+  `gemini-3.7-flash` leads, `gemini-3.6-flash` is last (measured 21–45s per
+  round). Both Pro entries were removed: Pro has no free tier at all and
+  answered 429 every time. `generationConfig` sets
+  `thinkingLevel: "low"` — the single biggest speed lever here (6.7s → 1.8s on
+  `gemini-3.5-flash`). Verify a model with a live probe before adding it; the
+  header comment in `route.ts` carries the current measurements.
 - **Image generation** (`image.ts`): a message asking for a picture
   ("generate an image of…", "draw a logo for…", "ជួយបង្កើតរូបភាព…") is detected
   by keyword in `POST` and answered by Google's Nano Banana models **instead of**
@@ -198,6 +209,17 @@ Next.js App Router tree for a repair/service-item workflow tracker (item intake,
   `/api/proxy/*` — a relative URL has no meaning in a route handler. The
   caller's `Authorization` header is forwarded to every read, so the assistant
   can only surface rows that user could already open. Read-only by design.
+  - That guarantee is new. `getJson` used to fall back to `getSystemAdminToken()`
+    — a hardcoded `admin` login **committed to git** — whenever the caller had
+    no token or a backend answered 401, so an unauthenticated question was
+    answered from admin-scoped rows. Both the fallback and the credential are
+    gone; a missing token now throws before the fetch, and `runTool` hands the
+    model "this lookup failed" rather than an empty page that reads as "there
+    is nothing there". **The password is still in git history — rotate it.**
+  - Likewise `activeUser` no longer falls back to the `admin` account (or
+    `users[0]`) when the token's claims match nobody. An unidentifiable caller
+    gets an explicit "identity unknown" instruction in the system prompt, so
+    "who am I?" answers *I can't tell* instead of naming a stranger.
 
 ### `GET /api/events` — Server-Sent Events stream
 

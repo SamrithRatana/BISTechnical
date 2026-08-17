@@ -363,11 +363,13 @@ function Bubble({ message, quotaWait }: { message: ChatMessage; quotaWait: numbe
             <p className="flex items-start gap-1.5 mt-1.5 text-[11px] text-warning-fg ">
               <AlertCircle className="w-3.5 h-3.5 mt-0.5 shrink-0" />
               <span>
-                {message.degraded.reason !== "quotaExceeded"
-                  ? t("header.aiFailed")
-                  : quotaWait
-                    ? t("header.aiQuotaWait", { time: formatWait(quotaWait) })
-                    : t("header.aiQuotaUnknown")}
+                {message.degraded.reason === "notSignedIn"
+                  ? t("header.aiSignedOut")
+                  : message.degraded.reason !== "quotaExceeded"
+                    ? t("header.aiFailed")
+                    : quotaWait
+                      ? t("header.aiQuotaWait", { time: formatWait(quotaWait) })
+                      : t("header.aiQuotaUnknown")}
               </span>
             </p>
           )}

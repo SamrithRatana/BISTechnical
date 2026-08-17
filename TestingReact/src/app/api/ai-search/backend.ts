@@ -77,36 +77,6 @@ function day(row: Row, ...keys: string[]): string | undefined {
   return v ? v.slice(0, 10) : undefined;
 }
 
-let systemTokenCache: { token: string; expiresAt: number } | null = null;
-
-export async function getSystemAdminToken(): Promise<string | null> {
-  if (systemTokenCache && Date.now() < systemTokenCache.expiresAt) {
-    return systemTokenCache.token;
-  }
-  try {
-    const res = await fetch(`${JWT_API_BASE}/api/Auth/login`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ userName: "admin", password: "R3thanasmjx#" }),
-    });
-    if (res.ok) {
-      const data = (await res.json()) as Row;
-      const token = (data.token ?? data.Token ?? data.jwtToken) as string | undefined;
-      if (token) {
-        const authHeader = `Bearer ${token}`;
-        systemTokenCache = {
-          token: authHeader,
-          expiresAt: Date.now() + 30 * 60 * 1000,
-        };
-        return authHeader;
-      }
-    }
-  } catch (e) {
-    console.warn("[ai-search] System admin login failed:", e);
-  }
-  return null;
-}
-
 export function parseJwtUser(authorization: string | null): { id?: string; userName?: string; email?: string } | null {
   if (!authorization || !authorization.startsWith("Bearer ")) return null;
   const token = authorization.slice(7).trim();
@@ -133,29 +103,23 @@ async function getJson(
 ): Promise<Row> {
   if (!params.has("api-version")) params.set("api-version", API_VERSION);
 
-  const authHeader = authorization || (await getSystemAdminToken());
+  // The caller's own token, and nothing else. There used to be a fallback here
+  // that logged in as a hardcoded `admin` account whenever the caller had no
+  // token or the backend answered 401 — which meant an unauthenticated request
+  // to /api/ai-search was answered from admin-scoped rows, and the "the AI can
+  // only see what that user could see" guarantee at the top of this file was
+  // not true. The route now rejects unauthenticated callers outright, so a
+  // missing token is a bug upstream rather than something to paper over.
+  if (!authorization) throw new Error(`${path} not read: no caller credentials`);
 
-  const headers: Record<string, string> = { Accept: "application/json" };
-  if (authHeader) headers.Authorization = authHeader;
-
-  let res = await fetch(`${base}/api/${path}?${params.toString()}`, {
-    headers,
+  const res = await fetch(`${base}/api/${path}?${params.toString()}`, {
+    headers: { Accept: "application/json", Authorization: authorization },
     cache: "no-store",
     signal,
   });
 
-  if (res.status === 401) {
-    const sysToken = await getSystemAdminToken();
-    if (sysToken && sysToken !== authHeader) {
-      headers.Authorization = sysToken;
-      res = await fetch(`${base}/api/${path}?${params.toString()}`, {
-        headers,
-        cache: "no-store",
-        signal,
-      });
-    }
-  }
-
+  // Surfaced verbatim so `runTool` can hand the model "this lookup failed"
+  // rather than an empty result set, which reads as "there is nothing there".
   if (!res.ok) throw new Error(`${path} returned ${res.status}`);
   return (await res.json()) as Row;
 }
