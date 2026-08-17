@@ -108,6 +108,12 @@ export interface SmartQueryDegraded {
     | "imageUnavailable";
   /** Seconds until the provider will accept requests again, when it says. */
   retryAfterSeconds?: number;
+  /**
+   * `"day"` means the free tier's daily allowance is gone until it rolls over
+   * (Pacific midnight), NOT the few seconds the provider's own `retryDelay`
+   * claims. `"shortTerm"` is a real, short wait worth counting down.
+   */
+  quotaScope?: "day" | "shortTerm";
 }
 
 /** Offline fallback: search for exactly what the user typed. */

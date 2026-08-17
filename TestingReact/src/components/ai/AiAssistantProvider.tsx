@@ -212,8 +212,12 @@ export function AiAssistantProvider({ children }: { children: React.ReactNode })
           // image *billing* reason deliberately does not — there is no wait
           // that ends it, so a ticking clock would promise one that never
           // arrives.
+          // A *daily* exhaustion deliberately gets no countdown: it is hours
+          // away, and a second-by-second tick toward tomorrow morning reads as
+          // a bug. The bubble says "resets tomorrow" instead.
           setQuotaWait(
-            degraded?.reason === "quotaExceeded" || degraded?.reason === "imageQuotaExceeded"
+            (degraded?.reason === "quotaExceeded" && degraded.quotaScope !== "day") ||
+              degraded?.reason === "imageQuotaExceeded"
               ? degraded.retryAfterSeconds ?? null
               : null
           );

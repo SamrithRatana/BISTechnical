@@ -160,6 +160,14 @@ const ANTHROPIC_MODEL = "claude-opus-5";
  * globally the moment any one key exhausted it, throwing away exactly the
  * headroom the extra keys were added for.
  *
+ * **Per PROJECT, though — not per key.** Confirmed from a live 429 on this
+ * install: `quotaId: "GenerateRequestsPerDayPerProjectPerModel-FreeTier"`,
+ * `quotaValue: 20`. Two keys minted inside the *same* Google Cloud project
+ * share one 20-a-day allowance and buy nothing at all; only keys belonging to
+ * separate projects add headroom. Anyone adding a second key to stretch the
+ * quota has to check which project it came from, or they have added a comma
+ * and no capacity.
+ *
  * `keyIndex` is used rather than the key itself so no credential ever reaches a
  * map key, a log line, or an error message.
  */
@@ -258,7 +266,12 @@ function noteRetired(keyIndex: number, model: string) {
  * model every 30 seconds forever. Doubling per strike finds the right interval
  * without needing to tell the two kinds of limit apart.
  */
-function noteRateLimit(keyIndex: number, model: string, quotaBucket?: string) {
+function noteRateLimit(
+  keyIndex: number,
+  model: string,
+  quotaBucket?: string,
+  quotaScope?: QuotaScope
+) {
   // An alias and its target share one allowance, so both are sidelined together
   // — otherwise the rotation immediately retries the same exhausted bucket
   // under its other name and eats a guaranteed second 429.
@@ -278,11 +291,17 @@ function noteRateLimit(keyIndex: number, model: string, quotaBucket?: string) {
     if (!GEMINI_MODELS.includes(name)) continue;
     const id = slot(keyIndex, name);
     const strikes = (modelCooldowns.get(id)?.strikes ?? 0) + 1;
-    const backoff = COOLDOWN_MIN_MS * 2 ** (strikes - 1);
-    modelCooldowns.set(id, {
-      until: Date.now() + Math.min(backoff, COOLDOWN_MAX_MS),
-      strikes,
-    });
+    // A spent *daily* allowance is not worth re-probing on a doubling
+    // backoff — it will 429 every time until the Pacific day rolls over. The
+    // old 30s-and-double schedule meant a question asked late in the day
+    // walked the whole list of already-dead models, burning a round-trip on
+    // each inside a 50s budget, before reaching one that could answer.
+    // Parking them until the reset makes the rotation skip them outright.
+    const backoff =
+      quotaScope === "day"
+        ? secondsUntilDailyQuotaReset() * 1000
+        : Math.min(COOLDOWN_MIN_MS * 2 ** (strikes - 1), COOLDOWN_MAX_MS);
+    modelCooldowns.set(id, { until: Date.now() + backoff, strikes });
   }
 }
 
@@ -878,6 +897,12 @@ export interface AiSearchDegraded {
     | "imageUnavailable";
   /** Seconds until the provider says it will accept requests again. */
   retryAfterSeconds?: number;
+  /**
+   * Whether an exhausted quota resets tomorrow or shortly. The UI wording
+   * differs completely: a short wait is worth counting down, a daily one has
+   * to say "tomorrow" or it reads as a 20-second inconvenience.
+   */
+  quotaScope?: "day" | "shortTerm";
 }
 
 /** Carries the provider's HTTP status and retry hint up to the fallback logic. */
@@ -887,10 +912,58 @@ class ProviderError extends Error {
     readonly status: number,
     readonly retryAfterSeconds?: number,
     /** The model the exhausted quota belongs to, which may be an alias target. */
-    readonly quotaBucket?: string
+    readonly quotaBucket?: string,
+    /** Whether the exhausted allowance resets tomorrow or in a moment. */
+    readonly quotaScope?: QuotaScope
   ) {
     super(message);
   }
+}
+
+/**
+ * Which allowance a 429 exhausted.
+ *
+ * This matters more than it looks. Google's free tier meters *both* a
+ * per-minute and a per-day limit, and the 429 for them is identical apart from
+ * the `quotaId` — while `retryDelay` is a small number of seconds in **both**
+ * cases. Taking that delay at face value tells a user whose daily allowance is
+ * gone until midnight to "try again in 9s", which is the bug in the screenshot:
+ * a 23-second countdown under the words "daily limit reached".
+ */
+type QuotaScope = "day" | "shortTerm";
+
+/**
+ * Reads the scope out of the quota violation's `quotaId`, which spells it in
+ * the name — verified against a live 429 on this project:
+ *
+ *   quotaId    = "GenerateRequestsPerDayPerProjectPerModel-FreeTier"
+ *   quotaValue = 20
+ *   retryDelay = "9s"        <- for an allowance that resets TOMORROW
+ *
+ * Defaults to `shortTerm` when nothing says otherwise: under-promising a wait
+ * is recoverable, telling someone to come back tomorrow when the real wait was
+ * nine seconds is not.
+ */
+function parseQuotaScope(body: string): QuotaScope | undefined {
+  const match = body.match(/"quotaId"\s*:\s*"([^"]+)"/);
+  if (!match) return undefined;
+  return /PerDay/i.test(match[1]) ? "day" : "shortTerm";
+}
+
+/**
+ * Seconds until the free tier's daily counters roll over.
+ *
+ * Google resets them on a **Pacific-time** day boundary, not the caller's
+ * local midnight — Phnom Penh is ~14-15 hours ahead, so a local "tomorrow"
+ * would be badly wrong in either direction depending on the hour. Computed
+ * from the actual America/Los_Angeles wall clock rather than a fixed offset,
+ * because that zone observes DST and a hardcoded -8 is wrong half the year.
+ */
+function secondsUntilDailyQuotaReset(now = new Date()): number {
+  const pacificNow = new Date(now.toLocaleString("en-US", { timeZone: "America/Los_Angeles" }));
+  const midnight = new Date(pacificNow);
+  midnight.setHours(24, 0, 0, 0);
+  return Math.max(Math.ceil((midnight.getTime() - pacificNow.getTime()) / 1000), 60);
 }
 
 /**
@@ -1132,13 +1205,34 @@ async function runGeminiAgent(
         `Gemini ${model} returned ${res.status}: ${body}`,
         res.status,
         parseRetryDelay(body, res.headers),
-        parseQuotaBucket(body)
+        parseQuotaBucket(body),
+        parseQuotaScope(body)
       );
     }
 
     const data = (await res.json()) as {
       candidates?: Array<{ content?: { parts?: GeminiPart[] } }>;
+      usageMetadata?: {
+        promptTokenCount?: number;
+        candidatesTokenCount?: number;
+        thoughtsTokenCount?: number;
+        totalTokenCount?: number;
+      };
     };
+
+    // The free tier meters 20 *requests* per model per day, and every round of
+    // this loop is one of them — so a question needing two tool calls costs
+    // three, not one. That is the whole reason the allowance disappears in a
+    // handful of chat messages, and it is invisible without a line like this.
+    const usage = data.usageMetadata;
+    if (usage) {
+      console.info(
+        `[ai-search] ${model} round ${round + 1}: ${usage.promptTokenCount ?? "?"} in, ` +
+          `${usage.candidatesTokenCount ?? "?"} out, ${usage.thoughtsTokenCount ?? 0} thinking ` +
+          `(${usage.totalTokenCount ?? "?"} total) — 1 of 20 daily requests for this model`
+      );
+    }
+
     const parts = data.candidates?.[0]?.content?.parts ?? [];
     const calls = parts.filter((p): p is GeminiPart & { functionCall: NonNullable<GeminiPart["functionCall"]> } =>
       Boolean(p.functionCall)
@@ -1416,14 +1510,23 @@ If the user asks who they are, say plainly that you cannot confirm which account
   let degraded: AiSearchDegraded | undefined;
   const noteFailure = (err: unknown) => {
     if (err instanceof ProviderError && err.status === 429) {
-      const seconds = err.retryAfterSeconds;
+      // For a daily allowance Google's `retryDelay` is a handful of seconds
+      // for a wait that really lasts until the Pacific midnight, so the
+      // provider's own number is discarded rather than shown. That mismatch is
+      // what put "try again in 23s" under the words "daily limit reached".
+      const daily = err.quotaScope === "day";
+      const seconds = daily ? secondsUntilDailyQuotaReset() : err.retryAfterSeconds;
       // Keep the longest wait seen: every model must clear before the
       // assistant can run again, so the shortest one would be a false promise.
-      if (
-        degraded?.reason !== "quotaExceeded" ||
-        (seconds ?? 0) > (degraded.retryAfterSeconds ?? 0)
-      ) {
-        degraded = { reason: "quotaExceeded", retryAfterSeconds: seconds };
+      // A daily exhaustion always outranks a short-term one for the same
+      // reason — it is the one that actually has to elapse.
+      const longer = (seconds ?? 0) > (degraded?.retryAfterSeconds ?? 0);
+      if (degraded?.reason !== "quotaExceeded" || daily || longer) {
+        degraded = {
+          reason: "quotaExceeded",
+          retryAfterSeconds: seconds,
+          quotaScope: daily ? "day" : "shortTerm",
+        };
       }
     } else if (!degraded) {
       degraded = { reason: "unavailable" };
@@ -1488,7 +1591,8 @@ If the user asks who they are, say plainly that you cannot confirm which account
         } catch (err) {
           console.warn(`[ai-search] ${model} failed on key #${keyIndex + 1}, trying next:`, err);
           if (err instanceof ProviderError) {
-            if (err.status === 429) noteRateLimit(keyIndex, model, err.quotaBucket);
+            if (err.status === 429)
+              noteRateLimit(keyIndex, model, err.quotaBucket, err.quotaScope);
             // 404 is permanent for this project, unlike a quota or busy signal.
             else if (err.status === 404) noteRetired(keyIndex, model);
           }

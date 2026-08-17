@@ -124,10 +124,17 @@ const en = {
   "header.aiHint": "Describe what you need, then press Enter",
   "header.aiThinking": "Understanding your question…",
   "header.aiFailed": "AI could not read that — showing a normal search instead.",
-  /** Free-tier daily quota is spent; {time} is a human wait like "3m 20s". */
-  "header.aiQuotaWait": "AI daily limit reached — try again in {time}. Showing a normal search instead.",
+  /**
+   * A SHORT wait — per-minute throttling; {time} is a human wait like "40s".
+   * Deliberately does not say "daily": the daily case has its own key below,
+   * because showing a 23-second countdown for an allowance that resets at
+   * midnight is a promise the app cannot keep.
+   */
+  "header.aiQuotaWait": "AI is busy — try again in {time}. Showing a normal search instead.",
   /** Same, when the provider didn't say how long the wait is. */
-  "header.aiQuotaUnknown": "AI daily limit reached — showing a normal search instead. Try again later.",
+  "header.aiQuotaUnknown": "AI is rate-limited — showing a normal search instead. Try again shortly.",
+  /** The free tier's per-day allowance is gone; it rolls over at Pacific midnight. */
+  "header.aiQuotaDaily": "AI daily limit reached — it resets tomorrow. Showing a normal search instead.",
   /**
    * The assistant reads the system with the signed-in user's own token, so it
    * cannot answer without one. Distinct from `aiFailed`: this one the user can
@@ -917,8 +924,9 @@ const km: Record<TranslationKey, string> = {
   "header.aiHint": "សរសេរអ្វីដែលអ្នកត្រូវការ រួចចុច Enter",
   "header.aiThinking": "កំពុងស្វែងយល់សំណួររបស់អ្នក…",
   "header.aiFailed": "AI មិនអាចយល់បានទេ — កំពុងស្វែងរកធម្មតាជំនួស។",
-  "header.aiQuotaWait": "AI ប្រើអស់កូតាប្រចាំថ្ងៃហើយ — សូមព្យាយាមម្តងទៀតក្នុងរយៈពេល {time}។ កំពុងស្វែងរកធម្មតាជំនួស។",
-  "header.aiQuotaUnknown": "AI ប្រើអស់កូតាប្រចាំថ្ងៃហើយ — កំពុងស្វែងរកធម្មតាជំនួស។ សូមព្យាយាមម្តងទៀតពេលក្រោយ។",
+  "header.aiQuotaWait": "AI កំពុងជាប់រវល់ — សូមព្យាយាមម្តងទៀតក្នុងរយៈពេល {time}។ កំពុងស្វែងរកធម្មតាជំនួស។",
+  "header.aiQuotaUnknown": "AI ត្រូវបានកំណត់ល្បឿន — កំពុងស្វែងរកធម្មតាជំនួស។ សូមព្យាយាមម្តងទៀតក្នុងពេលឆាប់ៗ។",
+  "header.aiQuotaDaily": "AI ប្រើអស់កូតាប្រចាំថ្ងៃហើយ — វានឹងកំណត់ឡើងវិញនៅថ្ងៃស្អែក។ កំពុងស្វែងរកធម្មតាជំនួស។",
   "header.aiSignedOut": "សម័យប្រើប្រាស់របស់អ្នកបានផុតកំណត់ — សូមចូលប្រើម្តងទៀត ដើម្បីសួរ AI។",
   "header.aiUnderstood": "យល់ថា៖",
   "header.aiClear": "សម្អាតតម្រង AI",

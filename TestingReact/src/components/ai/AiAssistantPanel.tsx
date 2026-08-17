@@ -367,9 +367,14 @@ function Bubble({ message, quotaWait }: { message: ChatMessage; quotaWait: numbe
                   ? t("header.aiSignedOut")
                   : message.degraded.reason !== "quotaExceeded"
                     ? t("header.aiFailed")
-                    : quotaWait
-                      ? t("header.aiQuotaWait", { time: formatWait(quotaWait) })
-                      : t("header.aiQuotaUnknown")}
+                    : // A spent daily allowance gets no countdown at all. It
+                      // reads as hours, and a ticking "23s" under it is the
+                      // provider's own retryDelay, which is wrong for this case.
+                      message.degraded.quotaScope === "day"
+                      ? t("header.aiQuotaDaily")
+                      : quotaWait
+                        ? t("header.aiQuotaWait", { time: formatWait(quotaWait) })
+                        : t("header.aiQuotaUnknown")}
               </span>
             </p>
           )}
