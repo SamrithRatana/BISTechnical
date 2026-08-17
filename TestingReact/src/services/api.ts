@@ -20,7 +20,7 @@ export type {
   CustomerItem,
   ItemModel,
   DashboardStats,
-  LoginResponse,
+  LoginResponse
 } from "./types";
 
 export { SERVICE_STATUSES_DB, SERVICE_LOCATIONS } from "./types";
@@ -32,7 +32,7 @@ import type {
   ItemModel,
   PaginatedResult,
   DashboardStats,
-  LoginResponse,
+  LoginResponse
 } from "./types";
 
 import { SERVICE_STATUSES_DB } from "./types";
@@ -41,7 +41,7 @@ import {
   MOCK_SERVICE_TICKETS,
   MOCK_SPARE_PARTS,
   MOCK_CUSTOMERS,
-  MOCK_ITEM_MODELS,
+  MOCK_ITEM_MODELS
 } from "./mockData";
 
 import { fetchUserMap, enrichTicketUsers } from "./userService";
@@ -105,23 +105,35 @@ function evictIfOverLimit(): void {
   }
 }
 
-/** Reads from memory or sessionStorage */
-export function getCached<T>(key: string): T | null {
-  const entry = cacheStore.get(key) as CacheEntry<T> | undefined;
-  if (entry) return entry.data;
-
-  // Try sessionStorage fallback for instant load across tab navigation
-  if (typeof window !== "undefined") {
-    try {
-      const raw = sessionStorage.getItem(`cache:${key}`);
-      if (raw) {
-        const parsed = JSON.parse(raw) as CacheEntry<T>;
-        cacheStore.set(key, parsed);
-        return parsed.data;
-      }
-    } catch { /* ignore storage errors */ }
+/**
+ * Reads a persisted entry out of sessionStorage into the memory map, expiry
+ * and all. Returns undefined when there is nothing stored (or storage is
+ * unavailable, e.g. during SSR or with cookies blocked).
+ */
+function readPersistedEntry<T>(key: string): CacheEntry<T> | undefined {
+  if (typeof window === "undefined") return undefined;
+  try {
+    const raw = sessionStorage.getItem(`cache:${key}`);
+    if (!raw) return undefined;
+    const parsed = JSON.parse(raw) as CacheEntry<T>;
+    cacheStore.set(key, parsed as CacheEntry<unknown>);
+    return parsed;
+  } catch {
+    return undefined; // corrupt JSON or storage disabled
   }
-  return null;
+}
+
+/**
+ * Reads from memory or sessionStorage.
+ *
+ * Deliberately returns stale data without checking expiry — callers use this
+ * for the instant first paint and then let `cachedFetch` revalidate behind it.
+ */
+export function getCached<T>(key: string): T | null {
+  const entry =
+    (cacheStore.get(key) as CacheEntry<T> | undefined) ??
+    readPersistedEntry<T>(key);
+  return entry ? entry.data : null;
 }
 
 /** Stores `data` under `key` with TTL and persists to sessionStorage */
@@ -129,7 +141,7 @@ export function setCached<T>(key: string, data: T, ttlMs = DEFAULT_TTL_MS): void
   const entry: CacheEntry<T> = {
     data,
     expiry: Date.now() + ttlMs,
-    timestamp: Date.now(),
+    timestamp: Date.now()
   };
   cacheStore.set(key, entry as CacheEntry<unknown>);
 
@@ -176,7 +188,16 @@ async function cachedFetch<T>(
   fetcher: () => Promise<T>,
   ttlMs = DEFAULT_TTL_MS
 ): Promise<T> {
-  const entry = cacheStore.get(key) as CacheEntry<T> | undefined;
+  // Seed from sessionStorage on a miss. The memory map starts empty after a
+  // full page reload (F5, or following a link back into the app), so without
+  // this the persisted copy was only ever read by callers that reached for
+  // `getCached` directly — every cachedFetch caller refetched from scratch and
+  // stared at a spinner, despite valid data sitting in sessionStorage. The
+  // stored entry keeps its original expiry, so this restores the cache rather
+  // than extending it.
+  const entry =
+    (cacheStore.get(key) as CacheEntry<T> | undefined) ??
+    readPersistedEntry<T>(key);
   const isExpired = !entry || Date.now() > entry.expiry;
 
   // If we have valid non-expired cached data, return instantly!
@@ -254,7 +275,7 @@ export async function loginUser(userName: string, password: string): Promise<Log
     const res = await fetch("/api/auth/login", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ userName, password }),
+      body: JSON.stringify({ userName, password })
     });
 
     const data = (await res.json()) as LoginResponse;
@@ -265,7 +286,7 @@ export async function loginUser(userName: string, password: string): Promise<Log
   } catch {
     return {
       isSuccess: false,
-      message: "Connection failed. Please check your internet or API service status.",
+      message: "Connection failed. Please check your internet or API service status."
     };
   }
 }
@@ -367,10 +388,16 @@ export async function updateServiceStatus(
       const res = await fetch(statusRequest.endpoint, {
         method: "POST",
         headers: getAuthHeaders(),
-        body: JSON.stringify(statusRequest.payload),
+        body: JSON.stringify(statusRequest.payload)
       });
       if (res.ok) {
-        console.log(`✅ Status updated to "${newStatus}" via ${statusRequest.endpoint}`);
+        // Development only. This fires on every status change a technician
+        // makes, so in production it was writing a line per action to the
+        // user's console for no diagnostic gain — the same reasoning that
+        // already gates the proxy route's per-request logging.
+        if (process.env.NODE_ENV !== "production") {
+          console.log(`✅ Status updated to "${newStatus}" via ${statusRequest.endpoint}`);
+        }
         return true;
       }
       const errText = await res.text().catch(() => "");
@@ -395,13 +422,13 @@ export async function updateServiceStatus(
   const updated: RepairServiceItem = {
     ...item,
     status: newStatus,
-    statusId: matched?.id ?? item.statusId,
+    statusId: matched?.id ?? item.statusId
   };
   try {
     const res = await fetch(`/api/proxy/technicalservices`, {
       method: "PUT",
       headers: getAuthHeaders(),
-      body: JSON.stringify(updated),
+      body: JSON.stringify(updated)
     });
     return res.ok;
   } catch (err: unknown) {
@@ -421,12 +448,12 @@ export async function deleteTechnicalService(id: string): Promise<boolean> {
   try {
     let res = await fetch(`/api/proxy/receiveitem/${id}`, {
       method: "DELETE",
-      headers: getAuthHeaders(),
+      headers: getAuthHeaders()
     });
     if (!res.ok) {
       res = await fetch(`/api/proxy/technicalservices/${id}`, {
         method: "DELETE",
-        headers: getAuthHeaders(),
+        headers: getAuthHeaders()
       });
     }
     return res.ok;
@@ -453,25 +480,89 @@ function parsePaginatedResponse<T>(
     totalCount: total,
     pageNumber,
     pageSize,
-    totalPages: Math.max(Math.ceil(total / pageSize), 1),
+    totalPages: Math.max(Math.ceil(total / pageSize), 1)
   };
 }
+
+/**
+ * Extra `/technicalservices/search` filters beyond status + free text.
+ *
+ * Keys must be real `ServiceSearchQuery` parameters — anything else is
+ * silently ignored by the backend, which looks identical to a filter that
+ * matched nothing. Currently used by the AI search to pass through the
+ * date window and free/charge distinction it extracted from the question.
+ */
+export interface ServiceSearchExtras {
+  fromDate?: string;
+  toDate?: string;
+  /** "Free" | "Charge" */
+  serviceType?: string;
+  /** "Company" | "CustomerSite" */
+  serviceLocation?: string;
+  /** Relative date window: "Today" | "Yesterday" | "LastWeek" | "LastMonth" */
+  dateFilter?: string;
+  useProcessDateFiltering?: boolean;
+  statusesForProcessFiltering?: string[];
+  userIds?: string[];
+  userFilterStatuses?: string[];
+}
+
+/**
+ * UI filter names that describe a *date window*, not a ticket status.
+ *
+ * The dashboard's "Today's Report" tile and its table both pass "Today" as the
+ * active filter, and that used to be forwarded as `status=Today`. No ticket
+ * status is named "Today", so the backend matched nothing and the dashboard
+ * showed an empty table and a 0 tile on every load. These map to the
+ * `dateFilter` parameter instead, which is what `ServiceSearchQuery.DateFilter`
+ * on the backend actually understands.
+ */
+const DATE_WINDOW_FILTERS: Record<string, string> = {
+  TODAY:     "Today",
+  YESTERDAY: "Yesterday",
+  LASTWEEK:  "LastWeek",
+  LASTMONTH: "LastMonth"
+};
 
 /** Fetches a single status's repair services (no caching — caller handles it). */
 async function fetchSingleStatusServices(
   pageNumber: number,
   pageSize: number,
   statusName: string,
-  searchTerm: string
+  searchTerm: string,
+  extras?: ServiceSearchExtras
 ): Promise<{ items: RepairServiceItem[]; totalCount: number }> {
   const params = new URLSearchParams({
     pageNumber: pageNumber.toString(),
     pageSize:   pageSize.toString(),
     sortBy:     "reportNo",
-    sortDescending: "true",
+    sortDescending: "true"
   });
-  if (statusName) params.set("status",     statusName);
+
+  // Only the first batch needs the total. The lists load by infinite scroll,
+  // and the backend was re-counting the entire filtered set on every scroll —
+  // a second full pass for a number that cannot have changed. `useInfiniteList`
+  // keeps the total it was given (it guards on a falsy value) and decides
+  // "end of list" from batch size, not from the count, so later batches can
+  // safely go without it. Same for `fetchAllMatches`, which only reads page 1's.
+  if (pageNumber > 1) params.set("includeTotalCount", "false");
+  if (statusName && statusName !== "All") params.set("status", statusName);
   if (searchTerm) params.set("searchTerm", searchTerm);
+  if (extras?.dateFilter)      params.set("dateFilter",      extras.dateFilter);
+  if (extras?.fromDate)        params.set("fromDate",        extras.fromDate);
+  if (extras?.toDate)          params.set("toDate",          extras.toDate);
+  if (extras?.serviceType)     params.set("serviceType",     extras.serviceType);
+  if (extras?.serviceLocation) params.set("serviceLocation", extras.serviceLocation);
+  if (extras?.useProcessDateFiltering) params.set("useProcessDateFiltering", "true");
+  if (extras?.statusesForProcessFiltering && extras.statusesForProcessFiltering.length > 0) {
+    extras.statusesForProcessFiltering.forEach((st) => params.append("statusesForProcessFiltering", st));
+  }
+  if (extras?.userIds && extras.userIds.length > 0) {
+    extras.userIds.forEach((u) => params.append("userIds", u));
+  }
+  if (extras?.userFilterStatuses && extras.userFilterStatuses.length > 0) {
+    extras.userFilterStatuses.forEach((st) => params.append("userFilterStatuses", st));
+  }
 
   const res = await fetch(
     `/api/proxy/technicalservices/search?${params.toString()}`,
@@ -526,7 +617,7 @@ export async function fetchAllMatches<T>(
     totalCount: first.totalCount,
     pageNumber: 1,
     pageSize: items.length,
-    totalPages: 1,
+    totalPages: 1
   };
 }
 
@@ -544,7 +635,7 @@ export async function fetchItemsInventory(
     try {
       const params = new URLSearchParams({
         pageNumber: pageNumber.toString(),
-        pageSize:   pageSize.toString(),
+        pageSize:   pageSize.toString()
       });
       if (searchTerm) params.set("searchTerm", searchTerm);
 
@@ -561,7 +652,7 @@ export async function fetchItemsInventory(
         id:           String(i.id ?? i.Id ?? ""),
         itemName:     String(i.itemName ?? i.ItemName ?? ""),
         serialNumber: String(i.serialNumber ?? i.SerialNumber ?? ""),
-        itemType:     String(i.itemType ?? i.ItemType ?? "N/A"),
+        itemType:     String(i.itemType ?? i.ItemType ?? "N/A")
       }));
       const total = (data.totalCount ?? data.TotalCount ?? items.length) as number;
       return { items, totalCount: total, pageNumber, pageSize, totalPages: Math.max(Math.ceil(total / pageSize), 1) };
@@ -579,7 +670,7 @@ export async function fetchItemsInventory(
         totalCount: filtered.length,
         pageNumber,
         pageSize,
-        totalPages: Math.ceil(filtered.length / pageSize),
+        totalPages: Math.ceil(filtered.length / pageSize)
       };
     }
   });
@@ -620,7 +711,7 @@ export async function fetchSparePartById(id: string): Promise<SparePartItem | nu
       quantity:     Number(p.quantity ?? p.Quantity ?? 0),
       defaultPrice: Number(p.defaultPrice ?? p.DefaultPrice ?? p.unitPrice ?? 0),
       description:  String(p.description ?? p.Description ?? ""),
-      status:       String(p.status ?? ""),
+      status:       String(p.status ?? "")
     };
   } catch (err: unknown) {
     console.error("Failed to fetch spare part by id:", err);
@@ -638,7 +729,7 @@ export async function fetchSparePartsInventory(
     try {
       const params = new URLSearchParams({
         pageNumber: pageNumber.toString(),
-        pageSize:   pageSize.toString(),
+        pageSize:   pageSize.toString()
       });
       if (searchTerm) params.set("searchTerm", searchTerm);
       const endpoint = searchTerm ? "/api/proxy/spareparts/search" : "/api/proxy/spareparts";
@@ -662,7 +753,7 @@ export async function fetchSparePartsInventory(
         quantity:     Number(p.quantity ?? p.Quantity ?? 0),
         defaultPrice: Number(p.defaultPrice ?? p.DefaultPrice ?? p.unitPrice ?? 0),
         description:  String(p.description ?? p.Description ?? ""),
-        status:       String(p.status ?? ""),
+        status:       String(p.status ?? "")
       }));
 
       const total = (data.totalCount ?? data.TotalCount ?? items.length) as number;
@@ -684,7 +775,7 @@ export async function fetchSparePartsInventory(
         totalCount: filtered.length,
         pageNumber,
         pageSize,
-        totalPages: Math.max(Math.ceil(filtered.length / pageSize), 1),
+        totalPages: Math.max(Math.ceil(filtered.length / pageSize), 1)
       };
     }
   });
@@ -704,12 +795,12 @@ export async function createSparePart(part: SparePartItem): Promise<boolean> {
       useFor:       part.useFor ?? "",
       pictureUrl:   part.pictureUrl ?? "",
       quantity:     part.quantity ?? 0,
-      defaultPrice: part.defaultPrice ?? 0,
+      defaultPrice: part.defaultPrice ?? 0
     };
     const res = await fetch("/api/proxy/spareparts", {
       method:  "POST",
       headers: getAuthHeaders(),
-      body:    JSON.stringify(payload),
+      body:    JSON.stringify(payload)
     });
     return res.ok;
   } catch (err: unknown) {
@@ -737,12 +828,12 @@ export async function updateSparePart(
       pictureUrl:   part.pictureUrl ?? "",
       quantity:     part.quantity ?? 0,
       defaultPrice: part.defaultPrice ?? 0,
-      performedBy,
+      performedBy
     };
     const res = await fetch("/api/proxy/spareparts", {
       method:  "PUT",
       headers: getAuthHeaders(),
-      body:    JSON.stringify(payload),
+      body:    JSON.stringify(payload)
     });
     return res.ok;
   } catch (err: unknown) {
@@ -760,7 +851,7 @@ export async function deleteSparePart(id: string): Promise<boolean> {
   try {
     const res = await fetch(`/api/proxy/spareparts/${id}`, {
       method:  "DELETE",
-      headers: getAuthHeaders(),
+      headers: getAuthHeaders()
     });
     return res.ok;
   } catch (err: unknown) {
@@ -784,7 +875,7 @@ export async function insertManualStockOut(
     const res = await fetch("/api/proxy/spareparts/manual-stockout", {
       method:  "POST",
       headers: getAuthHeaders(),
-      body:    JSON.stringify({ sparepartId, quantity, reason, performedBy }),
+      body:    JSON.stringify({ sparepartId, quantity, reason, performedBy })
     });
     return res.ok;
   } catch (err: unknown) {
@@ -808,12 +899,12 @@ export async function fetchCustomerCenter(
       const params = new URLSearchParams({
         service:    "customer",
         pageNumber: pageNumber.toString(),
-        pageSize:   pageSize.toString(),
+        pageSize:   pageSize.toString()
       });
       if (searchTerm) params.set("searchTerm", searchTerm);
 
       const res = await fetch(`/api/proxy/Customer?${params.toString()}`, {
-        headers: getAuthHeaders(),
+        headers: getAuthHeaders()
       });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = (await res.json()) as Record<string, unknown>;
@@ -826,7 +917,7 @@ export async function fetchCustomerCenter(
         phoneNumber:  String(c.phoneNumber ?? c.PhoneNumber ?? c.phone ?? "—"),
         address:      String(c.address ?? c.Address ?? "—"),
         customerType: String(c.customerType ?? c.CustomerType ?? "Corporate"),
-        isActive:     Boolean(c.isActive ?? true),
+        isActive:     Boolean(c.isActive ?? true)
       }));
 
       const total = (data.totalRecords ?? data.TotalRecords ?? data.totalCount ?? items.length) as number;
@@ -835,7 +926,7 @@ export async function fetchCustomerCenter(
         totalCount: total,
         pageNumber,
         pageSize,
-        totalPages: Math.max(Math.ceil(total / pageSize), 1),
+        totalPages: Math.max(Math.ceil(total / pageSize), 1)
       };
     } catch (err: unknown) {
       console.error("Failed to fetch customer center:", err);
@@ -844,7 +935,7 @@ export async function fetchCustomerCenter(
         totalCount: MOCK_CUSTOMERS.length,
         pageNumber,
         pageSize,
-        totalPages: Math.ceil(MOCK_CUSTOMERS.length / pageSize),
+        totalPages: Math.ceil(MOCK_CUSTOMERS.length / pageSize)
       };
     }
   });
@@ -860,7 +951,7 @@ export async function createCustomer(customer: Partial<CustomerItem>): Promise<b
     const res = await fetch("/api/proxy/Customer?service=customer", {
       method: "POST",
       headers: getAuthHeaders(),
-      body: JSON.stringify(customer),
+      body: JSON.stringify(customer)
     });
     return res.ok;
   } catch (err: unknown) {
@@ -879,7 +970,7 @@ export async function updateCustomer(id: string, customer: Partial<CustomerItem>
     const res = await fetch(`/api/proxy/Customer/${id}?service=customer`, {
       method: "PUT",
       headers: getAuthHeaders(),
-      body: JSON.stringify({ ...customer, id }),
+      body: JSON.stringify({ ...customer, id })
     });
     return res.ok;
   } catch (err: unknown) {
@@ -897,7 +988,7 @@ export async function deleteCustomer(id: string): Promise<boolean> {
   try {
     const res = await fetch(`/api/proxy/Customer/${id}?service=customer`, {
       method: "DELETE",
-      headers: getAuthHeaders(),
+      headers: getAuthHeaders()
     });
     return res.ok;
   } catch (err: unknown) {
@@ -915,19 +1006,53 @@ export async function fetchRepairServices(
   pageNumber = 1,
   pageSize   = 10,
   filter     = "All",
-  searchTerm = ""
+  searchTerm = "",
+  extras?: ServiceSearchExtras
 ): Promise<PaginatedResult<RepairServiceItem>> {
-  const cacheKey = `repairservices:${filter}:page${pageNumber}:size${pageSize}:search${searchTerm}`;
+  // `extras` is part of the cache key: without it, an AI-filtered query
+  // ("finished last week") would read back the unfiltered result cached
+  // under the same status + search term.
+  const extraKey = extras
+    ? `:from${extras.fromDate ?? ""}:to${extras.toDate ?? ""}:type${extras.serviceType ?? ""}`
+    : "";
+  const cacheKey = `repairservices:${filter}:page${pageNumber}:size${pageSize}:search${searchTerm}${extraKey}`;
 
   return cachedFetch(cacheKey, async () => {
     const filterUpper = filter.toUpperCase();
+
+    // "Today" and friends name a date window, not a status — send them as
+    // `dateFilter` with no status, otherwise the backend looks for a ticket
+    // status by that name and matches nothing. See DATE_WINDOW_FILTERS.
+    const dateWindow = DATE_WINDOW_FILTERS[filterUpper];
+    if (dateWindow) {
+      try {
+        const { items, totalCount } = await fetchSingleStatusServices(
+          pageNumber,
+          pageSize,
+          "",
+          searchTerm,
+          { ...extras, dateFilter: dateWindow }
+        );
+
+        const userMap = await fetchUserMap().catch(() => new Map());
+        return {
+          items:      items.map((item) => enrichTicketUsers(item, userMap)),
+          totalCount,
+          pageNumber,
+          pageSize,
+          totalPages: Math.max(Math.ceil(totalCount / pageSize), 1)
+        };
+      } catch (err: unknown) {
+        console.warn(`Date-window fetch (${dateWindow}) failed, using fallback:`, err);
+      }
+    }
 
     // Approve Repairing page merges three statuses (RepairItemList.razor)
     if (filterUpper === "REPAIRING" || filterUpper === "APPROVE REPAIRING") {
       try {
         const statuses = ["Sent Spareparts", "Inspection", "Sale Confirmed"];
         const results  = await Promise.all(
-          statuses.map((st) => fetchSingleStatusServices(pageNumber, pageSize, st, searchTerm))
+          statuses.map((st) => fetchSingleStatusServices(pageNumber, pageSize, st, searchTerm, extras))
         );
 
         // Deduplicate by ID and sort descending by reportNo
@@ -949,7 +1074,7 @@ export async function fetchRepairServices(
           totalCount: total,
           pageNumber,
           pageSize,
-          totalPages: Math.max(Math.ceil(total / pageSize), 1),
+          totalPages: Math.max(Math.ceil(total / pageSize), 1)
         };
       } catch (err: unknown) {
         console.warn("Multi-status fetch failed, using fallback:", err);
@@ -963,7 +1088,8 @@ export async function fetchRepairServices(
         pageNumber,
         pageSize,
         statusMap.name,
-        searchTerm
+        searchTerm,
+        extras
       );
 
       const userMap = await fetchUserMap().catch(() => new Map());
@@ -974,7 +1100,7 @@ export async function fetchRepairServices(
         totalCount,
         pageNumber,
         pageSize,
-        totalPages: Math.max(Math.ceil(totalCount / pageSize), 1),
+        totalPages: Math.max(Math.ceil(totalCount / pageSize), 1)
       };
     } catch {
       // Offline: filter + paginate mock data
@@ -1005,7 +1131,7 @@ export async function fetchRepairServices(
         totalCount: filtered.length,
         pageNumber,
         pageSize,
-        totalPages: Math.max(Math.ceil(filtered.length / pageSize), 1),
+        totalPages: Math.max(Math.ceil(filtered.length / pageSize), 1)
       };
     }
   });
@@ -1058,7 +1184,7 @@ export async function fetchApproveVerifyServices(
         totalCount: total,
         pageNumber,
         pageSize,
-        totalPages: Math.max(Math.ceil(total / pageSize), 1),
+        totalPages: Math.max(Math.ceil(total / pageSize), 1)
       };
     } catch (err: unknown) {
       console.warn("Approve Verify fetch failed, using fallback:", err);
@@ -1086,7 +1212,7 @@ export async function fetchApproveVerifyServices(
         totalCount: filtered.length,
         pageNumber,
         pageSize,
-        totalPages: Math.max(Math.ceil(filtered.length / pageSize), 1),
+        totalPages: Math.max(Math.ceil(filtered.length / pageSize), 1)
       };
     }
   });
@@ -1108,7 +1234,7 @@ export async function fetchServiceById(id: string): Promise<RepairServiceItem | 
   if (!id || id.startsWith("new-")) return null;
   try {
     const res = await fetch(`/api/proxy/technicalservices/${id}`, {
-      headers: getAuthHeaders(),
+      headers: getAuthHeaders()
     });
     if (!res.ok) return null;
     const data = (await res.json()) as RepairServiceItem;
@@ -1121,10 +1247,29 @@ export async function fetchServiceById(id: string): Promise<RepairServiceItem | 
   }
 }
 
+/** All-zero stats — what the tiles show when the backend can't be reached. */
+const EMPTY_DASHBOARD_STATS: DashboardStats = {
+  todayCount:             0,
+  receivedCount:          0,
+  waitingCustomerCount:   0,
+  waitingSpareCount:      0,
+  finishedCount:          0,
+  finishedThisMonthCount: 0
+};
+
 /**
- * Fetches dashboard statistics.
+ * Fetches every dashboard stat tile in one request.
  * Uses a shorter 1-minute TTL since stats are time-sensitive.
  * Calls `GET /api/proxy/technicalservices/dashboard-stats`.
+ *
+ * The tiles used to be derived client-side by running one full ticket search
+ * per tile with `pageSize=1` purely to read `totalCount` off each — four
+ * proxied round trips, four filtered scans of Services, to render four
+ * integers. The backend now answers all of them from a single grouped count.
+ *
+ * On failure this returns zeros rather than plausible-looking numbers: the
+ * previous stub (2 / 7 / 66 / 12 / 106) was indistinguishable from real data
+ * on screen, so an outage looked like a quiet workday.
  */
 export async function fetchDashboardStats(): Promise<DashboardStats> {
   return cachedFetch(
@@ -1137,14 +1282,9 @@ export async function fetchDashboardStats(): Promise<DashboardStats> {
         );
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         return (await res.json()) as DashboardStats;
-      } catch {
-        return {
-          todayCount:            2,
-          receivedCount:         7,
-          waitingCustomerCount:  66,
-          waitingSpareCount:     12,
-          finishedThisMonthCount: 106,
-        };
+      } catch (err: unknown) {
+        console.error("Failed to fetch dashboard stats:", err);
+        return EMPTY_DASHBOARD_STATS;
       }
     },
     60_000 // 1-minute TTL for dashboard stats
@@ -1167,7 +1307,7 @@ export async function createInspectItem(payload: {
     const res = await fetch('/api/proxy/inspectitem', {
       method:  'POST',
       headers: getAuthHeaders(),
-      body:    JSON.stringify(payload),
+      body:    JSON.stringify(payload)
     });
     return res.ok;
   } catch (err: unknown) {
@@ -1216,7 +1356,7 @@ export async function setFinishedRepair(payload: {
     const res = await fetch('/api/proxy/finishedrepair', {
       method:  'POST',
       headers: getAuthHeaders(),
-      body:    JSON.stringify(payload),
+      body:    JSON.stringify(payload)
     });
     return res.ok;
   } catch (err: unknown) {
@@ -1236,10 +1376,10 @@ export async function searchCustomers(searchTerm: string): Promise<CustomerItem[
       service:    'customer',
       searchTerm,
       pageNumber: '1',
-      pageSize:   '10',
+      pageSize:   '10'
     });
     const res = await fetch(`/api/proxy/customercenter/customers?${params}`, {
-      headers: getAuthHeaders(),
+      headers: getAuthHeaders()
     });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const data = (await res.json()) as Record<string, unknown>;
@@ -1278,8 +1418,8 @@ export async function createItem(
       body: JSON.stringify({
         itemName: trimmedName,
         serialNumber: finalSerial,
-        itemType: "Generate",
-      }),
+        itemType: "Generate"
+      })
     });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
 

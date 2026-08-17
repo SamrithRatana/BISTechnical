@@ -6,18 +6,18 @@ import ServiceTable from "@/components/ServiceTable";
 import { TabItem } from "@/components/StatusTabMenu";
 
 const INSPECTION_TABS: TabItem[] = [
-  { key: "Inspection", label: "វិនិច្ឆ័យរួចរាល់", color: "cyan" },
-  { key: "Awaiting Sparepart", label: "ផ្នែកជាងស្នើរគ្រឿងបន្លាស់", color: "blue" },
-  { key: "Awaiting Customer Confirm", label: "រង់ចាំ Confirm ពីអតិថិជន", color: "amber" },
-  { key: "Sale Confirmed", label: "រង់ចាំ Confirm ពីផ្នែកSale", color: "emerald" },
-  { key: "Sent Spareparts", label: "បានបញ្ជូនគ្រឿងបន្លាស់", color: "purple" },
+  { key: "Inspection", labelKey: "transition.inspectionDone", color: "cyan" },
+  { key: "Awaiting Sparepart", labelKey: "tab.techRequestSpare", color: "blue" },
+  { key: "Awaiting Customer Confirm", labelKey: "tab.awaitCustomerConfirm", color: "amber" },
+  { key: "Sale Confirmed", labelKey: "tab.awaitSaleConfirm", color: "emerald" },
+  { key: "Sent Spareparts", labelKey: "transition.sparesSent", color: "purple" },
 ];
 
 export default function InspectionPage() {
   const [activeTabKey, setActiveTabKey] = useState("Inspection");
 
   return (
-    <PageWrapper title="Inspection" subtitle="Technical inspection records and solutions breakdown">
+    <PageWrapper titleKey="nav.inspection" subtitleKey="sub.inspection">
       <ServiceTable
         activeFilter="Inspection"
         activeTabKey={activeTabKey}

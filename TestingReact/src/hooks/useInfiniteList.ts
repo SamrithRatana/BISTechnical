@@ -213,7 +213,11 @@ export function useInfiniteList<
     const head = results.flatMap((r) => r.items || []);
     // Keep rows past the refreshed head; dedupe drops any that moved up into it.
     setItems((prev) => dedupe([...head, ...prev.slice(pagesToRefresh * pageSize)]));
-    const total = results[results.length - 1]?.totalCount;
+    // Page 1 carries the total; later pages deliberately omit it (they ask the
+    // backend to skip the COUNT). Reading the *last* result therefore found no
+    // count once that optimisation landed, and the displayed total would stop
+    // updating on refresh even though a fresh one had just arrived in page 1.
+    const total = results.find((r) => r?.totalCount)?.totalCount;
     if (total) setTotalCount(total);
     setIsLoading(false);
   }, [disabled, loadedPages, pageSize, dedupe]);
@@ -244,6 +248,16 @@ export function useInfiniteList<
     limitReached,
     scrollRootRef,
     sentinelRef,
+    /**
+     * The scrolling container element itself, once attached.
+     *
+     * `scrollRootRef` is a callback ref, so callers have no way to reach the
+     * node — and row virtualization needs it, both to subscribe to scroll and
+     * to know the viewport height. Exposed as the state value rather than a
+     * ref object on purpose: it changes from `null` to the element on mount,
+     * and a consumer has to re-render at that moment to start windowing.
+     */
+    scrollRoot,
     refresh,
     loadMore,
     /** Escape hatches for optimistic local edits. */

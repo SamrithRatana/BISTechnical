@@ -6,19 +6,19 @@ import ServiceTable from "@/components/ServiceTable";
 import { TabItem } from "@/components/StatusTabMenu";
 
 const WAITING_CONFIRM_TABS: TabItem[] = [
-  { key: "Item Recieved", label: "ម៉ាស៊ីនទទួល", color: "slate" },
-  { key: "Inspection", label: "វិនិច្ឆ័យរួចរាល់", color: "cyan" },
-  { key: "Awaiting Sparepart", label: "ផ្នែកជាងស្នើរគ្រឿងបន្លាស់", color: "blue" },
-  { key: "Awaiting Customer Confirm", label: "រង់ចាំយល់ព្រមពីភ្ញៀវ", color: "amber" },
-  { key: "Sale Confirmed", label: "ផ្នែកទីផ្សារ Confirmed & រង់ចាំ 4 ទៅ 6", color: "emerald" },
-  { key: "Sent Spareparts", label: "បានបញ្ជូនគ្រឿងបន្លាស់", color: "purple" },
+  { key: "Item Recieved", labelKey: "status.received", color: "slate" },
+  { key: "Inspection", labelKey: "transition.inspectionDone", color: "cyan" },
+  { key: "Awaiting Sparepart", labelKey: "tab.techRequestSpare", color: "blue" },
+  { key: "Awaiting Customer Confirm", labelKey: "transition.awaitingCustomer", color: "amber" },
+  { key: "Sale Confirmed", labelKey: "tab.saleConfirmedWaiting", color: "emerald" },
+  { key: "Sent Spareparts", labelKey: "transition.sparesSent", color: "purple" },
 ];
 
 export default function WaitingConfirmPage() {
   const [activeTabKey, setActiveTabKey] = useState("Awaiting Customer Confirm");
 
   return (
-    <PageWrapper title="Set Waiting Customer Confirm" subtitle="Repairs pending customer approval and quotation acceptance">
+    <PageWrapper titleKey="nav.setWaitingCustomer" subtitleKey="sub.waitingConfirm">
       <ServiceTable
         activeFilter="Awaiting Customer Confirm"
         activeTabKey={activeTabKey}

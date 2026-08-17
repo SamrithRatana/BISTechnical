@@ -496,11 +496,24 @@ export interface ItemModel {
   itemType?: string;
 }
 
+/**
+ * The dashboard stat tiles, as returned by
+ * `GET /api/proxy/technicalservices/dashboard-stats` in a single round trip.
+ * Mirrors the C# `DashboardStats` record in
+ * `src/APIs/TechnicalService.API/Apis/PaginationModels.cs`.
+ */
 export interface DashboardStats {
+  /** Tickets whose serviceDate is today. */
   todayCount: number;
+  /** Tickets currently in status "Item Recieved" (the DB's spelling). */
   receivedCount: number;
+  /** Tickets currently in status "Awaiting Customer Confirm". */
   waitingCustomerCount: number;
+  /** Tickets currently in status "Awaiting Sparepart". */
   waitingSpareCount: number;
+  /** Tickets currently in status "Finished", all time. */
+  finishedCount: number;
+  /** Tickets whose finishedDate falls in the current calendar month. */
   finishedThisMonthCount: number;
 }
 

@@ -6,17 +6,17 @@ import ServiceTable from "@/components/ServiceTable";
 import { TabItem } from "@/components/StatusTabMenu";
 
 const APPROVE_REPAIR_TABS: TabItem[] = [
-  { key: "Repairing", label: "ទាំងអស់ (All Repairing Queue)", color: "cyan" },
-  { key: "Sent Spareparts", label: "បានបញ្ជូនគ្រឿងបន្លាស់", color: "purple" },
-  { key: "Inspection", label: "វិនិច្ឆ័យរួចរាល់", color: "blue" },
-  { key: "Sale Confirmed", label: "អាចជួសជុលបាន", color: "emerald" },
+  { key: "Repairing", labelKey: "tab.allRepairing", color: "cyan" },
+  { key: "Sent Spareparts", labelKey: "transition.sparesSent", color: "purple" },
+  { key: "Inspection", labelKey: "transition.inspectionDone", color: "blue" },
+  { key: "Sale Confirmed", labelKey: "transition.repairable", color: "emerald" },
 ];
 
 export default function ApproveRepairPage() {
   const [activeTabKey, setActiveTabKey] = useState("Repairing");
 
   return (
-    <PageWrapper title="Approve Repairing" subtitle="Active maintenance and repair queue for service engineers">
+    <PageWrapper titleKey="nav.approveRepairing" subtitleKey="sub.approveRepair">
       <ServiceTable
         activeFilter="Repairing"
         activeTabKey={activeTabKey}

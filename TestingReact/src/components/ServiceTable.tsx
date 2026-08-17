@@ -1,20 +1,25 @@
 "use client";
 
 import React, { useState, useCallback } from "react";
-import { Download, Eye, Edit3, Search, RefreshCw, Plus, Printer, Trash2, ShieldCheck } from "lucide-react";
+import { Download, Eye, Edit3, Search, RefreshCw, Plus, Printer, Trash2, ShieldCheck, Inbox } from "lucide-react";
 import toast from "react-hot-toast";
 import { fetchRepairServices, updateServiceStatus, deleteTechnicalService, RepairServiceItem, invalidateCachePrefix } from "@/services/api";
 import { getActionUserForStatus } from "@/services/types";
 import { useRealtimeTickets } from "@/hooks/useRealtimeTickets";
 import { useDebouncedValue } from "@/hooks/useDebouncedValue";
 import { useSearchQueryParam } from "@/hooks/useSearchQueryParam";
+import { useSearchAction } from "@/hooks/useSearchAction";
 import { useInfiniteList } from "@/hooks/useInfiniteList";
 import InfiniteScrollStatus from "./InfiniteScrollStatus";
+import { EmptyState, SkeletonRows } from "@/components/av";
 import ServiceDetailModal from "./ServiceDetailModal";
 import ApproveRepairDialog from "./ApproveRepairDialog";
 import HighlightText from "./HighlightText";
 import StatusTabMenu, { TabItem } from "./StatusTabMenu";
 import PrintPreviewSidebar from "./PrintPreviewSidebar";
+import { useActionHandler, type ActionValues } from "./ActionBus";
+import { useI18n } from "@/i18n/LanguageProvider";
+import { translatePriority, translateStatus } from "@/i18n/statusLabel";
 
 interface ServiceTableProps {
   activeFilter: string;
@@ -34,30 +39,30 @@ interface ServiceTableProps {
 const getStatusBadge = (status: string) => {
   const s = status?.toUpperCase() || "";
   if (s === "FINISHED")
-    return "bg-emerald-100 text-emerald-700 dark:bg-emerald-950/60 dark:text-emerald-300";
+    return "bg-success-soft text-success-fg ";
   if (s.includes("AWAITING CUSTOMER"))
-    return "bg-amber-100 text-amber-800 dark:bg-amber-950/60 dark:text-amber-300";
+    return "bg-warning-soft text-warning-fg ";
   if (s.includes("AWAITING SPAREPART") || s.includes("SENT SPAREPARTS"))
-    return "bg-blue-100 text-blue-700 dark:bg-blue-950/60 dark:text-blue-300";
+    return "bg-info-soft text-info-fg ";
   if (s.includes("THIRD-PARTY") || s.includes("THIRD PARTY"))
-    return "bg-purple-100 text-purple-700 dark:bg-purple-950/60 dark:text-purple-300";
+    return "bg-accent-soft text-accent ";
   if (s.includes("REJECTED"))
-    return "bg-rose-100 text-rose-700 dark:bg-rose-950/60 dark:text-rose-300";
+    return "bg-danger-soft text-danger-fg ";
   if (s.includes("UNREPAIRABLE"))
-    return "bg-orange-100 text-orange-700 dark:bg-orange-950/60 dark:text-orange-300";
+    return "bg-warning-soft text-warning-fg ";
   if (s.includes("REPAIRING"))
-    return "bg-cyan-100 text-cyan-700 dark:bg-cyan-950/60 dark:text-cyan-300";
-  return "bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300";
+    return "bg-info-soft text-info-fg ";
+  return "bg-sunken text-ink ";
 };
 
 const getPriorityBadge = (priority: string) => {
   switch (priority?.toUpperCase()) {
     case "HIGH":
-      return "bg-red-100 text-red-700 border-red-200 dark:bg-red-950/50 dark:text-red-300";
+      return "bg-danger-soft text-danger-fg border-danger ";
     case "LOW":
-      return "bg-emerald-100 text-emerald-700 border-emerald-200 dark:bg-emerald-950/50 dark:text-emerald-300";
+      return "bg-success-soft text-success-fg border-success ";
     default:
-      return "bg-amber-50 text-amber-700 border-amber-200 dark:bg-amber-950/40 dark:text-amber-300";
+      return "bg-warning-soft text-warning-fg border-warning ";
   }
 };
 
@@ -70,10 +75,14 @@ function RenderStatusSelect({
   effectiveFilter: string;
   onStatusChange: (item: RepairServiceItem, newStatus: string) => void;
 }) {
+  const { t } = useI18n();
   const status = row.status || "RECEIVED";
   const normFilter = (effectiveFilter || "").toUpperCase();
   const selectCls =
     "px-3 py-1 text-[11px] font-semibold rounded-full border outline-none cursor-pointer text-center font-sans tracking-tight shadow-sm transition-all";
+  // The <option> palette is fixed regardless of which coloured <select> the
+  // option sits in, so it's hoisted rather than repeated on all ~15 of them.
+  const optionCls = "bg-surface text-ink ";
 
   // 1. Received / Item Recieved tab / page
   if (
@@ -87,13 +96,13 @@ function RenderStatusSelect({
         value={status}
         onClick={(e) => e.stopPropagation()}
         onChange={(e) => onStatusChange(row, e.target.value)}
-        className={`${selectCls} bg-slate-100 text-slate-900 border-slate-300 dark:bg-slate-800 dark:text-slate-200 dark:border-slate-700`}
+        className={`${selectCls} bg-sunken text-ink border-prominent `}
       >
         <option value={status} hidden>
-          បានទទួលម៉ាស៊ីន
+          {t("transition.itemReceived")}
         </option>
-        <option value="Inspecting" className="bg-white text-slate-800 dark:bg-slate-800 dark:text-slate-100">
-          បញ្ជូនទៅវិនិច្ឆ័យ
+        <option value="Inspecting" className={optionCls}>
+          {t("transition.sendToInspect")}
         </option>
       </select>
     );
@@ -106,19 +115,24 @@ function RenderStatusSelect({
         value={status}
         onClick={(e) => e.stopPropagation()}
         onChange={(e) => onStatusChange(row, e.target.value)}
-        className={`${selectCls} bg-indigo-100 text-indigo-900 border-indigo-300 dark:bg-indigo-950 dark:text-indigo-200 dark:border-indigo-800`}
+        /* `accent-soft-fg`, not `accent-fg`. The two are not interchangeable:
+           `accent-fg` is the colour that sits on the SOLID accent (white in
+           light, near-black in dark), so pairing it with the soft tint gave
+           white-on-pale-green at 1.14:1 in light and 1.29:1 in dark — text
+           that was there and could not be read, in both themes. */
+        className={`${selectCls} bg-accent-soft text-accent-soft-fg border-accent `}
       >
         <option value="Inspecting" hidden>
-          កំពុងវិនិច្ឆ័យ
+          {t("transition.inspecting")}
         </option>
-        <option value="Inspection" className="bg-white text-slate-800 dark:bg-slate-800 dark:text-slate-100">
-          វិនិច្ឆ័យរួចរាល់
+        <option value="Inspection" className={optionCls}>
+          {t("transition.inspectionDone")}
         </option>
-        <option value="Awaiting Sparepart" className="bg-white text-slate-800 dark:bg-slate-800 dark:text-slate-100">
-          បញ្ជូនទៅផ្នែកស្តុក
+        <option value="Awaiting Sparepart" className={optionCls}>
+          {t("transition.sendToStock")}
         </option>
-        <option value="Awaiting Customer Confirm" className="bg-white text-slate-800 dark:bg-slate-800 dark:text-slate-100">
-          បញ្ជូនទៅផ្នែកទីផ្សារ
+        <option value="Awaiting Customer Confirm" className={optionCls}>
+          {t("transition.sendToSales")}
         </option>
       </select>
     );
@@ -131,16 +145,16 @@ function RenderStatusSelect({
         value={status}
         onClick={(e) => e.stopPropagation()}
         onChange={(e) => onStatusChange(row, e.target.value)}
-        className={`${selectCls} bg-blue-100 text-blue-900 border-blue-300 dark:bg-blue-950 dark:text-blue-200 dark:border-blue-800`}
+        className={`${selectCls} bg-info-soft text-info-fg border-info `}
       >
         <option value="Awaiting Sparepart" hidden>
-          រង់ចាំគ្រឿងបន្លាស់
+          {t("transition.awaitingSparePart")}
         </option>
-        <option value="Awaiting Customer Confirm" className="bg-white text-slate-800 dark:bg-slate-800 dark:text-slate-100">
-          បញ្ជូនទៅផ្នែកទីផ្សារ
+        <option value="Awaiting Customer Confirm" className={optionCls}>
+          {t("transition.sendToSales")}
         </option>
-        <option value="Sent Spareparts" className="bg-white text-slate-800 dark:bg-slate-800 dark:text-slate-100">
-          បញ្ជូនគ្រឿងបន្លាស់ទៅជាង(ជួសជុល Free)
+        <option value="Sent Spareparts" className={optionCls}>
+          {t("transition.sendSparesToTechFree")}
         </option>
       </select>
     );
@@ -153,19 +167,19 @@ function RenderStatusSelect({
         value={status}
         onClick={(e) => e.stopPropagation()}
         onChange={(e) => onStatusChange(row, e.target.value)}
-        className={`${selectCls} bg-amber-100 text-amber-900 border-amber-300 dark:bg-amber-950 dark:text-amber-200 dark:border-amber-800`}
+        className={`${selectCls} bg-warning-soft text-warning-fg border-warning `}
       >
         <option value="Awaiting Customer Confirm" hidden>
-          រង់ចាំយល់ព្រមពីភ្ញៀវ
+          {t("transition.awaitingCustomer")}
         </option>
-        <option value="Sale Confirmed" className="bg-white text-slate-800 dark:bg-slate-800 dark:text-slate-100">
-          ជួសជុលបាន
+        <option value="Sale Confirmed" className={optionCls}>
+          {t("transition.repairable")}
         </option>
-        <option value="Customer Rejected" className="bg-white text-slate-800 dark:bg-slate-800 dark:text-slate-100">
-          អតិថិជនមិនជួសជុល
+        <option value="Customer Rejected" className={optionCls}>
+          {t("transition.customerRejected")}
         </option>
-        <option value="Unrepairable" className="bg-white text-slate-800 dark:bg-slate-800 dark:text-slate-100">
-          ជួសជុលមិនបាន
+        <option value="Unrepairable" className={optionCls}>
+          {t("transition.unrepairable")}
         </option>
       </select>
     );
@@ -178,19 +192,19 @@ function RenderStatusSelect({
         value={status}
         onClick={(e) => e.stopPropagation()}
         onChange={(e) => onStatusChange(row, e.target.value)}
-        className={`${selectCls} bg-cyan-100 text-cyan-900 border-cyan-300 dark:bg-cyan-950 dark:text-cyan-200 dark:border-cyan-800`}
+        className={`${selectCls} bg-info-soft text-info-fg border-info `}
       >
         <option value="Inspection" hidden>
-          វិនិច្ឆ័យរួចរាល់
+          {t("transition.inspectionDone")}
         </option>
-        <option value="Inspecting" className="bg-white text-slate-800 dark:bg-slate-800 dark:text-slate-100">
-          វិនិច្ឆ័យម្ដងទៀត
+        <option value="Inspecting" className={optionCls}>
+          {t("transition.reInspect")}
         </option>
-        <option value="Awaiting Sparepart" className="bg-white text-slate-800 dark:bg-slate-800 dark:text-slate-100">
-          បញ្ជូនទៅផ្នែកស្តុក
+        <option value="Awaiting Sparepart" className={optionCls}>
+          {t("transition.sendToStock")}
         </option>
-        <option value="Awaiting Customer Confirm" className="bg-white text-slate-800 dark:bg-slate-800 dark:text-slate-100">
-          បញ្ជូនទៅផ្នែកទីផ្សារ
+        <option value="Awaiting Customer Confirm" className={optionCls}>
+          {t("transition.sendToSales")}
         </option>
       </select>
     );
@@ -203,13 +217,13 @@ function RenderStatusSelect({
         value={status}
         onClick={(e) => e.stopPropagation()}
         onChange={(e) => onStatusChange(row, e.target.value)}
-        className={`${selectCls} bg-emerald-100 text-emerald-900 border-emerald-300 dark:bg-emerald-950 dark:text-emerald-200 dark:border-emerald-800`}
+        className={`${selectCls} bg-success-soft text-success-fg border-success `}
       >
         <option value="Sale Confirmed" hidden>
-          អាចជួសជុលបាន
+          {t("transition.repairable")}
         </option>
-        <option value="Sent Spareparts" className="bg-white text-slate-800 dark:bg-slate-800 dark:text-slate-100">
-          បញ្ជូនគ្រឿងបន្លាស់ទៅជាង
+        <option value="Sent Spareparts" className={optionCls}>
+          {t("transition.sendSparesToTech")}
         </option>
       </select>
     );
@@ -227,28 +241,28 @@ function RenderStatusSelect({
         value={status}
         onClick={(e) => e.stopPropagation()}
         onChange={(e) => onStatusChange(row, e.target.value)}
-        className={`${selectCls} bg-purple-100 text-purple-900 border-purple-300 dark:bg-purple-950 dark:text-purple-200 dark:border-purple-800`}
+        className={`${selectCls} bg-accent-soft text-accent border-accent `}
       >
         <option value="Sent Spareparts" hidden>
-          បានបញ្ជូនគ្រឿងបន្លាស់
+          {t("transition.sparesSent")}
         </option>
-        <option value="Inspection" className="bg-white text-slate-800 dark:bg-slate-800 dark:text-slate-100">
-          វិនិច្ឆ័យរួចរាល់
+        <option value="Inspection" className={optionCls}>
+          {t("transition.inspectionDone")}
         </option>
-        <option value="Sale Confirmed" className="bg-white text-slate-800 dark:bg-slate-800 dark:text-slate-100">
-          ជួសជុលបាន
+        <option value="Sale Confirmed" className={optionCls}>
+          {t("transition.repairable")}
         </option>
-        <option value="Inspecting" className="bg-white text-slate-800 dark:bg-slate-800 dark:text-slate-100">
-          កែតម្រូវគ្រឿងបន្លាស់ម្ដងទៀត
+        <option value="Inspecting" className={optionCls}>
+          {t("transition.adjustSparesAgain")}
         </option>
-        <option value="Finished" className="bg-white text-slate-800 dark:bg-slate-800 dark:text-slate-100">
-          ជួសជុលរួចរាល់
+        <option value="Finished" className={optionCls}>
+          {t("transition.repairDone")}
         </option>
-        <option value="Unrepairable" className="bg-white text-slate-800 dark:bg-slate-800 dark:text-slate-100">
-          ជួសជុលមិនបាន (Unrepairable)
+        <option value="Unrepairable" className={optionCls}>
+          {t("transition.unrepairable")}
         </option>
-        <option value="Repair by Third-Party" className="bg-white text-slate-800 dark:bg-slate-800 dark:text-slate-100">
-          បញ្ជូនទៅជាងខាងក្រៅ (Third-Party)
+        <option value="Repair by Third-Party" className={optionCls}>
+          {t("transition.sendToThirdParty")}
         </option>
       </select>
     );
@@ -257,7 +271,7 @@ function RenderStatusSelect({
   // Static badge for other statuses
   return (
     <span className={`inline-block px-3 py-1 rounded-full text-[10.5px] font-bold tracking-tight ${getStatusBadge(status)}`}>
-      {status}
+      {translateStatus(status, t)}
     </span>
   );
 }
@@ -269,12 +283,19 @@ export default function ServiceTable({
   activeTabKey,
   requireApproval,
 }: ServiceTableProps) {
+  const { t } = useI18n();
   const [searchTerm, setSearchTerm] = useState("");
   const [pageSize, setPageSize] = useState(25);
 
   const [selectedItem, setSelectedItem] = useState<RepairServiceItem | null>(null);
   const [printItem, setPrintItem] = useState<RepairServiceItem | null>(null);
   const [modalMode, setModalMode] = useState<"view" | "edit">("view");
+  /**
+   * Field values the detail form should open with, when the assistant was asked
+   * to fill it in. Prefill only — the modal types them into its inputs and
+   * stops, so the Save click stays with the user.
+   */
+  const [prefill, setPrefill] = useState<ActionValues | undefined>(undefined);
 
   const effectiveFilter = activeTabKey || activeFilter;
 
@@ -329,7 +350,7 @@ export default function ServiceTable({
     // Business rule validation: if current status is 'Sale Confirmed' and ticket has spare parts attached, warn
     const parts = item.sparePartItems || item.sparepartItems || [];
     if (item.status === 'Sale Confirmed' && parts.length > 0) {
-      toast.error('Cannot change status directly. Please process spare parts first.', { position: 'bottom-right' });
+      toast.error(t("msg.cannotChangeStatusSpareParts"), { position: 'bottom-right' });
       return;
     }
 
@@ -354,20 +375,96 @@ export default function ServiceTable({
     const parts = row.sparePartItems || row.sparepartItems || [];
     if (row.status === "Sale Confirmed" && parts.length > 0) {
       toast.error(
-        `${row.reportNo}: Cannot approve — spare parts are already attached. Process spare parts through Stock first.`,
+        t("msg.cannotApproveSpareParts", { ref: row.reportNo ?? "" }),
         { position: "bottom-right" }
       );
       return;
     }
     if (row.status === "Inspection" && row.serviceType === "Charge") {
       toast.error(
-        `${row.reportNo}: Cannot approve — this is a Charge service and must be confirmed by Sales first.`,
+        t("msg.cannotApproveCharge", { ref: row.reportNo ?? "" }),
         { position: "bottom-right" }
       );
       return;
     }
     setApproveItem(row);
   };
+
+  // ── Actions requested from elsewhere (the AI assistant today) ────────────
+  //
+  // These open exactly what the row buttons open, deliberately: the approve
+  // gate below lives in `handleApproveClick`, and delete is a confirmation the
+  // user still has to accept. Nothing here writes on its own.
+  //
+  // A request usually lands before the rows do, so each handler reports whether
+  // it found its ticket and the bus re-offers it as pages load — `items.length`
+  // is what tells the bus to try again.
+  const findRow = useCallback(
+    (ref?: string): RepairServiceItem | null => {
+      if (!ref) return null;
+      const needle = ref.trim().toLowerCase();
+      return (
+        items.find((i) => i.reportNo?.toLowerCase() === needle) ??
+        items.find((i) => i.serialNumber?.toLowerCase() === needle) ??
+        null
+      );
+    },
+    [items]
+  );
+
+  const openTicketModal = useCallback(
+    (mode: "view" | "edit") =>
+      (ref?: string, values?: ActionValues): boolean => {
+        const row = findRow(ref);
+        if (!row) return false;
+        setModalMode(mode);
+        // Only the edit form has fields to fill; a view is read-only, so any
+        // values sent with one are dropped rather than carried into the next
+        // edit the user opens.
+        setPrefill(mode === "edit" ? values : undefined);
+        setSelectedItem(row);
+        return true;
+      },
+    [findRow]
+  );
+
+  useActionHandler("ticket.view", openTicketModal("view"), items.length);
+  useActionHandler("ticket.edit", openTicketModal("edit"), items.length);
+
+  useActionHandler(
+    "ticket.print",
+    (ref) => {
+      const row = findRow(ref);
+      if (!row) return false;
+      setPrintItem(row);
+      return true;
+    },
+    items.length
+  );
+
+  useActionHandler(
+    "ticket.delete",
+    (ref) => {
+      const row = findRow(ref);
+      if (!row) return false;
+      setDeleteConfirmItem(row);
+      return true;
+    },
+    items.length
+  );
+
+  useActionHandler(
+    "ticket.approveRepair",
+    (ref) => {
+      const row = findRow(ref);
+      if (!row) return false;
+      // Counts as handled even when the gate rejects it — the user has been
+      // told why, and retrying would just repeat the toast.
+      handleApproveClick(row);
+      return true;
+    },
+    items.length
+  );
 
   const handleDeleteConfirm = async () => {
     if (!deleteConfirmItem?.id) return;
@@ -385,7 +482,7 @@ export default function ServiceTable({
     }
   };
 
-  const handleCreateTicket = () => {
+  const handleCreateTicket = (values?: ActionValues) => {
     const newItem: RepairServiceItem = {
       id: "new-" + Date.now(),
       reportNo: `SVC-${Math.floor(1000 + Math.random() * 9000)}`,
@@ -402,8 +499,15 @@ export default function ServiceTable({
       statusId: 1,
     };
     setModalMode("edit");
+    setPrefill(values);
     setSelectedItem(newItem);
   };
+
+  // Page-level, so there is nothing to wait for a row to load.
+  useActionHandler("ticket.create", (_ref, values) => {
+    handleCreateTicket(values);
+    return true;
+  });
 
   const handleExportCSV = () => {
     if (items.length === 0) return;
@@ -428,11 +532,89 @@ export default function ServiceTable({
     document.body.removeChild(link);
   };
 
+  // ── Page-level actions ────────────────────────────────────────────────────
+  //
+  // Registered here rather than per page because every queue page renders this
+  // table, and only one of them is mounted at a time — so these ids resolve to
+  // whichever queue the user is actually looking at.
+  useSearchAction(setSearchTerm);
+
+  useActionHandler("ui.tab", (_ref, values) => {
+    const wanted = values?.tab?.trim();
+    if (!wanted || !tabs?.length || !onTabChange) return false;
+    // Matched leniently: the model reads tab keys from the menu config, but a
+    // user's phrasing ("awaiting spare parts") reaches it more often than the
+    // exact stored spelling does.
+    const needle = wanted.toLowerCase();
+    const hit =
+      tabs.find((tab) => tab.key.toLowerCase() === needle) ??
+      tabs.find((tab) => tab.key.toLowerCase().includes(needle) || needle.includes(tab.key.toLowerCase()));
+    if (!hit) return false;
+    onTabChange(hit.key);
+    return true;
+  });
+
+  useActionHandler("ui.pageSize", (_ref, values) => {
+    const size = Number(values?.size);
+    if (!Number.isFinite(size)) return false;
+    // Clamped to the sizes the picker offers, so an arbitrary number can't ask
+    // the backend for a page nothing else in the app would request.
+    const allowed = [10, 25, 50, 100];
+    setPageSize(allowed.reduce((a, b) => (Math.abs(b - size) < Math.abs(a - size) ? b : a)));
+    return true;
+  });
+
+  // Closes whatever this page currently has open — the same thing Cancel or X
+  // does, discarding anything typed. Always reports success: the request is
+  // "leave nothing open", and that is true afterwards whether or not a dialog
+  // happened to be showing.
+  useActionHandler("ui.dialog.close", () => {
+    setSelectedItem(null);
+    setPrefill(undefined);
+    setPrintItem(null);
+    setDeleteConfirmItem(null);
+    setApproveItem(null);
+    return true;
+  });
+
+  useActionHandler("ui.refresh", () => {
+    invalidateCachePrefix("repairservices");
+    void refreshLoaded();
+    return true;
+  });
+
+  useActionHandler("export.csv", () => {
+    if (items.length === 0) return false;
+    handleExportCSV();
+    return true;
+  }, items.length);
+
+  /**
+   * One set of surface classes. This block used to branch five ways on
+   * `prefs.preset` and again on `isDark` — ~90 lines producing ten variants of
+   * "what colour is a table". Aura Velvet has one answer, so these are plain
+   * constants and the colour lives in tokens.
+   */
+  const tableContainerClass = "bg-surface border border-subtle shadow-soft-sm";
+  const toolbarClass = "border-b border-subtle bg-cushion";
+  const searchInputClass =
+    "border-subtle bg-surface text-ink placeholder-ink-muted focus:ring-accent/20 focus:border-accent";
+  const headerRowClass =
+    "bg-cushion border-b border-subtle text-ink-muted font-semibold";
+  const createBtnClass = "bg-accent text-accent-fg hover:bg-accent-hover shadow-soft-sm";
+
   return (
-    <div className="flex-1 flex flex-col min-h-0 bg-white rounded-2xl border border-slate-200/80 shadow-sm overflow-hidden dark:bg-slate-900 dark:border-slate-800">
+    // `min-w-0` below is load-bearing, not tidiness. This is a flex item, and a
+    // flex item's default `min-width: auto` means it refuses to shrink below
+    // its own content. The 9-column table inside is ~880px wide with
+    // `whitespace-nowrap` headers, so on a phone this box stayed 880px, ignored
+    // the `overflow-x-auto` on its inner scroller, and pushed the whole page
+    // past the viewport — the document scrolled sideways instead of just the
+    // table. `min-w-0` lets it shrink so the inner scroller can do its job.
+    <div className={`flex-1 flex flex-col min-h-0 min-w-0 rounded-2xl overflow-hidden ${tableContainerClass}`}>
       {/* Sub-status Tab Menu Header */}
       {tabs && tabs.length > 0 && (
-        <div className="px-4 pt-3 pb-2 shrink-0 border-b border-slate-100 dark:border-slate-800 bg-slate-50/30 dark:bg-slate-900/30">
+        <div className={"px-4 pt-3 pb-2 shrink-0 border-b border-subtle bg-cushion"}>
           <StatusTabMenu
             tabs={tabs}
             activeKey={activeTabKey || activeFilter}
@@ -443,16 +625,16 @@ export default function ServiceTable({
       )}
 
       {/* Table Toolbar */}
-      <div className="p-3 md:p-4 shrink-0 border-b border-slate-100 bg-slate-50/50 flex flex-wrap items-center justify-between gap-4 dark:border-slate-800 dark:bg-slate-900/50">
+      <div className={`p-3 md:p-4 shrink-0 flex flex-wrap items-center justify-between gap-4 ${toolbarClass}`}>
         <div className="flex items-center gap-3">
           <div className="relative">
-            <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+            <Search className={"w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-ink-muted"} />
             <input
               type="text"
-              placeholder="Search by Report No, Company, Serial..."
+              placeholder={t("table.searchPlaceholder")}
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
-              className="pl-9 pr-4 py-2 text-xs border border-slate-200 rounded-xl bg-white focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 w-64 md:w-80 dark:bg-slate-800 dark:border-slate-700 dark:text-slate-200"
+              className={`pl-9 pr-4 py-2 text-xs border rounded-xl focus:outline-none focus:ring-2 w-64 md:w-80 transition-all ${searchInputClass}`}
             />
           </div>
 
@@ -461,8 +643,8 @@ export default function ServiceTable({
               invalidateCachePrefix("repairservices");
               void refreshLoaded();
             }}
-            className="p-2 text-slate-500 hover:bg-slate-100 rounded-xl transition-colors dark:text-slate-400 dark:hover:bg-slate-800"
-            title="Reload API Data"
+            className={"p-2 rounded-xl transition-colors text-ink-secondary hover:bg-cushion"}
+            title={t("action.reloadData")}
           >
             <RefreshCw className={`w-4 h-4 ${isLoading ? "animate-spin" : ""}`} />
           </button>
@@ -470,50 +652,52 @@ export default function ServiceTable({
 
         <div className="flex items-center gap-2">
           <button
-            onClick={handleCreateTicket}
-            className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-semibold text-white bg-blue-600 rounded-xl hover:bg-blue-700 transition-colors shadow-sm shadow-blue-500/20"
+            onClick={() => handleCreateTicket()}
+            className={`inline-flex items-center gap-1.5 px-3.5 py-2 text-xs font-semibold rounded-xl transition-all ${createBtnClass}`}
           >
             <Plus className="w-3.5 h-3.5" />
-            <span>Create Ticket</span>
+            <span>{t("action.createTicket")}</span>
           </button>
 
           <button
             onClick={handleExportCSV}
-            className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-semibold text-slate-700 bg-white border border-slate-200 rounded-xl hover:bg-slate-50 transition-colors shadow-sm dark:bg-slate-800 dark:border-slate-700 dark:text-slate-200"
+            className={"inline-flex items-center gap-1.5 px-3 py-2 text-xs font-semibold rounded-xl transition-colors shadow-soft-sm text-ink bg-surface border border-subtle hover:bg-cushion"}
           >
             <Download className="w-3.5 h-3.5" />
-            <span>Export CSV</span>
+            <span>{t("action.exportCsv")}</span>
           </button>
         </div>
       </div>
 
-      {/* Table Content — auto-scrolls internally within fixed viewport height.
-          This element is also the IntersectionObserver root for infinite scroll. */}
+      {/* Table Content */}
       <div ref={scrollRootRef} className="flex-1 overflow-x-auto overflow-y-auto min-h-0">
         <table className="w-full text-left border-collapse min-w-full">
           <thead>
-            <tr className="bg-slate-50 border-b border-slate-200/80 text-[11px] font-bold text-slate-500 uppercase tracking-wider dark:bg-slate-800/60 dark:border-slate-800 dark:text-slate-400">
-              <th className="py-2.5 px-3 sm:px-3.5 whitespace-nowrap">Ref No</th>
-              <th className="py-2.5 px-3 sm:px-3.5 whitespace-nowrap">Received Date</th>
-              <th className="py-2.5 px-3 sm:px-3.5 whitespace-nowrap">Company Name</th>
-              <th className="py-2.5 px-3 sm:px-3.5 whitespace-nowrap">Item Name / Model</th>
-              <th className="py-2.5 px-3 sm:px-3.5 whitespace-nowrap">Serial Number</th>
-              <th className="py-2.5 px-3 sm:px-3.5 whitespace-nowrap text-center">Priority</th>
-              <th className="py-2.5 px-3 sm:px-3.5 whitespace-nowrap text-center">Status</th>
-              <th className="py-2.5 px-3 sm:px-3.5 whitespace-nowrap">Receiver</th>
-              <th className="py-2.5 px-3 sm:px-3.5 whitespace-nowrap text-center">Actions</th>
+            {/* Sticky, for the same reason the parts table's header is: this
+                scrolls hundreds of rows inside its own container, and once the
+                header leaves the viewport every row below it is unlabelled. */}
+            <tr
+              className={`sticky top-0 z-10 text-[11px] font-semibold uppercase tracking-wider shadow-soft-sm ${headerRowClass}`}
+            >
+              <th className="py-3.5 px-3 sm:px-3.5 whitespace-nowrap">{t("field.refNo")}</th>
+              <th className="py-3.5 px-3 sm:px-3.5 whitespace-nowrap">{t("field.receiveDate")}</th>
+              <th className="py-3.5 px-3 sm:px-3.5 whitespace-nowrap">{t("field.companyName")}</th>
+              <th className="py-3.5 px-3 sm:px-3.5 whitespace-nowrap">{t("table.itemNameModel")}</th>
+              <th className="py-3.5 px-3 sm:px-3.5 whitespace-nowrap">{t("field.serialNumber")}</th>
+              <th className="py-3.5 px-3 sm:px-3.5 whitespace-nowrap text-center">{t("field.priority")}</th>
+              <th className="py-3.5 px-3 sm:px-3.5 whitespace-nowrap text-center">{t("field.status")}</th>
+              <th className="py-3.5 px-3 sm:px-3.5 whitespace-nowrap">{t("field.receiver")}</th>
+              <th className="py-3.5 px-3 sm:px-3.5 whitespace-nowrap text-center">{t("field.actions")}</th>
             </tr>
           </thead>
 
-          <tbody className="divide-y divide-slate-100 text-xs dark:divide-slate-800 text-slate-700 dark:text-slate-300">
+          <tbody className="av-rows-contained-sm divide-y divide-[var(--av-border-subtle)] text-xs text-ink">
             {isLoading ? (
-              Array.from({ length: 5 }).map((_, idx) => (
-                <tr key={idx} className="animate-pulse">
-                  <td colSpan={9} className="py-3 px-4">
-                    <div className="h-4 bg-slate-200 dark:bg-slate-800 rounded w-full"></div>
-                  </td>
-                </tr>
-              ))
+              /* Nine real cells per row, not one bar spanning the lot. The
+                 colSpan version gave the table no column widths to hold, so
+                 every column snapped to its true width the instant data
+                 arrived — the layout jump a skeleton exists to prevent. */
+              <SkeletonRows rows={8} columns={9} />
             ) : items.length > 0 ? (
               items.map((row, idx) => (
                 <tr
@@ -522,62 +706,62 @@ export default function ServiceTable({
                     setModalMode("view");
                     setSelectedItem(row);
                   }}
-                  className="hover:bg-slate-50/80 cursor-pointer transition-colors dark:hover:bg-slate-800/40"
+                  className="cursor-pointer transition-colors duration-150 ease-out hover:bg-cushion"
                 >
-                  <td className="py-2 sm:py-2.5 px-3 sm:px-3.5 whitespace-nowrap font-mono font-semibold text-slate-900 dark:text-slate-200">
+                  <td className="py-3.5 px-3 sm:px-3.5 whitespace-nowrap font-mono font-semibold text-ink ">
                     <HighlightText text={row.reportNo || "N/A"} query={searchTerm} />
                   </td>
-                  <td className="py-2 sm:py-2.5 px-3 sm:px-3.5 whitespace-nowrap text-slate-500 dark:text-slate-400">
+                  <td className="py-3.5 px-3 sm:px-3.5 whitespace-nowrap text-ink-secondary ">
                     {row.serviceDate
                       ? `${new Date(row.serviceDate).toLocaleDateString("en-GB")} ${new Date(row.serviceDate).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`
                       : "N/A"}
                   </td>
                   <td
-                    className="py-2 sm:py-2.5 px-3 sm:px-3.5 font-medium text-slate-900 dark:text-slate-100 max-w-[220px] truncate"
+                    className="py-3.5 px-3 sm:px-3.5 font-medium text-ink max-w-[220px] truncate"
                     title={row.companyName || "N/A"}
                   >
                     <HighlightText text={row.companyName || "N/A"} query={searchTerm} />
                   </td>
                   <td
-                    className="py-2 sm:py-2.5 px-3 sm:px-3.5 font-medium text-slate-800 dark:text-slate-200 max-w-[240px] truncate"
+                    className="py-3.5 px-3 sm:px-3.5 font-medium text-ink max-w-[240px] truncate"
                     title={row.itemName || "N/A"}
                   >
                     <HighlightText text={row.itemName || "N/A"} query={searchTerm} />
                   </td>
-                  <td className="py-2 sm:py-2.5 px-3 sm:px-3.5 whitespace-nowrap">
-                    <code className="px-2 py-0.5 rounded bg-slate-100 border border-slate-200 text-[11px] font-mono text-slate-800 dark:bg-slate-800 dark:border-slate-700 dark:text-slate-300">
+                  <td className="py-3.5 px-3 sm:px-3.5 whitespace-nowrap">
+                    <code className="px-2 py-0.5 rounded bg-sunken border border-subtle text-[11px] font-mono text-ink ">
                       <HighlightText text={row.serialNumber || "N/A"} query={searchTerm} />
                     </code>
                   </td>
-                  <td className="py-2 sm:py-2.5 px-3 sm:px-3.5 whitespace-nowrap text-center">
+                  <td className="py-3.5 px-3 sm:px-3.5 whitespace-nowrap text-center">
                     <span
                       className={`inline-block px-2.5 py-0.5 rounded-full border text-[10px] font-bold ${getPriorityBadge(
                         row.servicePriority || "NORMAL"
                       )}`}
                     >
-                      {row.servicePriority || "NORMAL"}
+                      {translatePriority(row.servicePriority || "NORMAL", t)}
                     </span>
                   </td>
-                  <td className="py-2 sm:py-2.5 px-3 sm:px-3.5 whitespace-nowrap text-center">
+                  <td className="py-3.5 px-3 sm:px-3.5 whitespace-nowrap text-center">
                     <RenderStatusSelect
                       row={row}
                       effectiveFilter={effectiveFilter}
                       onStatusChange={handleInlineStatusChange}
                     />
                   </td>
-                  <td className="py-2 sm:py-2.5 px-3 sm:px-3.5 whitespace-nowrap text-slate-600 dark:text-slate-400">
+                  <td className="py-3.5 px-3 sm:px-3.5 whitespace-nowrap text-ink-secondary ">
                     <HighlightText text={getActionUserForStatus(row)} query={searchTerm} />
                   </td>
-                  <td className="py-2 sm:py-2.5 px-3 sm:px-3.5 whitespace-nowrap text-center" onClick={(e) => e.stopPropagation()}>
+                  <td className="py-3.5 px-3 sm:px-3.5 whitespace-nowrap text-center" onClick={(e) => e.stopPropagation()}>
                     <div className="flex items-center justify-center gap-1">
                       {requireApproval && (
                         <button
                           onClick={() => handleApproveClick(row)}
-                          className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] font-semibold text-white bg-emerald-600 hover:bg-emerald-700 shadow-sm shadow-emerald-500/20 transition-colors"
-                          title="Approve Repairing"
+                          className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] font-semibold text-white bg-success hover:bg-success shadow-sm transition-colors"
+                          title={t("nav.approveRepairing")}
                         >
                           <ShieldCheck className="w-3.5 h-3.5" />
-                          Approve
+                          {t("action.approve")}
                         </button>
                       )}
                       <button
@@ -585,8 +769,8 @@ export default function ServiceTable({
                           setModalMode("view");
                           setSelectedItem(row);
                         }}
-                        className="p-1.5 rounded-lg text-blue-600 hover:bg-blue-50 transition-colors dark:text-blue-400 dark:hover:bg-slate-800"
-                        title="View Details"
+                        className="p-1.5 rounded-lg text-info hover:bg-accent-soft transition-colors "
+                        title={t("action.viewDetails")}
                       >
                         <Eye className="w-4 h-4" />
                       </button>
@@ -595,22 +779,22 @@ export default function ServiceTable({
                           setModalMode("edit");
                           setSelectedItem(row);
                         }}
-                        className="p-1.5 rounded-lg text-slate-600 hover:bg-slate-100 transition-colors dark:text-slate-400 dark:hover:bg-slate-800"
-                        title="Edit Ticket"
+                        className="p-1.5 rounded-lg text-ink-secondary hover:bg-sunken transition-colors "
+                        title={t("action.editTicket")}
                       >
                         <Edit3 className="w-4 h-4" />
                       </button>
                       <button
                         onClick={() => setPrintItem(row)}
-                        className="p-1.5 rounded-lg text-indigo-600 hover:bg-indigo-50 transition-colors dark:text-indigo-400 dark:hover:bg-slate-800"
-                        title="Print Technical Report"
+                        className="p-1.5 rounded-lg text-accent hover:bg-accent-soft transition-colors "
+                        title={t("action.printTechnicalReport")}
                       >
                         <Printer className="w-4 h-4" />
                       </button>
                       <button
                         onClick={() => setDeleteConfirmItem(row)}
-                        className="p-1.5 rounded-lg text-slate-600 hover:text-rose-600 hover:bg-rose-50 transition-colors dark:text-slate-400 dark:hover:text-rose-400 dark:hover:bg-slate-800"
-                        title="Delete Ticket"
+                        className="p-1.5 rounded-lg text-ink-secondary hover:text-danger hover:bg-danger-soft transition-colors "
+                        title={t("action.deleteTicket")}
                       >
                         <Trash2 className="w-4 h-4" />
                       </button>
@@ -620,11 +804,32 @@ export default function ServiceTable({
               ))
             ) : (
               <tr>
-                <td colSpan={9} className="py-12 text-center text-slate-400">
-                  No records found matching your search.
+                <td colSpan={9} className="p-0">
+                  {/* An empty queue is usually the GOOD outcome here — every
+                      ticket inspected, nothing awaiting parts — so this is
+                      deliberately calm rather than warning-coloured. */}
+                  <EmptyState
+                    icon={Inbox}
+                    title={t("msg.noRecordsSearch")}
+                    action={
+                      searchTerm ? (
+                        <button
+                          type="button"
+                          onClick={() => setSearchTerm("")}
+                          className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl text-xs font-semibold text-ink bg-surface border border-prominent hover:bg-cushion transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-ring"
+                        >
+                          {t("state.clearSearch")}
+                        </button>
+                      ) : undefined
+                    }
+                  />
                 </td>
               </tr>
             )}
+
+            {/* Placeholder rows for the batch in flight, so the scroll has
+                somewhere to land instead of stopping dead at the sentinel. */}
+            {isLoadingMore && <SkeletonRows rows={3} columns={9} />}
 
             {/* Infinite-scroll sentinel — observing this row triggers the next
                 page fetch. Kept inside <tbody> so the markup stays valid. */}
@@ -646,22 +851,22 @@ export default function ServiceTable({
 
       {/* Status Bar — infinite scroll replaces page controls, so this reports
           how much of the result set is currently loaded. */}
-      <div className="p-3 md:p-4 shrink-0 border-t border-slate-100 bg-slate-50/50 flex flex-wrap items-center justify-between gap-3 dark:border-slate-800 dark:bg-slate-900/50">
-        <span className="text-xs text-slate-500 dark:text-slate-400">
-          Loaded <strong className="text-slate-700 dark:text-slate-200">{items.length}</strong>
+      <div className="p-3 md:p-4 shrink-0 border-t border-subtle bg-cushion/50 flex flex-wrap items-center justify-between gap-3 ">
+        <span className="text-xs text-ink-secondary ">
+          {t("table.loaded")} <strong className="text-ink ">{items.length}</strong>
           {totalCount > items.length && (
-            <> of <strong className="text-slate-700 dark:text-slate-200">{totalCount}</strong></>
+            <> {t("page.of")} <strong className="text-ink ">{totalCount}</strong></>
           )}{" "}
-          {items.length === 1 ? "item" : "items"}
-          {term && <> matching &ldquo;{term}&rdquo;</>}
+          {items.length === 1 ? t("table.item") : t("table.items")}
+          {term && <> {t("table.matching")} &ldquo;{term}&rdquo;</>}
         </span>
 
-        <div className="flex items-center gap-1.5 text-xs text-slate-500 dark:text-slate-400">
-          <span>Load per scroll:</span>
+        <div className="flex items-center gap-1.5 text-xs text-ink-secondary ">
+          <span>{t("table.loadPerScroll")}</span>
           <select
             value={pageSize}
             onChange={(e) => setPageSize(Number(e.target.value))}
-            className="px-2 py-1 border border-slate-200 dark:border-slate-700 rounded-lg bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-200 focus:outline-none focus:ring-1 focus:ring-blue-500 text-xs cursor-pointer"
+            className="px-2 py-1 border border-subtle rounded-lg bg-surface text-ink focus:outline-none focus:ring-1 focus:ring-accent text-xs cursor-pointer"
           >
             <option value={10}>10</option>
             <option value={25}>25</option>
@@ -675,7 +880,13 @@ export default function ServiceTable({
         key={selectedItem?.id ?? "closed"}
         item={selectedItem}
         mode={modalMode}
-        onClose={() => setSelectedItem(null)}
+        prefill={prefill}
+        onClose={() => {
+          setSelectedItem(null);
+          // Dropped with the dialog, so a form the user opens by hand next
+          // doesn't inherit values the assistant typed into the last one.
+          setPrefill(undefined);
+        }}
         onSave={handleSaveItem}
       />
 
@@ -699,34 +910,41 @@ export default function ServiceTable({
       {/* Delete Ticket Confirmation Modal */}
       {deleteConfirmItem && (
         <div
-          className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-slate-950/60 backdrop-blur-sm"
+          className="enter-fade fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-ink/60 backdrop-blur-sm"
           onClick={(e) => { if (e.target === e.currentTarget) setDeleteConfirmItem(null); }}
         >
-          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 w-full max-w-md rounded-2xl shadow-2xl p-6 space-y-4 my-auto">
-            <div className="w-12 h-12 rounded-2xl bg-rose-50 dark:bg-rose-950/50 text-rose-600 dark:text-rose-400 flex items-center justify-center mx-auto">
+          <div className="enter-pop bg-surface border border-subtle w-full max-w-md rounded-2xl shadow-2xl p-6 space-y-4 my-auto">
+            <div className="w-12 h-12 rounded-2xl bg-danger-soft text-danger flex items-center justify-center mx-auto">
               <Trash2 className="w-6 h-6" />
             </div>
             <div className="text-center space-y-1">
-              <h3 className="text-sm font-bold text-slate-900 dark:text-slate-100">Delete Service Ticket</h3>
-              <p className="text-xs text-slate-500 dark:text-slate-400">
-                Are you sure you want to delete ticket <strong className="font-mono text-blue-600 dark:text-blue-400">{deleteConfirmItem.reportNo}</strong> ({deleteConfirmItem.companyName})? This action cannot be undone.
+              <h3 className="text-sm font-bold text-ink ">{t("table.deleteTicketTitle")}</h3>
+              {/* The ref number is interpolated into the sentence rather than
+                  wrapped in its own <strong>: Khmer puts the object in a
+                  different position, so a hardcoded prefix/suffix split around
+                  the emphasis would read as scrambled word order there. */}
+              <p className="text-xs text-ink-secondary ">
+                {t("table.deleteTicketBody", {
+                  ref: deleteConfirmItem.reportNo ?? "",
+                  company: deleteConfirmItem.companyName ?? "",
+                })}
               </p>
             </div>
-            <div className="flex items-center justify-end gap-3 pt-2 border-t border-slate-100 dark:border-slate-800">
+            <div className="flex items-center justify-end gap-3 pt-2 border-t border-subtle ">
               <button
                 type="button"
                 onClick={() => setDeleteConfirmItem(null)}
-                className="px-4 py-2 text-xs font-semibold text-slate-700 dark:text-slate-300 bg-slate-100 dark:bg-slate-800 rounded-xl hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors"
+                className="px-4 py-2 text-xs font-semibold text-ink bg-sunken rounded-xl hover:bg-sunken transition-colors"
               >
-                Cancel
+                {t("action.cancel")}
               </button>
               <button
                 type="button"
                 onClick={handleDeleteConfirm}
                 disabled={isDeleting}
-                className="px-5 py-2 text-xs font-semibold text-white bg-rose-600 rounded-xl hover:bg-rose-700 shadow-md shadow-rose-500/20 transition-all disabled:opacity-60"
+                className="px-5 py-2 text-xs font-semibold text-white bg-danger rounded-xl hover:bg-danger shadow-md transition-all disabled:opacity-60"
               >
-                {isDeleting ? "Deleting..." : "Confirm Delete"}
+                {isDeleting ? t("table.deleting") : t("table.confirmDelete")}
               </button>
             </div>
           </div>

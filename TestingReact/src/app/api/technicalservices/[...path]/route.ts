@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { recordRequest } from "@/services/activityTracker";
 
 const TECHNICAL_API_BASE =
   process.env.NEXT_PUBLIC_TECHNICAL_API_URL || "https://technicalservicesapi.camprotec.com.kh";
@@ -8,6 +9,10 @@ export async function GET(
   { params }: { params: Promise<{ path: string[] }> }
 ) {
   try {
+    // Read-only, so it never blocks a deploy — but it still means someone is
+    // using the system, which the SSE session count alone would miss.
+    recordRequest();
+
     const { path } = await params;
     const subPath = path ? path.join("/") : "";
     const search = req.nextUrl.search;

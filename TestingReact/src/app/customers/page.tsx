@@ -18,10 +18,15 @@ import { useRealtimeResource } from "@/hooks/useRealtimeTickets";
 import HighlightText from "@/components/HighlightText";
 import ModernSelect from "@/components/ModernSelect";
 import { useDebouncedValue } from "@/hooks/useDebouncedValue";
+import { useSearchQueryParam } from "@/hooks/useSearchQueryParam";
 import { useInfiniteList } from "@/hooks/useInfiniteList";
+import { useSearchAction } from "@/hooks/useSearchAction";
+import { useActionHandler, type ActionValues } from "@/components/ActionBus";
+import { useI18n } from "@/i18n/LanguageProvider";
 import InfiniteScrollStatus from "@/components/InfiniteScrollStatus";
 
 export default function CustomerCenterPage() {
+  const { t } = useI18n();
   const [search, setSearch] = useState("");
   const pageSize = 25;
   const [isSaving, setIsSaving] = useState(false);
@@ -36,8 +41,11 @@ export default function CustomerCenterPage() {
     contactName: "",
     phoneNumber: "",
     address: "",
-    customerType: "Corporate",
+    customerType: "Corporate"
   });
+
+  // Seed from ?q= when arriving via the header's global search.
+  useSearchQueryParam(setSearch);
 
   const debouncedSearch = useDebouncedValue(search, 300);
 
@@ -54,12 +62,12 @@ export default function CustomerCenterPage() {
     sentinelRef,
     refresh: loadData,
     setItems,
-    setTotalCount,
+    setTotalCount
   } = useInfiniteList<CustomerItem, HTMLDivElement, HTMLTableRowElement>({
     fetchPage: (pageNumber, size) => fetchCustomerCenter(pageNumber, size, term),
     pageSize,
     resetKey: term,
-    getId: (c) => c?.id,
+    getId: (c) => c?.id
   });
 
   // Live updates so another user's add/edit/delete shows up here without a
@@ -78,7 +86,7 @@ export default function CustomerCenterPage() {
       contactName: "",
       phoneNumber: "",
       address: "",
-      customerType: "Corporate",
+      customerType: "Corporate"
     });
     setShowModal(true);
   };
@@ -93,6 +101,91 @@ export default function CustomerCenterPage() {
     setSelectedCustomer(customer);
     setShowDeleteConfirm(true);
   };
+
+  // ── Actions requested from elsewhere (the AI assistant today) ────────────
+  //
+  // Each one opens the dialog its row button opens, with whatever fields the
+  // user dictated already typed in. The Save and Delete clicks stay theirs —
+  // nothing here submits.
+  const findCustomer = useCallback(
+    (ref?: string): CustomerItem | null => {
+      if (!ref) return null;
+      const needle = ref.trim().toLowerCase();
+      const match = (value?: string | null) => value?.trim().toLowerCase() === needle;
+      return (
+        items.find((c) => match(c.companyName)) ??
+        items.find((c) => match(c.contactName) || match(c.phoneNumber)) ??
+        // Last resort: a partial company name, since people rarely type one in full.
+        items.find((c) => c.companyName?.toLowerCase().includes(needle)) ??
+        null
+      );
+    },
+    [items]
+  );
+
+  const customerFormPatch = (values?: ActionValues): Partial<CustomerItem> => {
+    if (!values) return {};
+    const patch: Partial<CustomerItem> = {};
+    if (values.companyName?.trim()) patch.companyName = values.companyName.trim();
+    if (values.contactName?.trim()) patch.contactName = values.contactName.trim();
+    if (values.phoneNumber?.trim()) patch.phoneNumber = values.phoneNumber.trim();
+    if (values.address?.trim()) patch.address = values.address.trim();
+    if (values.customerType?.trim()) {
+      patch.customerType = /individual|person|ឯកជន/i.test(values.customerType)
+        ? "Individual"
+        : "Corporate";
+    }
+    return patch;
+  };
+
+  useActionHandler("customer.create", (_ref, values) => {
+    handleOpenAdd();
+    setFormData((prev) => ({ ...prev, ...customerFormPatch(values) }));
+    return true;
+  });
+
+  useActionHandler(
+    "customer.edit",
+    (ref, values) => {
+      const customer = findCustomer(ref);
+      if (!customer) return false;
+      handleOpenEdit(customer);
+      // Applied over the stored record, so fields the user didn't mention keep
+      // their current values.
+      setFormData((prev) => ({ ...prev, ...customerFormPatch(values) }));
+      return true;
+    },
+    items.length
+  );
+
+  useActionHandler(
+    "customer.delete",
+    (ref) => {
+      const customer = findCustomer(ref);
+      if (!customer) return false;
+      handleOpenDelete(customer);
+      return true;
+    },
+    items.length
+  );
+
+  useSearchAction(setSearch);
+
+  // Closes whatever this page currently has open — the same thing Cancel or X
+  // does, discarding anything typed. Always reports success: the request is
+  // "leave nothing open", and that is true afterwards whether or not a dialog
+  // happened to be showing.
+  useActionHandler("ui.dialog.close", () => {
+    setShowModal(false);
+    setShowDeleteConfirm(false);
+    return true;
+  });
+
+  useActionHandler("ui.refresh", () => {
+    invalidateCachePrefix("customers");
+    void loadData();
+    return true;
+  });
 
   const handleSubmitForm = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -128,7 +221,7 @@ export default function CustomerCenterPage() {
           phoneNumber: formData.phoneNumber || "—",
           address: formData.address || "—",
           customerType: formData.customerType || "Corporate",
-          isActive: true,
+          isActive: true
         };
         setItems((prev) => [newTemp, ...prev]);
         setTotalCount((prev) => prev + 1);
@@ -161,28 +254,28 @@ export default function CustomerCenterPage() {
 
   return (
     <PageWrapper
-      title="Customer Center"
-      subtitle="Directory of corporate clients, contact persons, and active maintenance service records (CustomerList.razor)"
+      titleKey="nav.customerCenter"
+      subtitleKey="sub.customers"
     >
-      <div className="flex-1 flex flex-col min-h-0 bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 rounded-2xl shadow-sm overflow-hidden">
+      <div className="flex-1 flex flex-col min-h-0 bg-surface border border-subtle/80 rounded-2xl shadow-sm overflow-hidden">
         {/* Table Toolbar */}
-        <div className="p-4 border-b border-slate-100 dark:border-slate-800 flex items-center justify-between gap-4 shrink-0">
+        <div className="p-4 border-b border-subtle flex items-center justify-between gap-4 shrink-0">
           <div className="flex items-center gap-3">
             <div className="relative">
-              <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+              <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-ink-muted" />
               <input
                 type="text"
-                placeholder="Search company, contact person, phone..."
+                placeholder={t("cust.searchPlaceholder")}
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
-                className="pl-9 pr-4 py-2 text-xs border border-slate-200 rounded-xl bg-white focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 w-64 md:w-80 dark:bg-slate-800 dark:border-slate-700 dark:text-slate-200"
+                className="pl-9 pr-4 py-2 text-xs border border-subtle rounded-xl bg-surface focus:outline-none focus:ring-2 focus:ring-accent/20 focus:border-accent w-64 md:w-80 "
               />
             </div>
 
             <button
               onClick={() => void loadData()}
-              className="p-2 text-slate-500 hover:bg-slate-100 rounded-xl transition-colors dark:text-slate-400 dark:hover:bg-slate-800"
-              title="Reload Customer API"
+              className="p-2 text-ink-secondary hover:bg-sunken rounded-xl transition-colors "
+              title={t("cust.reload")}
             >
               <RefreshCw className={`w-4 h-4 ${isLoading ? "animate-spin" : ""}`} />
             </button>
@@ -190,10 +283,10 @@ export default function CustomerCenterPage() {
 
           <button
             onClick={handleOpenAdd}
-            className="inline-flex items-center gap-1.5 px-3.5 py-2 text-xs font-semibold text-white bg-blue-600 rounded-xl hover:bg-blue-700 transition-colors shadow-sm"
+            className="inline-flex items-center gap-1.5 px-3.5 py-2 text-xs font-semibold text-white bg-accent rounded-xl hover:bg-accent-hover transition-colors shadow-sm"
           >
             <Plus className="w-3.5 h-3.5" />
-            <span>Add New Customer</span>
+            <span>{t("cust.addNew")}</span>
           </button>
         </div>
 
@@ -201,41 +294,41 @@ export default function CustomerCenterPage() {
         <div ref={scrollRootRef} className="flex-1 overflow-x-auto overflow-y-auto min-h-0">
           <table className="w-full text-left border-collapse text-xs">
             <thead>
-              <tr className="bg-slate-50 dark:bg-slate-800/60 border-b border-slate-200/80 dark:border-slate-800 text-[11px] font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider">
-                <th className="py-2.5 sm:py-3 px-4">Company Name</th>
-                <th className="py-2.5 sm:py-3 px-4">Contact Person</th>
-                <th className="py-2.5 sm:py-3 px-4">Phone Number</th>
-                <th className="py-2.5 sm:py-3 px-4">Address</th>
-                <th className="py-2.5 sm:py-3 px-4 text-center">Customer Type</th>
-                <th className="py-2.5 sm:py-3 px-4 text-center">Actions</th>
+              <tr className="bg-cushion border-b border-subtle/80 text-[11px] font-bold text-ink-secondary uppercase tracking-wider">
+                <th className="py-2.5 sm:py-3 px-4">{t("field.companyName")}</th>
+                <th className="py-2.5 sm:py-3 px-4">{t("cust.contactPerson")}</th>
+                <th className="py-2.5 sm:py-3 px-4">{t("field.phoneNumber")}</th>
+                <th className="py-2.5 sm:py-3 px-4">{t("field.address")}</th>
+                <th className="py-2.5 sm:py-3 px-4 text-center">{t("cust.customerType")}</th>
+                <th className="py-2.5 sm:py-3 px-4 text-center">{t("field.actions")}</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-slate-100 dark:divide-slate-800 text-slate-700 dark:text-slate-300">
+            <tbody className="divide-y divide-subtle text-ink ">
               {isLoading ? (
                 Array.from({ length: 5 }).map((_, idx) => (
                   <tr key={idx} className="animate-pulse">
                     <td colSpan={6} className="py-3 px-4">
-                      <div className="h-4 bg-slate-200 dark:bg-slate-800 rounded w-full"></div>
+                      <div className="h-4 bg-sunken rounded w-full"></div>
                     </td>
                   </tr>
                 ))
               ) : items.length > 0 ? (
                 items.map((c, idx) => (
-                  <tr key={c.id || idx} className="hover:bg-slate-50 dark:hover:bg-slate-800/40 transition-colors">
-                    <td className="py-2.5 sm:py-3 px-4 font-bold text-slate-900 dark:text-slate-100">
+                  <tr key={c.id || idx} className="hover:bg-cushion transition-colors">
+                    <td className="py-2.5 sm:py-3 px-4 font-bold text-ink ">
                       <HighlightText text={c.companyName} query={search} />
                     </td>
-                    <td className="py-2.5 sm:py-3 px-4 font-medium text-slate-700 dark:text-slate-300">
+                    <td className="py-2.5 sm:py-3 px-4 font-medium text-ink ">
                       <HighlightText text={c.contactName || "—"} query={search} />
                     </td>
-                    <td className="py-2.5 sm:py-3 px-4 text-slate-600 dark:text-slate-400 font-mono text-[11px]">
+                    <td className="py-2.5 sm:py-3 px-4 text-ink-secondary font-mono text-[11px]">
                       <HighlightText text={c.phoneNumber || "—"} query={search} />
                     </td>
-                    <td className="py-2.5 sm:py-3 px-4 text-slate-500 dark:text-slate-400">
+                    <td className="py-2.5 sm:py-3 px-4 text-ink-secondary ">
                       <HighlightText text={c.address || "—"} query={search} />
                     </td>
                     <td className="py-2.5 sm:py-3 px-4 text-center">
-                      <span className="px-2.5 py-0.5 rounded-full text-[10.5px] font-bold bg-blue-50 text-blue-700 border border-blue-200 dark:bg-blue-950/60 dark:text-blue-300 dark:border-blue-900">
+                      <span className="px-2.5 py-0.5 rounded-full text-[10.5px] font-bold bg-info-soft text-info-fg border border-info ">
                         {c.customerType || "Corporate"}
                       </span>
                     </td>
@@ -243,15 +336,15 @@ export default function CustomerCenterPage() {
                       <div className="flex items-center justify-center gap-1">
                         <button
                           onClick={() => handleOpenEdit(c)}
-                          className="p-1.5 text-slate-600 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-colors dark:text-slate-400 dark:hover:text-blue-400 dark:hover:bg-slate-800"
-                          title="Edit Customer"
+                          className="p-1.5 text-ink-secondary hover:text-accent hover:bg-accent-soft rounded-lg transition-colors "
+                          title={t("cust.edit")}
                         >
                           <Edit3 className="w-4 h-4" />
                         </button>
                         <button
                           onClick={() => handleOpenDelete(c)}
-                          className="p-1.5 text-slate-600 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors dark:text-slate-400 dark:hover:text-rose-400 dark:hover:bg-slate-800"
-                          title="Delete Customer"
+                          className="p-1.5 text-ink-secondary hover:text-danger hover:bg-danger-soft rounded-lg transition-colors "
+                          title={t("cust.delete")}
                         >
                           <Trash2 className="w-4 h-4" />
                         </button>
@@ -261,8 +354,8 @@ export default function CustomerCenterPage() {
                 ))
               ) : (
                 <tr>
-                  <td colSpan={6} className="py-12 text-center text-slate-400">
-                    No customer records found matching your search.
+                  <td colSpan={6} className="py-12 text-center text-ink-muted">
+                    {t("cust.empty")}
                   </td>
                 </tr>
               )}
@@ -285,11 +378,11 @@ export default function CustomerCenterPage() {
         </div>
 
         {/* Status Bar — infinite scroll replaces the page controls */}
-        <div className="p-4 border-t border-slate-100 bg-slate-50/50 flex items-center justify-between dark:border-slate-800 dark:bg-slate-900/50 shrink-0">
-          <span className="text-xs text-slate-500 dark:text-slate-400">
-            Loaded <strong className="text-slate-700 dark:text-slate-200">{items.length}</strong>
+        <div className="p-4 border-t border-subtle bg-cushion/50 flex items-center justify-between shrink-0">
+          <span className="text-xs text-ink-secondary ">
+            Loaded <strong className="text-ink ">{items.length}</strong>
             {totalCount > items.length && (
-              <> of <strong className="text-slate-700 dark:text-slate-200">{totalCount}</strong></>
+              <> of <strong className="text-ink ">{totalCount}</strong></>
             )}{" "}
             {items.length === 1 ? "customer" : "customers"}
             {term && <> matching &ldquo;{term}&rdquo;</>}
@@ -300,28 +393,28 @@ export default function CustomerCenterPage() {
       {/* Add / Edit Customer Modal */}
       {showModal && (
         <div
-          className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-slate-950/60 backdrop-blur-sm"
+          className="enter-fade fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-ink/60 backdrop-blur-sm"
           onClick={(e) => { if (e.target === e.currentTarget) setShowModal(false); }}
         >
-          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 w-full max-w-lg rounded-2xl shadow-2xl overflow-hidden flex flex-col max-h-[92vh] my-auto">
+          <div className="enter-pop bg-surface border border-subtle w-full max-w-lg rounded-2xl shadow-2xl overflow-hidden flex flex-col max-h-[92vh] my-auto">
             {/* Header */}
-            <div className="px-5 py-3.5 border-b border-slate-100 dark:border-slate-800 flex items-center justify-between bg-slate-50/50 dark:bg-slate-900/50 shrink-0">
+            <div className="px-5 py-3.5 border-b border-subtle flex items-center justify-between bg-cushion/50 shrink-0">
               <div className="flex items-center gap-3">
-                <div className="w-9 h-9 rounded-xl bg-blue-50 dark:bg-blue-950/50 text-blue-600 dark:text-blue-400 flex items-center justify-center">
+                <div className="w-9 h-9 rounded-xl bg-info-soft text-info flex items-center justify-center">
                   <Building2 className="w-4 h-4" />
                 </div>
                 <div>
-                  <h2 className="text-sm font-bold text-slate-900 dark:text-slate-100">
-                    {selectedCustomer ? "Edit Customer" : "Add New Customer"}
+                  <h2 className="text-sm font-bold text-ink ">
+                    {selectedCustomer ? t("cust.edit") : t("cust.addNew")}
                   </h2>
-                  <p className="text-xs text-slate-500 dark:text-slate-400">
-                    {selectedCustomer ? selectedCustomer.companyName : "Enter client profile details"}
+                  <p className="text-xs text-ink-secondary ">
+                    {selectedCustomer ? selectedCustomer.companyName : t("cust.enterProfile")}
                   </p>
                 </div>
               </div>
               <button
                 onClick={() => setShowModal(false)}
-                className="p-1.5 rounded-lg text-slate-400 hover:text-slate-600 hover:bg-slate-100 dark:hover:bg-slate-800 dark:hover:text-slate-200 transition-colors"
+                className="p-1.5 rounded-lg text-ink-muted hover:text-ink-secondary hover:bg-sunken transition-colors"
               >
                 <X className="w-4 h-4" />
               </button>
@@ -331,95 +424,95 @@ export default function CustomerCenterPage() {
             <form onSubmit={handleSubmitForm} className="flex-1 flex flex-col min-h-0 overflow-hidden">
               <div className="flex-1 overflow-y-auto p-5 space-y-4 text-xs">
                 <div className="space-y-1">
-                  <label className="font-semibold text-slate-700 dark:text-slate-300">Company Name *</label>
+                  <label className="font-semibold text-ink ">{t("field.companyName")} *</label>
                   <div className="relative">
-                    <Building2 className="w-3.5 h-3.5 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+                    <Building2 className="w-3.5 h-3.5 absolute left-3 top-1/2 -translate-y-1/2 text-ink-muted" />
                     <input
                       type="text"
                       required
                       value={formData.companyName || ""}
                       onChange={(e) => setFormData({ ...formData, companyName: e.target.value })}
-                      placeholder="e.g. Canadia Bank Plc"
-                      className="w-full pl-9 pr-3 py-2 border border-slate-200 dark:border-slate-700 rounded-xl bg-white dark:bg-slate-800 dark:text-slate-100 focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 outline-none"
+                      placeholder={t("cust.egCompany")}
+                      className="w-full pl-9 pr-3 py-2 border border-subtle rounded-xl bg-surface focus:ring-2 focus:ring-accent/20 focus:border-accent outline-none"
                     />
                   </div>
                 </div>
 
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   <div className="space-y-1">
-                    <label className="font-semibold text-slate-700 dark:text-slate-300">Contact Person</label>
+                    <label className="font-semibold text-ink ">{t("cust.contactPerson")}</label>
                     <div className="relative">
-                      <User className="w-3.5 h-3.5 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+                      <User className="w-3.5 h-3.5 absolute left-3 top-1/2 -translate-y-1/2 text-ink-muted" />
                       <input
                         type="text"
                         value={formData.contactName || ""}
                         onChange={(e) => setFormData({ ...formData, contactName: e.target.value })}
-                        placeholder="e.g. Mr. Sokha"
-                        className="w-full pl-9 pr-3 py-2 border border-slate-200 dark:border-slate-700 rounded-xl bg-white dark:bg-slate-800 dark:text-slate-100 focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 outline-none"
+                        placeholder={t("cust.egContact")}
+                        className="w-full pl-9 pr-3 py-2 border border-subtle rounded-xl bg-surface focus:ring-2 focus:ring-accent/20 focus:border-accent outline-none"
                       />
                     </div>
                   </div>
 
                   <div className="space-y-1">
-                    <label className="font-semibold text-slate-700 dark:text-slate-300">Phone Number</label>
+                    <label className="font-semibold text-ink ">{t("field.phoneNumber")}</label>
                     <div className="relative">
-                      <Phone className="w-3.5 h-3.5 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+                      <Phone className="w-3.5 h-3.5 absolute left-3 top-1/2 -translate-y-1/2 text-ink-muted" />
                       <input
                         type="text"
                         value={formData.phoneNumber || ""}
                         onChange={(e) => setFormData({ ...formData, phoneNumber: e.target.value })}
-                        placeholder="e.g. 023 888 999"
-                        className="w-full pl-9 pr-3 py-2 border border-slate-200 dark:border-slate-700 rounded-xl bg-white dark:bg-slate-800 dark:text-slate-100 focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 outline-none font-mono"
+                        placeholder={t("cust.egPhone")}
+                        className="w-full pl-9 pr-3 py-2 border border-subtle rounded-xl bg-surface focus:ring-2 focus:ring-accent/20 focus:border-accent outline-none font-mono"
                       />
                     </div>
                   </div>
                 </div>
 
                 <div className="space-y-1">
-                  <label className="font-semibold text-slate-700 dark:text-slate-300">Address</label>
+                  <label className="font-semibold text-ink ">{t("field.address")}</label>
                   <div className="relative">
-                    <MapPin className="w-3.5 h-3.5 absolute left-3 top-3 text-slate-400" />
+                    <MapPin className="w-3.5 h-3.5 absolute left-3 top-3 text-ink-muted" />
                     <textarea
                       rows={2}
                       value={formData.address || ""}
                       onChange={(e) => setFormData({ ...formData, address: e.target.value })}
-                      placeholder="e.g. #315, Monivong Blvd, Phnom Penh"
-                      className="w-full pl-9 pr-3 py-2 border border-slate-200 dark:border-slate-700 rounded-xl bg-white dark:bg-slate-800 dark:text-slate-100 focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 outline-none"
+                      placeholder={t("cust.egAddress")}
+                      className="w-full pl-9 pr-3 py-2 border border-subtle rounded-xl bg-surface focus:ring-2 focus:ring-accent/20 focus:border-accent outline-none"
                     />
                   </div>
                 </div>
 
                 <div className="space-y-1">
-                  <label className="font-semibold text-slate-700 dark:text-slate-300">Customer Type</label>
+                  <label className="font-semibold text-ink ">{t("cust.customerType")}</label>
                   <select
                     value={formData.customerType || "Corporate"}
                     onChange={(e) => setFormData({ ...formData, customerType: e.target.value })}
-                    className="w-full px-3 py-2 border border-slate-200 dark:border-slate-700 rounded-xl bg-white dark:bg-slate-800 dark:text-slate-100 focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 outline-none"
+                    className="w-full px-3 py-2 border border-subtle rounded-xl bg-surface focus:ring-2 focus:ring-accent/20 focus:border-accent outline-none"
                   >
-                    <option value="Corporate">Corporate</option>
-                    <option value="Individual">Individual</option>
-                    <option value="Government">Government</option>
-                    <option value="VIP">VIP</option>
+                    <option value="Corporate">{t("cust.typeCorporate")}</option>
+                    <option value="Individual">{t("cust.typeIndividual")}</option>
+                    <option value="Government">{t("cust.typeGovernment")}</option>
+                    <option value="VIP">{t("cust.typeVip")}</option>
                   </select>
                 </div>
               </div>
 
               {/* Actions Footer */}
-              <div className="sticky bottom-0 z-20 px-5 py-3.5 bg-slate-50/90 dark:bg-slate-900/90 backdrop-blur border-t border-slate-100 dark:border-slate-800 flex items-center justify-end gap-3 shrink-0">
+              <div className="sticky bottom-0 z-20 px-5 py-3.5 bg-cushion/90 backdrop-blur border-t border-subtle flex items-center justify-end gap-3 shrink-0">
                 <button
                   type="button"
                   onClick={() => setShowModal(false)}
-                  className="px-4 py-2 text-xs font-semibold text-slate-700 dark:text-slate-300 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors shadow-sm"
+                  className="px-4 py-2 text-xs font-semibold text-ink bg-surface border border-subtle rounded-xl hover:bg-sunken transition-colors shadow-sm"
                 >
-                  Cancel
+                  {t("action.cancel")}
                 </button>
                 <button
                   type="submit"
                   disabled={isSaving}
-                  className="inline-flex items-center gap-1.5 px-5 py-2 text-xs font-semibold text-white bg-blue-600 rounded-xl hover:bg-blue-700 shadow-md shadow-blue-500/20 transition-all disabled:opacity-60"
+                  className="inline-flex items-center gap-1.5 px-5 py-2 text-xs font-semibold text-white bg-accent rounded-xl hover:bg-accent-hover shadow-md shadow-accent/20 transition-all disabled:opacity-60"
                 >
                   <Save className="w-3.5 h-3.5" />
-                  {isSaving ? "Saving..." : selectedCustomer ? "Save Changes" : "Create Customer"}
+                  {isSaving ? t("action.saving") : selectedCustomer ? t("detail.saveChanges") : t("cust.create")}
                 </button>
               </div>
             </form>
@@ -430,34 +523,34 @@ export default function CustomerCenterPage() {
       {/* Delete Confirmation Modal */}
       {showDeleteConfirm && selectedCustomer && (
         <div
-          className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-slate-950/60 backdrop-blur-sm"
+          className="enter-fade fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-ink/60 backdrop-blur-sm"
           onClick={(e) => { if (e.target === e.currentTarget) setShowDeleteConfirm(false); }}
         >
-          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 w-full max-w-md rounded-2xl shadow-2xl p-6 space-y-4 my-auto">
-            <div className="w-12 h-12 rounded-2xl bg-rose-50 dark:bg-rose-950/50 text-rose-600 dark:text-rose-400 flex items-center justify-center mx-auto">
+          <div className="enter-pop bg-surface border border-subtle w-full max-w-md rounded-2xl shadow-2xl p-6 space-y-4 my-auto">
+            <div className="w-12 h-12 rounded-2xl bg-danger-soft text-danger flex items-center justify-center mx-auto">
               <Trash2 className="w-6 h-6" />
             </div>
             <div className="text-center space-y-1">
-              <h3 className="text-sm font-bold text-slate-900 dark:text-slate-100">Delete Customer Record</h3>
-              <p className="text-xs text-slate-500 dark:text-slate-400">
-                Are you sure you want to delete <strong className="text-slate-800 dark:text-slate-200">{selectedCustomer.companyName}</strong>? This action cannot be undone.
+              <h3 className="text-sm font-bold text-ink ">{t("cust.deleteTitle")}</h3>
+              <p className="text-xs text-ink-secondary ">
+                {t("cust.deleteBody", { name: selectedCustomer.companyName ?? "" })}
               </p>
             </div>
-            <div className="flex items-center justify-end gap-3 pt-2 border-t border-slate-100 dark:border-slate-800">
+            <div className="flex items-center justify-end gap-3 pt-2 border-t border-subtle ">
               <button
                 type="button"
                 onClick={() => setShowDeleteConfirm(false)}
-                className="px-4 py-2 text-xs font-semibold text-slate-700 dark:text-slate-300 bg-slate-100 dark:bg-slate-800 rounded-xl hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors"
+                className="px-4 py-2 text-xs font-semibold text-ink bg-sunken rounded-xl hover:bg-sunken transition-colors"
               >
-                Cancel
+                {t("action.cancel")}
               </button>
               <button
                 type="button"
                 onClick={handleDeleteConfirm}
                 disabled={isSaving}
-                className="px-5 py-2 text-xs font-semibold text-white bg-rose-600 rounded-xl hover:bg-rose-700 shadow-md shadow-rose-500/20 transition-all disabled:opacity-60"
+                className="px-5 py-2 text-xs font-semibold text-white bg-danger rounded-xl hover:bg-danger shadow-md transition-all disabled:opacity-60"
               >
-                {isSaving ? "Deleting..." : "Confirm Delete"}
+                {isSaving ? t("table.deleting") : t("table.confirmDelete")}
               </button>
             </div>
           </div>

@@ -42,34 +42,34 @@ const COLOR_STYLES: Record<StatusDropdownColor, {
   optionHover: string;
 }> = {
   slate: {
-    trigger: "bg-slate-100 text-slate-900 border-slate-300 dark:bg-slate-800 dark:text-slate-200 dark:border-slate-700",
-    dot: "bg-slate-500",
-    optionHover: "hover:bg-slate-50 dark:hover:bg-slate-800",
+    trigger: "bg-sunken text-ink border-prominent ",
+    dot: "bg-neutral",
+    optionHover: "hover:bg-cushion ",
   },
   blue: {
-    trigger: "bg-blue-100 text-blue-900 border-blue-300 dark:bg-blue-950 dark:text-blue-200 dark:border-blue-800",
-    dot: "bg-blue-500",
-    optionHover: "hover:bg-blue-50 dark:hover:bg-slate-800",
+    trigger: "bg-info-soft text-info-fg border-info ",
+    dot: "bg-info",
+    optionHover: "hover:bg-accent-soft ",
   },
   amber: {
-    trigger: "bg-amber-100 text-amber-900 border-amber-300 dark:bg-amber-950 dark:text-amber-200 dark:border-amber-800",
-    dot: "bg-amber-500",
-    optionHover: "hover:bg-amber-50 dark:hover:bg-slate-800",
+    trigger: "bg-warning-soft text-warning-fg border-warning ",
+    dot: "bg-warning",
+    optionHover: "hover:bg-warning-soft ",
   },
   cyan: {
-    trigger: "bg-cyan-100 text-cyan-900 border-cyan-300 dark:bg-cyan-950 dark:text-cyan-200 dark:border-cyan-800",
-    dot: "bg-cyan-500",
-    optionHover: "hover:bg-cyan-50 dark:hover:bg-slate-800",
+    trigger: "bg-info-soft text-info-fg border-info ",
+    dot: "bg-info",
+    optionHover: "hover:bg-info-soft ",
   },
   emerald: {
-    trigger: "bg-emerald-100 text-emerald-900 border-emerald-300 dark:bg-emerald-950 dark:text-emerald-200 dark:border-emerald-800",
-    dot: "bg-emerald-500",
-    optionHover: "hover:bg-emerald-50 dark:hover:bg-slate-800",
+    trigger: "bg-success-soft text-success-fg border-success ",
+    dot: "bg-success",
+    optionHover: "hover:bg-success-soft ",
   },
   purple: {
-    trigger: "bg-purple-100 text-purple-900 border-purple-300 dark:bg-purple-950 dark:text-purple-200 dark:border-purple-800",
-    dot: "bg-purple-500",
-    optionHover: "hover:bg-purple-50 dark:hover:bg-slate-800",
+    trigger: "bg-accent-soft text-accent border-accent ",
+    dot: "bg-accent",
+    optionHover: "hover:bg-accent-soft ",
   },
 };
 
@@ -125,7 +125,7 @@ export default function StatusUpdateDropdown({
               width: coords.width,
               transform: coords.placement === "top" ? "translateY(-100%)" : undefined,
             }}
-            className={`z-[100] bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl shadow-xl shadow-slate-900/10 dark:shadow-black/40 overflow-hidden py-1 ${
+            className={`z-[100] bg-elevated  border border-subtle  rounded-xl shadow-xl  overflow-hidden py-1 ${
               coords.placement === "top" ? "dropdown-panel-in-top" : "dropdown-panel-in"
             }`}
           >
@@ -134,11 +134,15 @@ export default function StatusUpdateDropdown({
                 key={opt.value}
                 type="button"
                 role="option"
+                // Required by the listbox pattern: a screen reader announcing
+                // an option with no selected state gives the user no way to
+                // tell which status the ticket is currently on.
+                aria-selected={opt.label === currentLabel}
                 onClick={() => {
                   onSelect(opt.value);
                   setOpen(false);
                 }}
-                className={`w-full flex items-center gap-2.5 px-3 py-2 text-xs text-left text-slate-700 dark:text-slate-200 transition-colors ${styles.optionHover}`}
+                className={`w-full flex items-center gap-2.5 px-3 py-2 text-xs text-left text-ink transition-colors ${styles.optionHover}`}
               >
                 <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${styles.dot}`} />
                 <span className="truncate flex-1">{opt.label}</span>

@@ -1,21 +1,29 @@
 "use client";
 
 import React from "react";
+import { useI18n } from "@/i18n/LanguageProvider";
+import type { TranslationKey } from "@/i18n/translations";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // StatusTabMenu — matches old StatusTabMenu.razor exactly
 // Renders a horizontal pill-tab strip with live count badges.
 // Usage:
 //   <StatusTabMenu
-//     tabs={[{ key: "All", label: "All", count: 42 }, ...]}
+//     tabs={[{ key: "All", labelKey: "status.received", count: 42 }, ...]}
 //     activeKey="All"
 //     onTabChange={(key) => setFilter(key)}
 //   />
 // ─────────────────────────────────────────────────────────────────────────────
 
 export interface TabItem {
+  /** Backend status string — identity, never translated. */
   key: string;
-  label: string;
+  /**
+   * Translated here rather than by the caller so every page can keep
+   * declaring its tabs as a plain module-level const, with no hook or
+   * useMemo of its own just to localise a label.
+   */
+  labelKey: TranslationKey;
   count?: number;
   /** Optional colour accent override (default: blue) */
   color?: "blue" | "amber" | "emerald" | "rose" | "purple" | "cyan" | "slate";
@@ -29,14 +37,19 @@ interface StatusTabMenuProps {
   loading?: boolean;
 }
 
-const ACCENT_ACTIVE: Record<string, string> = {
-  blue:    "bg-blue-600 text-white shadow-sm shadow-blue-500/30",
-  amber:   "bg-amber-500 text-white shadow-sm shadow-amber-500/30",
-  emerald: "bg-emerald-600 text-white shadow-sm shadow-emerald-500/30",
-  rose:    "bg-rose-600 text-white shadow-sm shadow-rose-500/30",
-  purple:  "bg-purple-600 text-white shadow-sm shadow-purple-500/30",
-  cyan:    "bg-cyan-600 text-white shadow-sm shadow-cyan-500/30",
-  slate:   "bg-slate-600 text-white shadow-sm",
+/**
+ * The `color` prop names a hue; Aura Velvet works in meanings. This maps one to
+ * the other in a single place, so a tab keeps saying what it said before —
+ * "rejected" stays a danger tone — without any caller having to be rewritten.
+ */
+const TAB_TONE: Record<string, string> = {
+  blue: "bg-info text-white",
+  cyan: "bg-info text-white",
+  amber: "bg-warning text-white",
+  emerald: "bg-success text-white",
+  rose: "bg-danger text-white",
+  purple: "bg-accent text-accent-fg",
+  slate: "bg-neutral text-white",
 };
 
 export default function StatusTabMenu({
@@ -45,11 +58,13 @@ export default function StatusTabMenu({
   onTabChange,
   loading = false,
 }: StatusTabMenuProps) {
+  const { t } = useI18n();
+
   return (
-    <div className="flex flex-wrap gap-1.5">
+    <div className="flex flex-wrap gap-2">
       {tabs.map((tab) => {
         const isActive = activeKey === tab.key;
-        const color = tab.color ?? "blue";
+        const activeCls = TAB_TONE[tab.color ?? "blue"] ?? TAB_TONE.blue;
 
         return (
           <button
@@ -59,27 +74,23 @@ export default function StatusTabMenu({
               if (!isActive) onTabChange(tab.key);
             }}
             className={`
-              inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold
-              transition-all duration-150 whitespace-nowrap select-none
+              inline-flex items-center gap-1.5 px-4 py-2 rounded-full text-xs font-semibold
+              transition-colors duration-150 ease-out whitespace-nowrap select-none
               ${
                 isActive
-                  ? ACCENT_ACTIVE[color]
-                  : "bg-slate-100 text-slate-600 hover:bg-slate-200 hover:text-slate-800 dark:bg-slate-800 dark:text-slate-400 dark:hover:bg-slate-700 dark:hover:text-slate-200"
+                  ? `${activeCls} shadow-soft-sm`
+                  : "bg-surface text-ink-secondary border border-subtle hover:bg-cushion hover:text-ink"
               }
             `}
           >
-            {tab.label}
+            {t(tab.labelKey)}
             {tab.count !== undefined && (
               <span
                 className={`
-                  inline-flex items-center justify-center min-w-[18px] h-[18px] px-1
+                  inline-flex items-center justify-center min-w-[20px] h-[20px] px-1.5
                   rounded-full text-[10px] font-bold leading-none
                   ${loading ? "animate-pulse" : ""}
-                  ${
-                    isActive
-                      ? "bg-white/25 text-white"
-                      : "bg-slate-200 text-slate-600 dark:bg-slate-700 dark:text-slate-300"
-                  }
+                  ${isActive ? "bg-white/25 text-white" : "bg-sunken text-ink-secondary"}
                 `}
               >
                 {tab.count}

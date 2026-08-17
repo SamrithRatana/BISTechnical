@@ -6,7 +6,7 @@ import ServiceTable from "@/components/ServiceTable";
 
 export default function RejectedPage() {
   return (
-    <PageWrapper title="Customer Rejected" subtitle="Tickets declined by customer after quotation review">
+    <PageWrapper titleKey="nav.customerRejected" subtitleKey="sub.rejected">
       <ServiceTable activeFilter="Customer Rejected" />
     </PageWrapper>
   );

@@ -133,6 +133,72 @@ Next.js App Router tree for a repair/service-item workflow tracker (item intake,
 - File: `api/auth/login/route.ts`
 - `POST(req)` — forwards credentials to C# Identity Auth API (`JWT_API_BASE=/api/auth/login`), then enriches the response by looking up the user in `/api/UserManagement` to attach id/email/roles/profile picture. Returns `{isSuccess, token, refreshToken, user}` or 401 on failure.
 
+### `GET/POST /api/ai-search` — "Ask AI" assistant
+
+- Files: `api/ai-search/route.ts`, `api/ai-search/tools.ts`, `api/ai-search/backend.ts`, `api/ai-search/image.ts`
+- `runtime = "nodejs"`, `maxDuration = 60`.
+- `GET` — reports `{enabled}` so `GlobalSearch` can hide the toggle when no key is set.
+- `POST({query})` — runs an agent loop: the model is given read-only tools
+  (`search_tickets`, `count_tickets`, `search_spare_parts`, `search_customers`,
+  `search_items`, `find_users`, `get_dashboard_stats`, `describe_application`),
+  the route executes those against the real backends, and the model finishes
+  with `present_results` carrying its answer plus the filters the header
+  dropdown re-runs. Returns `{filters}` shaped as `SmartQueryResult` (see
+  `services/smartQuery.ts`).
+- `present_results` also carries `navigateTo` and an `actions` list — the UI
+  steps to perform, validated here against `@/config/actions` (unknown or
+  unwired ids dropped, field names filtered by `sanitizeActionValues`) and
+  dispatched client-side through the action bus. Actions cover dialogs
+  (`ticket.edit`, `sparePart.stockOut`, `customer.create`, …), the shell
+  (`ui.sidebar.*`, `ui.language.*`, `ui.tab`, `ui.search`,
+  `ui.globalSearch`, `ui.refresh`), and can carry `values` that fill a form in.
+  **Nothing in this path submits** — every id resolves to a handler that opens
+  or fills and stops, so save/edit/delete remain the user's click. `MAX_ACTIONS`
+  caps one reply at 6 steps.
+- Provider: Gemini (`GEMINI_API_KEY`) first, falling through `GEMINI_MODELS` on
+  429/503/404; Anthropic (`ANTHROPIC_API_KEY`) if no Gemini key. With neither,
+  and past the `AGENT_BUDGET_MS` wall-clock budget, it degrades to a plain
+  keyword search (`grounded: false`) instead of erroring.
+- **Image generation** (`image.ts`): a message asking for a picture
+  ("generate an image of…", "draw a logo for…", "ជួយបង្កើតរូបភាព…") is detected
+  by keyword in `POST` and answered by Google's Nano Banana models **instead of**
+  the tool loop — there is nothing in the workshop's data to look up. The reply
+  travels in the normal envelope (`filters` with `category: "general"`) plus an
+  `image` field carrying a base64 **data URL**, which `AiAssistantProvider`
+  stores on the `ChatMessage` and `AiAssistantPanel` renders with a download
+  link. Images are never sent back up in `history`.
+  - Detection needs a making verb **plus** a picture noun, so "show me the image
+    on that spare part" stays an ordinary lookup. A subject-bearing noun (logo,
+    icon, poster…) is kept in the prompt; a generic one (image, picture, photo)
+    is dropped — see `GENERIC_PICTURE_NOUNS`.
+  - Its own model list, cooldown map and quota bucket, kept out of
+    `GEMINI_MODELS` so an image model never enters the text rotation or the
+    model picker.
+  - **Provider chain, best first**: Nano Banana (Gemini) → Pollinations keyed
+    (`gen.pollinations.ai`) → Pollinations anonymous
+    (`image.pollinations.ai`). Only the last one needs no credentials, and it is
+    what actually answers today.
+  - Nano Banana **needs billing**: every image model reports free-tier
+    `limit: 0`, so an unbilled Gemini key refuses instantly. The keyed
+    Pollinations endpoint needs a **prepaid `pollen` balance** and returns 402
+    at zero; that result is cached for 30 minutes so it costs one probe, not a
+    wasted round-trip per picture.
+  - **Latency**: the anonymous endpoint serves the first request from an IP in
+    ~2.5s, then throttles to ~45s each. `IMAGE_BUDGET_MS` is 55s for that
+    reason — a 45s budget aborted requests a second before they succeeded.
+    Keep it under the route's `maxDuration` of 60s.
+  - `degraded.reason` is `"imageQuotaExceeded"` (a real wait, counts down),
+    `"imageNotOnFreeTier"` (Gemini billing — diagnostic only; the user-facing
+    text is generic because reaching it means the free fallback failed too), or
+    `"imageUnavailable"`.
+  - Env: `POLLINATIONS_API_KEY`, `POLLINATIONS_MODEL` (default `zimage`),
+    `AI_IMAGE_POLLINATIONS=off` to disable the fallback. Prompts leave the
+    system to a third party — no ticket/customer data, but worth knowing.
+- `backend.ts` calls `TECHNICAL/CUSTOMER/JWT_API_BASE` **directly**, not via
+  `/api/proxy/*` — a relative URL has no meaning in a route handler. The
+  caller's `Authorization` header is forwarded to every read, so the assistant
+  can only surface rows that user could already open. Read-only by design.
+
 ### `GET /api/events` — Server-Sent Events stream
 
 - File: `api/events/route.ts`

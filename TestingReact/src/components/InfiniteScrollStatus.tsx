@@ -8,6 +8,7 @@
  */
 
 import { RefreshCw } from "lucide-react";
+import { useI18n } from "@/i18n/LanguageProvider";
 
 interface InfiniteScrollStatusProps {
   isLoadingMore: boolean;
@@ -24,11 +25,13 @@ export default function InfiniteScrollStatus({
   limitReached,
   count,
 }: InfiniteScrollStatusProps) {
+  const { t } = useI18n();
+
   if (isLoadingMore) {
     return (
-      <span className="inline-flex items-center gap-2 text-xs text-slate-500 dark:text-slate-400">
+      <span className="inline-flex items-center gap-2 text-xs text-ink-secondary ">
         <RefreshCw className="w-3.5 h-3.5 animate-spin" />
-        Loading more…
+        {t("msg.loadingMore")}
       </span>
     );
   }
@@ -37,19 +40,19 @@ export default function InfiniteScrollStatus({
   // set, and saying so would hide matches the user still needs.
   if (limitReached) {
     return (
-      <span className="text-xs text-amber-600 dark:text-amber-400">
-        Showing the first {count} matches — narrow your search to see the rest.
+      <span className="text-xs text-warning ">
+        {t("msg.limitReached", { count })}
       </span>
     );
   }
 
   if (reachedEnd) {
     return (
-      <span className="text-xs text-slate-400 dark:text-slate-500">
-        End of results — {count} shown
+      <span className="text-xs text-ink-muted ">
+        {t("msg.endOfResults", { count })}
       </span>
     );
   }
 
-  return <span className="text-xs text-slate-400 dark:text-slate-500">Scroll for more</span>;
+  return <span className="text-xs text-ink-muted ">{t("msg.scrollForMore")}</span>;
 }

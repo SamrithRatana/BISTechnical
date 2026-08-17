@@ -1,8 +1,58 @@
 # TestingReact/src/components
 
-Shared/reusable React components used across the `app/` pages (dashboard, ticket workflow queues, spare parts, customers). Flat directory, no subfolders. All files are `"use client"`.
+Shared/reusable React components used across the `app/` pages (dashboard, ticket workflow queues, spare parts, customers). One subfolder, `ai/`, for the assistant. All files are `"use client"`.
+
+## `av/` — the Aura Velvet design system (OS 3.2)
+
+The reusable primitives everything else composes from. **No component in this
+folder hardcodes a colour** — they read `--av-*` tokens from `app/globals.css`,
+which is the single place the design system is defined.
+
+- `av/Card.tsx` — surface primitive. `variant`: `surface` (card on the app
+  background) / `sunken` (tinted well for sub-panels) / `elevated` (popovers).
+  `hover` is opt-in: only cards you can act on should lift. Exports `Card`,
+  `CardHeader`.
+- `av/Badge.tsx` — pills and status chips. `tone` is a **meaning**
+  (`success`/`warning`/`danger`/`info`/`accent`/`neutral`), never a colour
+  name, so the queues' status encoding lives in one map. `dot`+`pulse` gives
+  the live indicator.
+- `av/ProgressBar.tsx` — animates `transform: scaleX()`, not `width`, so a bar
+  never forces layout. Value is clamped 0–100.
+- `av/ToggleGroup.tsx` — segmented control (the 1H/24H/7D/30D range picker).
+  One sliding pill, full WAI-ARIA radiogroup keyboard support.
+- `av/Sparkline.tsx` — inline mini-chart for KPI cards. Hand-rolled SVG cubic
+  Bézier; `useId` scopes the gradient id so several on one page don't collide.
+- `av/KpiCard.tsx` — label, icon badge, value, optional trend + sparkline.
+  `trendIsGood` exists because the *sign* of a change and its *desirability*
+  differ: rising throughput is good, rising unrepairable count is not.
+- `av/ChartPanel.tsx` — the large chart frame: title, legend, tinted mini-stat
+  row, chart as `children`.
+- `av/AreaChart.tsx` — the main plot. **Not exported from the barrel on
+  purpose**: pages load it via `next/dynamic` so it stays in its own chunk.
+  Geometry is memoised on `data`, and hover hit-testing is arithmetic (one
+  `pointermove` → nearest index), not N DOM listeners.
+
+Design-system notes:
+- **Light only.** The seven presets, six accents and dark palette were removed.
+  `globals.css` keeps the `dark` custom-variant deliberately (see the comment
+  there) so any stray `dark:` utility stays permanently inert rather than
+  reactivating via `prefers-color-scheme`.
+- `useTheme()` still exists but now carries **ergonomics only** — radius,
+  density, font scale, motion. No colour.
+- Use the semantic utilities (`bg-surface`, `text-ink-secondary`,
+  `border-subtle`, `bg-success-soft`, …) rather than raw palette numbers.
+  There are currently **zero** `bg-slate-*`-style utilities left in `src/`;
+  keep it that way.
 
 ## Components (alphabetical)
+
+- `TestingReact/src/components/ActionBus.tsx` — Lets one part of the app trigger a UI action owned by another. A component registers a handler for an action id from `@/config/actions` (`useActionHandler(id, handler, readyKey)`); anything holding the bus requests it by id (`useActionBus().request`). The AI assistant is the current caller.
+  - Requests are **queued**, not a single slot, so one instruction can be several steps. A request carries `recordRef` (which record) and `values` (an `ActionValues` field map to prefill the form the action opens).
+  - A handler returns `false` for "not yet" (usually its rows haven't loaded); the bus re-offers the request whenever `readyKey` changes, and drops it after `PENDING_TTL_MS` (20s).
+  - **One handler per id per mounted tree** — two registrations for the same id both fire against one pending entry. Page-scoped ids (`ui.refresh`, `ui.search`, `export.csv`) are registered once per page, which holds because only one page mounts at a time.
+  - Nothing here submits. Handlers open dialogs and fill fields; save/edit/delete stay with the user.
+  - Exports: `ActionBusProvider`, `useActionBus`, `useActionHandler`, types `ActionRequest`, `ActionValues`.
+  - Registered in: `Sidebar` (`ui.sidebar.*`), `Header` (`ui.language.*`), `GlobalSearch` (`ui.globalSearch`), `ai/AiAssistantProvider` (`ui.assistant.close`), `ServiceTable` + the CRUD pages (record and page-level ids).
 
 - `TestingReact/src/components/ApproveRepairDialog.tsx` — Confirmation dialog for the "Approve Repairing" action (stamps repairDate/repairBy, moves ticket to Repairing). Blocks approval if a "Sale Confirmed" ticket already has spare parts attached, or if a "Charge" ticket is still in "Inspection". Calls `updateServiceStatus(item, "Repairing")`.
   - Props: `item: RepairServiceItem`, `onClose: () => void`, `onApproved: () => void`.
@@ -17,7 +67,7 @@ Shared/reusable React components used across the `app/` pages (dashboard, ticket
   - Exports: default `GlobalSearch`. Internal maps: `STATUS_ROUTES`, `STATUS_BADGE`, `MAX_RESULTS = 8`.
   - Used by: `Header.tsx`.
 
-- `TestingReact/src/components/Header.tsx` — App header bar: sidebar toggle, refresh, `GlobalSearch`, language button (static), dark-mode toggle (persists `localStorage["theme"]`), notifications icon, JWT user profile dropdown (reads `localStorage["user_info"]`, refreshed via `fetchUserMap()`), logout (clears `jwt_token`/`user_info`, routes to `/login`).
+- `TestingReact/src/components/Header.tsx` — App header bar: sidebar toggle, refresh, `GlobalSearch`, language button (static), notifications icon, JWT user profile dropdown (reads `localStorage["user_info"]`, refreshed via `fetchUserMap()`), logout (clears `jwt_token`/`user_info`, routes to `/login`).
   - Props: `sidebarOpen: boolean`, `setSidebarOpen: (open: boolean) => void`.
   - Used by: `PageWrapper.tsx`.
 
@@ -37,7 +87,7 @@ Shared/reusable React components used across the `app/` pages (dashboard, ticket
   - Used by: `ServiceDetailModal.tsx`, `InspectItemDialog.tsx`.
 
 - `TestingReact/src/components/PageWrapper.tsx` — Standard page shell: `Sidebar` + `Header` + title/subtitle + content area. Manages `sidebarOpen` state locally.
-  - Props: `title: string`, `subtitle?: string`, `children: React.ReactNode`.
+  - Props: `titleKey: TranslationKey`, `subtitleKey?: TranslationKey`, `children: React.ReactNode`. Takes i18n keys, not finished strings — it resolves them via `useI18n()` so pages stay plain markup.
   - Used by: 13 pages under `app/*` (e.g. `inspect-item`, `approve-verify`, `customers`, `received-inventory`, `spareparts`, `approve-repair`, `confirmed-sale`, `spare-request`, `inspection`, `waiting-confirm`, `unrepairable`, `rejected`, `receive-item`).
 
 - `TestingReact/src/components/PrintPreviewSidebar.tsx` — Pixel-replica of the old DevExpress "Report2" printable ticket report. Fetches full ticket detail + enriches spare-part rows against inventory (`fetchSparePartsInventory`, per-id fallback fetch), renders an A4-styled printable document, `window.print()` on demand.
@@ -57,7 +107,8 @@ Shared/reusable React components used across the `app/` pages (dashboard, ticket
   - Used by: `app/page.tsx` (dashboard), `receive-item`, `inspection`, `waiting-confirm`, `confirmed-sale`, `spare-request`, `approve-repair`, `rejected`, `unrepairable` pages.
   - 662 lines — `RenderStatusSelect` (~line 64) holds all the per-status dropdown-option logic if hunting a status-transition bug.
 
-- `TestingReact/src/components/Sidebar.tsx` — Left nav sidebar; static `navGroups` config (Inventory Items, Customer Information, Technical, Stock, Sale, Rejected Service Tracker), active-link highlighting via `usePathname()`, collapses to icon-only width.
+- `TestingReact/src/components/Sidebar.tsx` — Left nav sidebar; active-link highlighting via `usePathname()`, collapses to icon-only width.
+  - **The menu itself lives in `TestingReact/src/config/navigation.ts`**, not here — the AI assistant's `describe_application` tool reads the same config, so a page added there appears in both the sidebar and the assistant's answers. This component only maps `href` → lucide icon (local `ICONS` record) and renders; keeping the shared config React-free is what lets the `api/ai-search` route handler import it server-side.
   - Props: `isOpen: boolean`, `setIsOpen: (val: boolean) => void`.
   - Used by: `PageWrapper.tsx`.
 
@@ -66,12 +117,12 @@ Shared/reusable React components used across the `app/` pages (dashboard, ticket
   - Internal helpers: `getImageUrl`, `stockBadge`.
   - Used by: `InspectItemDialog.tsx` (opened from the eye icon in search results / added-parts table).
 
-- `TestingReact/src/components/StatCards.tsx` — Dashboard's 4 top stat tiles (Today's Report, Received Item, Waiting Customer, Finished) with hardcoded counts; click sets the active filter.
+- `TestingReact/src/components/StatCards.tsx` — Dashboard's 4 top KPI tiles (Today's Report, Received Item, Waiting Customer, Finished), built on `av/KpiCard`; counts come from `fetchDashboardStats()`; click sets the active filter. Shows no trend/sparkline: `DashboardStats` returns running totals with no historical series, so there is nothing to compute one from (the old fixed "+100%" strings were removed).
   - Props (`StatCardsProps`): `selectedFilter: string`, `setSelectedFilter: (id: string) => void`.
   - Used by: `app/page.tsx` (dashboard).
 
 - `TestingReact/src/components/StatusTabMenu.tsx` — Horizontal pill-tab strip with count badges, matches old `StatusTabMenu.razor`.
-  - Props (`StatusTabMenuProps`): `tabs: TabItem[]` (`{key, label, count?, color?}`), `activeKey: string`, `onTabChange: (key: string) => void`, `loading?: boolean`.
+  - Props (`StatusTabMenuProps`): `tabs: TabItem[]` (`{key, labelKey, count?, color?}`), `activeKey: string`, `onTabChange: (key: string) => void`, `loading?: boolean`. `key` is the backend status (identity, never translated); `labelKey` is an i18n key this component resolves itself.
   - Exports: default `StatusTabMenu`; type `TabItem`.
   - Used by: pages that pass `tabs`/`onTabChange` into `ServiceTable`.
 
@@ -83,4 +134,6 @@ Shared/reusable React components used across the `app/` pages (dashboard, ticket
 ## Notes
 
 - Floating/portaled dropdowns (`ModernSelect`, `StatusUpdateDropdown`, `GlobalSearch`, `SparePartSpecModal`) share the `useFloatingPanel` hook at `TestingReact/src/hooks/useFloatingPanel.ts` for positioning — check there first for portal/z-index/positioning bugs.
+- **All user-visible text is translated (English/Khmer).** Never hardcode a display string: add a key to `TestingReact/src/i18n/translations.ts` and read it via `const { t } = useI18n()`. Backend values (ticket `status`, `condition`, `serviceLocation`, priority names) must stay in their English spelling in state and on the wire — translate them only at render, via the helpers in `TestingReact/src/i18n/statusLabel.ts`. `PrintPreviewSidebar` is deliberately excluded: it is a pixel-replica of the legacy DevExpress report.
+- Watch for `t` shadowing: `GlobalSearch` and `InspectItemDialog` previously used `t` as a `.map()` parameter name; those are now `ticket`/`type`.
 - `RepairServiceItem`, `SparePartItem`, and API fetch functions (`fetchRepairServices`, `updateServiceStatus`, etc.) come from `TestingReact/src/services/api.ts`.

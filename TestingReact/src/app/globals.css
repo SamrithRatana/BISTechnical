@@ -1,29 +1,651 @@
-@import url('https://fonts.googleapis.com/css2?family=Battambang:wght@400;700;900&display=swap');
+/* Noto Sans Khmer is NOT imported here. It used to be, via
+   `@import url(fonts.googleapis.com/...)` on this line, and `layout.tsx` also
+   carried a <link> to the same stylesheet — the face was fetched twice on every
+   page load, and the CSS @import was the slower of the two because it
+   serialises: the browser had to download this file and parse it before it even
+   discovered the font request, all of it blocking first paint.
+
+   It is now loaded through `next/font/google` in `layout.tsx`, which self-hosts
+   the file, so there is no request to Google at runtime at all. The family is
+   exposed as `--font-noto-khmer` and consumed by `--font-khmer-ui` below. */
 @import "tailwindcss";
 
+/* ══════════════════════════════════════════════════════════════════════
+   DARK MODE IS A CLASS, NOT A MEDIA QUERY
+   ══════════════════════════════════════════════════════════════════════
+
+   This one line is why the theme toggle works at all.
+
+   Tailwind v4's `dark:` variant defaults to `@media (prefers-color-scheme:
+   dark)`. This project has no Tailwind config and never declared otherwise, so
+   all ~180 `dark:` utilities in the app compiled into that media query — while
+   the header's toggle, `ThemeScript`, and `Header.applyDark` were all writing a
+   `.dark` class onto <html> that no compiled rule ever matched.
+
+   The net effect: dark mode followed the operating system and nothing else. The
+   toggle appeared to do nothing, and a user on a light OS could not reach the
+   dark theme at all. Redefining the variant points every one of those existing
+   utilities at the class instead, which makes the class authoritative — a
+   prerequisite for "dark by hour", since a clock-driven theme has no media
+   query to hang off.
+
+   `:where(...)` keeps the variant's specificity at zero, so `dark:` utilities
+   still lose to a later same-specificity rule exactly as they did before. */
+@custom-variant dark (&:where(.dark, .dark *));
+
+/* ══════════════════════════════════════════════════════════════════════
+   AURA VELVET — DESIGN TOKENS (OS 3.2)
+   ══════════════════════════════════════════════════════════════════════
+
+   The single source of truth for colour, elevation, radius and motion.
+   Every value the interface paints with is declared once here and reached
+   through `var(--av-*)` or the Tailwind bridge in `@theme inline` below,
+   so a change to the system is a change to this block and nothing else.
+
+   LIGHT ONLY, BY DESIGN. The previous build shipped seven presets
+   (dashcode, clinical, devoryn, aura, classic, synthwave, emerald), six
+   accents and a full dark palette, selected by `data-preset` /
+   `data-accent` / `.dark`. All of it is gone — not overridden, deleted —
+   and Aura Velvet is the only design system in the app.
+
+   The `dark` custom variant above is deliberately KEPT even though no
+   dark palette exists. Nothing ever adds `.dark` to <html> now, so every
+   remaining `dark:` utility simply never matches. Removing the variant
+   would be worse than leaving it: Tailwind would fall back to
+   `@media (prefers-color-scheme: dark)` and those same utilities would
+   spring back to life on any machine set to dark at the OS level —
+   resurrecting exactly the theme this rewrite removes. */
+
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  /* ── Surfaces ──────────────────────────────────────────────────────
+     Four steps, not two. A dashboard needs a sunken well (the tinted
+     sub-panel a stat row sits in) and a cushion (a card resting on the
+     app background) as distinct materials, or every nested panel has to
+     invent its own grey. */
+  --av-bg-app: #F3F5F4;
+  --av-bg-surface: #FFFFFF;
+  --av-bg-elevated: #FFFFFF;
+  --av-bg-cushion: #F7F9F8;
+  --av-bg-sunken: #EDF0EF;
+
+  /* ── Text hierarchy ───────────────────────────────────────────────── */
+  --av-text-primary: #111827;
+  --av-text-secondary: #6B7280;
+  --av-text-muted: #9CA3AF;
+  --av-text-inverse: #FFFFFF;
+
+  /* ── Borders ───────────────────────────────────────────────────────
+     Alpha, never opaque hex. A translucent hairline sits correctly on
+     white, on the cushion, and on a tinted status chip; a fixed #E5E7EB
+     only looks right on one of them. "No harsh borders" is a rule about
+     contrast, not about removing structure. */
+  --av-border-subtle: rgba(17, 24, 39, 0.07);
+  --av-border-prominent: rgba(17, 24, 39, 0.13);
+  --av-border-glass: rgba(255, 255, 255, 0.85);
+
+  /* The frosted fill behind the header and any other `.av-glass` surface.
+     A token rather than a literal because it is a SURFACE, and every surface
+     has to have a dark counterpart — this one was hardcoded white and so
+     stayed a pale band across the top of the app in dark mode. */
+  --av-glass-bg: rgba(255, 255, 255, 0.82);
+
+  /* ── Accent: emerald / forest ──────────────────────────────────────
+     `base` is the deep forest end of the specified range and carries the
+     identity — icons, active states, buttons. `bright` is the light end,
+     reserved for positive metrics and chart strokes, where the deep tone
+     turns muddy over a gradient fill. */
+  --av-accent-base: #0F6E4E;
+  --av-accent-bright: #16A34A;
+  --av-accent-hover: #0B563D;
+  --av-accent-fg: #FFFFFF;
+  --av-accent-soft: #E8F2ED;
+  --av-accent-soft-fg: #0B563D;
+  --av-accent-glow: rgba(15, 110, 78, 0.22);
+  --av-accent-ring: rgba(15, 110, 78, 0.35);
+
+  /* ── Semantic status palette ───────────────────────────────────────
+     These encode DATA, not decoration. Green/amber/red carry ticket
+     state across the queues, so they survive as a deliberate mapped set
+     rather than being collapsed into the accent. `success` is pulled
+     off the accent hue on purpose: if "succeeded" and "selected" share
+     a colour, a finished row and the row under the cursor stop being
+     distinguishable at a glance. */
+  --av-success: #047857;
+  --av-success-soft: #E6F4EF;
+  --av-success-fg: #045F46;
+
+  --av-warning: #B45309;
+  --av-warning-soft: #FDF3E7;
+  --av-warning-fg: #92400E;
+
+  --av-danger: #BE123C;
+  --av-danger-soft: #FDECEF;
+  --av-danger-fg: #9F1239;
+
+  --av-info: #1D4ED8;
+  --av-info-soft: #EAF0FE;
+  --av-info-fg: #1E40AF;
+
+  --av-neutral: #6B7280;
+  --av-neutral-soft: #F1F3F2;
+  --av-neutral-fg: #4B5563;
+
+  /* ── Soft multi-layer shadows ──────────────────────────────────────
+     Low opacity, wide blur, negative spread. Two layers each: a wide
+     ambient one for depth and a tight one for contact — the tight layer
+     is what stops a card from reading as detached from the page. */
+  --av-shadow-sm: 0 2px 6px -1px rgba(16, 24, 40, 0.04), 0 1px 3px 0 rgba(16, 24, 40, 0.03);
+  --av-shadow-md: 0 10px 28px -6px rgba(16, 24, 40, 0.06), 0 2px 8px -2px rgba(16, 24, 40, 0.03);
+  --av-shadow-lg: 0 20px 45px -10px rgba(16, 24, 40, 0.08), 0 6px 16px -3px rgba(16, 24, 40, 0.04);
+  --av-shadow-xl: 0 32px 70px -14px rgba(16, 24, 40, 0.11), 0 10px 24px -4px rgba(16, 24, 40, 0.05);
+  --av-shadow-inner: inset 0 2px 4px 0 rgba(16, 24, 40, 0.04);
+
+  /* The card "cushion" — three layers, and the third is the one that matters.
+     A wide ambient shadow for depth, a tight one for contact, and an INSET
+     white highlight along the top edge. That highlight is the whole soft-UI
+     effect: it makes the card look lit from above and slightly domed, so it
+     reads as a raised object rather than a white rectangle with a border
+     drawn round it. Without it, the same card is merely outlined. */
+  --av-shadow-cushion:
+    0 12px 32px -10px rgba(16, 24, 40, 0.10),
+    0 2px 6px 0 rgba(16, 24, 40, 0.04),
+    inset 0 1px 1px 0 rgba(255, 255, 255, 0.95);
+
+  /* Hover state for a cushioned card: same construction, lifted further. */
+  --av-shadow-cushion-hover:
+    0 20px 40px -12px rgba(16, 24, 40, 0.14),
+    0 6px 14px -3px rgba(16, 24, 40, 0.06),
+    inset 0 1px 1px 0 rgba(255, 255, 255, 0.95);
+
+  /* ── Motion ────────────────────────────────────────────────────────
+     One curve and one duration scale, so hover states across the app
+     settle together instead of each component inventing its own timing.
+     Every consumer animates transform/opacity only — see the `.av-*`
+     utilities further down. */
+  --av-ease: cubic-bezier(0.22, 0.61, 0.36, 1);
+  --av-dur-fast: 150ms;
+  --av-dur-base: 180ms;
+  --av-dur-slow: 250ms;
+
+  /* ── Spacing rhythm ────────────────────────────────────────────────
+     The 12–24px rhythm, named so panels compose on the same grid. */
+  --av-space-1: 0.25rem;
+  --av-space-2: 0.5rem;
+  --av-space-3: 0.75rem;
+  --av-space-4: 1rem;
+  --av-space-5: 1.25rem;
+  --av-space-6: 1.5rem;
+
+  /* Corner radius. Consumed through Tailwind's own `--radius-*` scale in
+     `@theme inline`, so every `rounded-lg` / `rounded-xl` / `rounded-2xl`
+     already written across the app lands on the Aura Velvet 16–20px card
+     language without being touched. Still switchable by `data-radius`,
+     which is an ergonomics setting rather than a theme. */
+  --ui-radius-lg: 0.625rem;
+  --ui-radius-xl: 0.875rem;
+  --ui-radius-2xl: 1rem;
+  --ui-radius-3xl: 1.25rem;
+
+  /* Compatibility bridge. ~34 files still say `bg-accent` / `text-accent`
+     from the old system; these keep them resolving — onto Aura Velvet
+     green — while components migrate to the semantic names. */
+  --background: var(--av-bg-app);
+  --foreground: var(--av-text-primary);
+  --accent: var(--av-accent-base);
+  --accent-hover: var(--av-accent-hover);
+  --accent-fg: var(--av-accent-fg);
+  --accent-soft: var(--av-accent-soft);
+  --accent-soft-fg: var(--av-accent-soft-fg);
 }
 
-@theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+/* ══════════════════════════════════════════════════════════════════════
+   DARK PALETTE
+   ══════════════════════════════════════════════════════════════════════
+
+   Every colour token above, restated for `.dark`. Nothing else — the motion,
+   spacing and radius groups carry no colour and are shared.
+
+   This is the whole of dark mode. Not one component file changes, because no
+   component names a colour: they all read `bg-surface`, `text-ink-secondary`,
+   `border-subtle`, and those resolve through the Tailwind bridge to the
+   variables redefined here. That is the payoff for the token discipline the
+   rest of this file enforces, and it is why the earlier build's 1,104 `dark:`
+   utilities were deleted rather than maintained — they were a second, parallel
+   description of the same design that could drift from the first.
+
+   ── Why the app is not `#000` ─────────────────────────────────────────────
+
+   Pure black with pure white text maximises contrast and is genuinely harder
+   to read for long stretches: the luminance gap makes text bloom against the
+   background, and this is an app people sit in front of all day. The surfaces
+   below are near-black neutral greys.
+
+   They were briefly tinted green, to tie the dark theme to the forest accent.
+   That was wrong and was reported as a bug: at full-screen scale a 5-point
+   hue shift on every panel stops being a subtle nod and becomes a wash over
+   the entire app, and it puts the surfaces in competition with the one
+   element that is *supposed* to be green. The accent carries the brand; the
+   ground it sits on stays neutral.
+
+   ── Surfaces get LIGHTER with elevation, not darker ───────────────────────
+
+   Inverted from the light theme on purpose. On paper a raised card casts a
+   shadow and the page beneath it darkens; on a dark screen shadow has almost
+   nothing left to darken, so elevation has to be carried by the surface
+   getting lighter instead. `elevated` (popovers, dialogs) is therefore the
+   lightest surface here, where in the light theme it is the same white as
+   `surface`.
+
+   ── Status colours are re-picked, not reused ──────────────────────────────
+
+   The light theme's `--av-danger: #BE123C` is a deep crimson chosen to sit on
+   white. On a near-black background it goes muddy and drops under 3:1 against
+   the surface. Each status hue is lifted and desaturated slightly so the
+   badges stay legible and keep meaning the same thing — this is data encoding
+   in the queues, not decoration, so losing one to poor contrast loses
+   information. `*-soft` backgrounds become translucent tints of the hue
+   rather than pale washes, which is what keeps a chip readable on any of the
+   four surfaces it can land on.
+   ══════════════════════════════════════════════════════════════════════ */
+
+.dark {
+  /* ── Surfaces — lighter as they rise ───────────────────────────────
+     NEUTRAL grey, not tinted.
+
+     These first shipped with a green cast lifted from the forest accent
+     (#0D1512, #141D19 …) on the theory that it would tie the dark theme
+     to the brand. On screen it read as a green wash over the whole app —
+     the sidebar and every table looked tinted rather than dark, which is
+     what was reported. The accent is what carries the brand; the surface
+     underneath it should be a neutral ground, and a tint that competes
+     with the accent makes the green mean less, not more.
+
+     A one-point cool bias (B a shade above R) is kept because a perfectly
+     neutral grey reads slightly warm against the green accent. It is not
+     enough to be seen as a colour. */
+  --av-bg-app: #101214;
+  --av-bg-surface: #17191C;
+  --av-bg-elevated: #1E2125;
+  --av-bg-cushion: #1A1D20;
+  --av-bg-sunken: #131518;
+
+  /* ── Text hierarchy ───────────────────────────────────────────────
+     Off-white, never #FFF, and neutral for the same reason as the
+     surfaces — tinted text on tinted panels was compounding the cast.
+     `inverse` stays near-black: it is the colour that sits ON the accent,
+     and the accent is still a mid-tone green in both themes. */
+  --av-text-primary: #E8EAED;
+  --av-text-secondary: #A1A7AE;
+  --av-text-muted: #6E747C;
+  --av-text-inverse: #101214;
+
+  /* ── Borders ──────────────────────────────────────────────────────
+     Light alpha over dark, the mirror of the light theme's dark alpha
+     over light. `glass` flips from a near-white sheen to a faint one:
+     at 0.85 white it would have drawn a hard line on every glass panel. */
+  --av-border-subtle: rgba(232, 234, 237, 0.10);
+  --av-border-prominent: rgba(232, 234, 237, 0.17);
+  --av-border-glass: rgba(232, 234, 237, 0.10);
+
+  /* The header's frosted fill. Tinted DARKER than the surface it floats
+     over, not lighter: the header is translucent and sits above scrolling
+     content, so it has to stay readable while rows pass beneath it. The
+     light theme uses a near-opaque white here for exactly the same reason,
+     and this is that value's counterpart — hardcoding it white is what
+     left a pale band across the top of the app in dark mode. */
+  --av-glass-bg: rgba(16, 18, 20, 0.82);
+
+  /* ── Accent ───────────────────────────────────────────────────────
+     `base` moves UP to the bright end. The light theme's #0F6E4E is a
+     deep forest that reads as almost black here — an active sidebar row
+     would have looked switched off. `fg` follows it to near-black so
+     text on an accent button keeps its contrast. */
+  --av-accent-base: #2FB37C;
+  --av-accent-bright: #3DD68C;
+  --av-accent-hover: #46C48C;
+  --av-accent-fg: #06120D;
+  --av-accent-soft: rgba(47, 179, 124, 0.16);
+  --av-accent-soft-fg: #7FE0B4;
+  --av-accent-glow: rgba(47, 179, 124, 0.26);
+  --av-accent-ring: rgba(47, 179, 124, 0.45);
+
+  /* ── Semantic status palette ──────────────────────────────────────
+     Same meanings, re-picked for a dark ground. `success` stays pulled
+     off the accent hue for the same reason it is in the light theme:
+     if "finished" and "selected" share a colour, a completed row and
+     the row under the cursor stop being distinguishable. */
+  --av-success: #34D399;
+  --av-success-soft: rgba(52, 211, 153, 0.15);
+  --av-success-fg: #8FEBC6;
+
+  --av-warning: #FBBF24;
+  --av-warning-soft: rgba(251, 191, 36, 0.15);
+  --av-warning-fg: #FCD777;
+
+  --av-danger: #FB7185;
+  --av-danger-soft: rgba(251, 113, 133, 0.16);
+  --av-danger-fg: #FDA4B0;
+
+  --av-info: #60A5FA;
+  --av-info-soft: rgba(96, 165, 250, 0.15);
+  --av-info-fg: #A3C9FD;
+
+  /* Neutral is the one status tone that must not carry a hue at all — it
+     is what a chip uses to say "no state worth colouring". Its previous
+     value was green-tinted, so "neutral" chips read as faintly successful. */
+  --av-neutral: #9AA0A6;
+  --av-neutral-soft: rgba(154, 160, 166, 0.14);
+  --av-neutral-fg: #BCC1C7;
+
+  /* ── Shadows ──────────────────────────────────────────────────────
+     Darker and deeper, because a shadow on a dark surface has very
+     little room to darken further before it stops being visible at all.
+     Opacities roughly triple.
+
+     The cushion's inset highlight is the piece that had to change most.
+     In the light theme it is a near-opaque WHITE line along the top edge
+     that makes a card look lit from above; at 0.95 white on a near-black
+     card it would draw a bright hairline and read as a border. Dropped to
+     a faint 0.06 it does the same job — suggesting a lit top edge —
+     without becoming an outline. */
+  --av-shadow-sm: 0 2px 6px -1px rgba(0, 0, 0, 0.30), 0 1px 3px 0 rgba(0, 0, 0, 0.24);
+  --av-shadow-md: 0 10px 28px -6px rgba(0, 0, 0, 0.38), 0 2px 8px -2px rgba(0, 0, 0, 0.26);
+  --av-shadow-lg: 0 20px 45px -10px rgba(0, 0, 0, 0.46), 0 6px 16px -3px rgba(0, 0, 0, 0.30);
+  --av-shadow-xl: 0 32px 70px -14px rgba(0, 0, 0, 0.55), 0 10px 24px -4px rgba(0, 0, 0, 0.34);
+  --av-shadow-inner: inset 0 2px 4px 0 rgba(0, 0, 0, 0.28);
+
+  --av-shadow-cushion:
+    0 12px 32px -10px rgba(0, 0, 0, 0.45),
+    0 2px 6px 0 rgba(0, 0, 0, 0.28),
+    inset 0 1px 1px 0 rgba(232, 234, 237, 0.06);
+
+  --av-shadow-cushion-hover:
+    0 20px 40px -12px rgba(0, 0, 0, 0.55),
+    0 6px 14px -3px rgba(0, 0, 0, 0.34),
+    inset 0 1px 1px 0 rgba(232, 234, 237, 0.08);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
+/* ══════════════════════════════════════════════════════════════════════
+   THEME CROSS-FADE
+   ══════════════════════════════════════════════════════════════════════
+
+   Named properties only. `transition: all` here would animate every layout
+   property on the whole document each time the class flips — and, because
+   these selectors match every element, it would also re-run on any class
+   change a component makes for an unrelated reason.
+
+   `!important` is not used and must not be: the reduced-motion blocks at the
+   bottom of this file override `transition-duration` globally, and this rule
+   has to stay overridable by them or switching theme would keep animating for
+   someone who asked for no animation.
+
+   Excluded from the fade: anything currently running its own transform or
+   opacity animation. A page mid-transition does not need its colours easing
+   underneath it as well. */
+.av-theme-transition,
+.av-theme-transition *,
+.av-theme-transition *::before,
+.av-theme-transition *::after {
+  transition-property: background-color, border-color, color, fill, stroke, box-shadow;
+  transition-duration: 200ms;
+  transition-timing-function: var(--av-ease);
+}
+
+/* ── 1366x768 Display Optimizations ─────────────────────────────────── */
+@media (max-height: 820px) {
+  .enter-pop {
+    max-height: min(90vh, 580px) !important;
   }
 }
 
+/* ── Text scale ───────────────────────────────────────────────────────
+   Set on the root font size, so it scales every `rem`-based size, padding and
+   gap in the app at once — which is the whole Tailwind scale. Percentages
+   rather than px so a user who has raised their browser's default font size
+   keeps that as the baseline instead of having it overwritten. */
+html[data-font-scale="sm"] { font-size: 93.75%; }
+html[data-font-scale="md"] { font-size: 100%; }
+html[data-font-scale="lg"] { font-size: 112.5%; }
+
+/* ── Density ──────────────────────────────────────────────────────────
+   Scoped to table cells, which is where row height is actually felt: the
+   queues are the screens people stare at, and fitting more rows on screen is
+   the only thing "compact" needs to mean. Specificity (0,1,2) clears the
+   `py-*` utility (0,1,0) on the cell without needing `!important`. */
+html[data-density="compact"] table :is(td, th) {
+  padding-top: 0.3rem;
+  padding-bottom: 0.3rem;
+}
+html[data-density="compact"] table :is(td, th) :is(.py-1\.5, .py-2) {
+  padding-top: 0.125rem;
+  padding-bottom: 0.125rem;
+}
+
+/* ══════════════════════════════════════════════════════════════════════
+   TAILWIND BRIDGE
+   ══════════════════════════════════════════════════════════════════════
+
+   Turns the tokens above into utilities: `bg-surface`, `text-ink-secondary`,
+   `border-subtle`, `shadow-soft-md`, `bg-success-soft` and so on. This is
+   what lets components be written in semantic names instead of raw palette
+   numbers — the whole reason 3,000-odd hardcoded `bg-slate-50` /
+   `text-violet-600` utilities can be retired rather than re-hardcoded.
+
+   `inline` matters: it inlines `var(--av-*)` into each utility rather than
+   resolving it at build time, so anything that changes a token at runtime
+   (density, radius, a future accent switch) is picked up live. */
+@theme inline {
+  /* Surfaces */
+  --color-app: var(--av-bg-app);
+  --color-surface: var(--av-bg-surface);
+  --color-elevated: var(--av-bg-elevated);
+  --color-cushion: var(--av-bg-cushion);
+  --color-sunken: var(--av-bg-sunken);
+
+  /* Text — `ink` rather than `text` so the utility reads `text-ink-muted`
+     instead of the stuttering `text-text-muted`. */
+  --color-ink: var(--av-text-primary);
+  --color-ink-secondary: var(--av-text-secondary);
+  --color-ink-muted: var(--av-text-muted);
+  --color-ink-inverse: var(--av-text-inverse);
+
+  /* Borders */
+  --color-subtle: var(--av-border-subtle);
+  --color-prominent: var(--av-border-prominent);
+  --color-glass: var(--av-border-glass);
+
+  /* Accent */
+  --color-accent: var(--av-accent-base);
+  --color-accent-bright: var(--av-accent-bright);
+  --color-accent-hover: var(--av-accent-hover);
+  --color-accent-fg: var(--av-accent-fg);
+  --color-accent-soft: var(--av-accent-soft);
+  --color-accent-soft-fg: var(--av-accent-soft-fg);
+
+  /* Semantic status */
+  --color-success: var(--av-success);
+  --color-success-soft: var(--av-success-soft);
+  --color-success-fg: var(--av-success-fg);
+  --color-warning: var(--av-warning);
+  --color-warning-soft: var(--av-warning-soft);
+  --color-warning-fg: var(--av-warning-fg);
+  --color-danger: var(--av-danger);
+  --color-danger-soft: var(--av-danger-soft);
+  --color-danger-fg: var(--av-danger-fg);
+  --color-info: var(--av-info);
+  --color-info-soft: var(--av-info-soft);
+  --color-info-fg: var(--av-info-fg);
+  --color-neutral: var(--av-neutral);
+  --color-neutral-soft: var(--av-neutral-soft);
+  --color-neutral-fg: var(--av-neutral-fg);
+
+  /* Legacy names still referenced across the app */
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+
+  /* Elevation */
+  --shadow-soft-sm: var(--av-shadow-sm);
+  --shadow-soft-md: var(--av-shadow-md);
+  --shadow-soft-lg: var(--av-shadow-lg);
+  --shadow-soft-xl: var(--av-shadow-xl);
+  --shadow-cushion: var(--av-shadow-cushion);
+  --shadow-cushion-hover: var(--av-shadow-cushion-hover);
+
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+
+  /* Overriding Tailwind's own radius scale, so the setting reaches every
+     `rounded-*` already written across the app rather than only new markup. */
+  --radius-lg: var(--ui-radius-lg);
+  --radius-xl: var(--ui-radius-xl);
+  --radius-2xl: var(--ui-radius-2xl);
+  --radius-3xl: var(--ui-radius-3xl);
+}
+
 body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  background: var(--av-bg-app);
+  color: var(--av-text-primary);
+  font-family: var(--font-geist-sans), -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  letter-spacing: -0.011em;
+}
+
+/* ══════════════════════════════════════════════════════════════════════
+   AURA VELVET SURFACE & MOTION UTILITIES
+   ══════════════════════════════════════════════════════════════════════ */
+
+/* A card resting on the app background.
+
+   The border is `--av-border-glass` (near-white), not the dark hairline used
+   elsewhere. On a white card over the app's off-white background, a dark
+   1px rule draws a hard outline and flattens the card; a near-white one
+   softens the edge and lets the cushion shadow do the work of separating the
+   card from the page. This is the difference between a card that looks drawn
+   and one that looks placed. */
+.av-surface {
+  background-color: var(--av-bg-surface);
+  border: 1px solid var(--av-border-glass);
+  box-shadow: var(--av-shadow-cushion);
+  border-radius: var(--ui-radius-2xl);
+}
+
+/* The tinted well a stat row or sub-panel sits in. */
+.av-sunken {
+  background-color: var(--av-bg-sunken);
+  border: 1px solid var(--av-border-subtle);
+  border-radius: var(--ui-radius-xl);
+}
+
+/* Sticky chrome (navbar, sticky table headers) that content scrolls under. */
+.av-glass {
+  background: var(--av-glass-bg);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border-bottom: 1px solid var(--av-border-subtle);
+}
+
+/* Hover elevation.
+
+   `translateY` + `box-shadow` only — never margin, height or top — so the
+   hover repaints on the compositor and costs no layout. The 1px lift is
+   inside the card's own shadow spread, so neighbouring cards do not shift:
+   the requirement was "elevation increase, no layout shift", and transform
+   is the only property that can raise something without reflowing it. */
+.av-hover-lift {
+  transition: transform var(--av-dur-base) var(--av-ease),
+              box-shadow var(--av-dur-base) var(--av-ease);
+}
+.av-hover-lift:hover {
+  transform: translateY(-3px);
+  box-shadow: var(--av-shadow-cushion-hover);
+}
+
+/* The pulsing dot on a "Live Real-Time" pill. Scale/opacity only. */
+@keyframes av-pulse-dot {
+  0%, 100% { transform: scale(1); opacity: 1; }
+  50%      { transform: scale(1.9); opacity: 0; }
+}
+.av-pulse-dot::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: 9999px;
+  background-color: currentColor;
+  animation: av-pulse-dot 2s var(--av-ease) infinite;
+}
+
+/* Khmer needs a font that actually carries the glyphs and shapes the
+   diacritic stacks correctly — Geist and Arial have no Khmer coverage, so the
+   browser falls back to whatever the OS offers and subscript consonants land
+   in the wrong place.
+
+   "Noto Sans Khmer" is the UI face. It is drawn for screens rather than for
+   print, which is what this interface needs: dense tables at 11px, and a real
+   weight axis from 100 to 900 so `font-bold` headers get an actual bold cut
+   instead of a browser-synthesised smear. It ships with the app (self-hosted by
+   next/font), so it renders identically on every machine — unlike the KhmerOS
+   family, which only appears where someone installed it locally.
+
+   This is deliberately NOT the print report's font. The report keeps
+   "Khmer OS Battambang" (set inline on #printable-report-document) because it
+   is tuned for paper and matches the legacy Blazor document. Screen and paper
+   are different media with different requirements; they are allowed to differ.
+
+   Latin digits and Ref-No codes inside Khmer screens still resolve through the
+   Geist fallback after it.
+
+   Set by LanguageScript/LanguageProvider on <html data-lang>. */
+html[data-lang="km"] {
+  /* `--font-noto-khmer` is the self-hosted family from next/font in layout.tsx.
+     The literal name stays behind it so a browser that already has the face
+     locally still resolves it. */
+  --font-khmer-ui: var(--font-noto-khmer), "Noto Sans Khmer",
+    var(--font-geist-sans), Arial, Helvetica, sans-serif;
+}
+
+html[data-lang="km"],
+html[data-lang="km"] body,
+/* Tailwind's `font-sans` resolves to the Latin Geist stack, and PageWrapper
+   puts it on the div wrapping *every* page — so it silently re-set the font
+   below <body> and the Khmer face never reached the actual UI. Overriding the
+   utility under the Khmer root is what makes this rule apply in practice
+   rather than only on <body>. `font-mono` is deliberately left alone: it marks
+   ref numbers, serials and phone numbers, which are Latin and rely on the
+   monospace figures lining up. */
+html[data-lang="km"] .font-sans {
+  font-family: var(--font-khmer-ui);
+}
+
+/* The printed report is deliberately untouched by everything above. It already
+   renders 'Khmer OS Battambang' via an inline style on
+   #printable-report-document, which outranks any stylesheet rule, and it uses
+   no `font-sans` classes — so the report keeps the exact typography it has
+   today regardless of what the UI does. */
+
+/* Khmer stacks vowel/consonant marks above and below the baseline, so the
+   tight leading the Latin UI is tuned for clips them in dense table rows. */
+html[data-lang="km"] body {
+  line-height: 1.7;
+}
+
+/* Letter-spacing is a Latin device. Khmer builds a syllable from a base
+   consonant plus stacked sub-consonants and vowel signs that must sit tight
+   against each other to read as one unit — prising them apart with tracking
+   makes correct glyphs look broken, which is most visible on the uppercase,
+   wide-tracked table headers the Latin design uses. Neutralised here rather
+   than removed from each component, so the Latin layout keeps its tracking. */
+html[data-lang="km"] .tracking-wide,
+html[data-lang="km"] .tracking-wider,
+html[data-lang="km"] .tracking-widest {
+  letter-spacing: normal;
+}
+
+/* `uppercase` has no meaning in Khmer — the script has no letter case — but the
+   property still applies to any Latin mixed into the same label (a serial
+   number, "CSV"), producing a jarring size break mid-heading. */
+html[data-lang="km"] .uppercase {
+  text-transform: none;
 }
 
 /* Entrance for popover-style panels positioned with exact fixed pixel
@@ -46,6 +668,605 @@ body {
 .dropdown-panel-in-top {
   animation: dropdown-panel-in-top 0.15s ease-out;
   animation-fill-mode: forwards;
+}
+
+/* Robot Floating & Motion Animations */
+@keyframes robot-float {
+  0%, 100% { transform: translateY(0px); }
+  50% { transform: translateY(-7px); }
+}
+
+@keyframes robot-wave {
+  0%, 100% { transform: rotate(0deg); }
+  20% { transform: rotate(-14deg); }
+  40% { transform: rotate(14deg); }
+  60% { transform: rotate(-8deg); }
+  80% { transform: rotate(8deg); }
+}
+
+@keyframes robot-pulse-glow {
+  0%, 100% { opacity: 0.3; transform: scale(1); }
+  50% { opacity: 0.75; transform: scale(1.15); }
+}
+
+@keyframes tooltip-pop {
+  0% { opacity: 0; transform: translateY(10px) scale(0.92); }
+  100% { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+/* ── Robot Assistant Mascot Pop-out & Waving Animations ─────────────── */
+
+/* Hand Waving "Hi 👋" then Lowering Hand Down ("ទម្លាក់ដៃចុះ") */
+@keyframes robot-hand-hi {
+  0% { transform: rotate(0deg); }
+  8% { transform: rotate(-30deg); }
+  16% { transform: rotate(20deg); }
+  24% { transform: rotate(-24deg); }
+  32% { transform: rotate(15deg); }
+  /* Lower hand down to resting position */
+  42%, 100% { transform: rotate(65deg); }
+}
+
+/* Head Tilt Animation while waving */
+@keyframes robot-head-tilt {
+  0%, 100% { transform: rotate(0deg); }
+  25% { transform: rotate(5deg); }
+  75% { transform: rotate(-4deg); }
+}
+
+/* Visor Eyes Blink */
+@keyframes robot-eyes-blink {
+  0%, 94%, 98%, 100% { transform: scaleY(1); }
+  96% { transform: scaleY(0.1); }
+}
+
+/* Gentle Floating Body Bobbing */
+@keyframes robot-body-bob {
+  0%, 100% { transform: translateY(0px); }
+  50% { transform: translateY(-6px); }
+}
+
+/* Pop Out Elastic Bounce Animation */
+@keyframes robot-pop-out {
+  0% {
+    opacity: 0;
+    transform: translateY(100px) scale(0.3) rotate(12deg);
+  }
+  65% {
+    opacity: 1;
+    transform: translateY(-12px) scale(1.08) rotate(-4deg);
+  }
+  85% {
+    transform: translateY(4px) scale(0.96) rotate(2deg);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0) scale(1) rotate(0deg);
+  }
+}
+
+/* Pop In Retract Animation */
+@keyframes robot-pop-in {
+  0% {
+    opacity: 1;
+    transform: translateY(0) scale(1) rotate(0deg);
+  }
+  25% {
+    transform: translateY(-8px) scale(1.05) rotate(-3deg);
+  }
+  100% {
+    opacity: 0;
+    transform: translateY(100px) scale(0.2) rotate(10deg);
+  }
+}
+
+.animate-robot-float {
+  animation: robot-float 3.5s ease-in-out infinite;
+}
+
+.animate-robot-wave {
+  animation: robot-wave 3s ease-in-out infinite;
+}
+
+.animate-robot-glow {
+  animation: robot-pulse-glow 2.5s ease-in-out infinite;
+}
+
+.animate-tooltip-pop {
+  animation: tooltip-pop 0.3s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+.animate-robot-hand-hi {
+  animation: robot-hand-hi 2.2s cubic-bezier(0.45, 0, 0.55, 1) infinite;
+}
+
+.animate-robot-head-tilt {
+  animation: robot-head-tilt 4s ease-in-out infinite;
+}
+
+.animate-robot-eyes-blink {
+  animation: robot-eyes-blink 4s ease-in-out infinite;
+  transform-origin: center;
+}
+
+.animate-robot-body-bob {
+  animation: robot-body-bob 3s ease-in-out infinite;
+}
+
+/* No `will-change` on any of the one-shot animations below.
+   It used to be on every one of them, and it was costing memory for nothing.
+   A `transform`/`opacity` animation is promoted to its own compositor layer by
+   the browser automatically, for exactly as long as it runs. `will-change`
+   creates that layer up front and — because these all end in `forwards` and
+   never restart — never releases it: the layer stays resident in GPU memory for
+   the life of the page. On a machine with integrated graphics several parked
+   layers is the difference between an idle tab and a warm one. */
+.animate-robot-pop-out {
+  animation: robot-pop-out 0.65s cubic-bezier(0.34, 1.56, 0.64, 1) forwards;
+}
+
+.animate-robot-pop-in {
+  animation: robot-pop-in 0.5s cubic-bezier(0.4, 0, 0.2, 1) forwards;
+}
+
+/* ── GPU-Accelerated Walk, Turn Body Left & Right ("ដើរ និង បែរខ្លួន") ─── */
+@keyframes robot-walk-greeting {
+  /* 0% - 25%: Pop Out & Wave Hi facing front */
+  0% {
+    opacity: 0;
+    transform: translate3d(0, 100px, 0) scale(0.3) rotate(12deg);
+  }
+  15% {
+    opacity: 1;
+    transform: translate3d(0, -10px, 0) scale(1.05) rotate(-3deg);
+  }
+  25% {
+    transform: translate3d(0, 0, 0) scale(1) scaleX(1);
+  }
+  /* 28% - 50%: Hand lowered, turn body facing left (scaleX(-1)) and walk to left */
+  30% {
+    transform: translate3d(-5px, -2px, 0) scale(1) scaleX(-1);
+  }
+  48% {
+    transform: translate3d(-42px, -4px, 0) scale(1) scaleX(-1);
+  }
+  /* 53% - 75%: Turn body facing right (scaleX(1)) and walk to right */
+  58% {
+    transform: translate3d(-10px, -2px, 0) scale(1) scaleX(1);
+  }
+  75% {
+    transform: translate3d(42px, -4px, 0) scale(1) scaleX(1);
+  }
+  /* 82% - 100%: Step back to center facing front & prepare to retract */
+  88% {
+    transform: translate3d(0, 0, 0) scale(1) scaleX(1);
+  }
+  100% {
+    transform: translate3d(0, 0, 0) scale(1) scaleX(1);
+  }
+}
+
+/* Leg Stepping Animations for Left/Right Legs */
+@keyframes robot-leg-left-step {
+  0%, 100% { transform: rotate(0deg); }
+  25% { transform: rotate(-22deg); }
+  50% { transform: rotate(18deg); }
+  75% { transform: rotate(-15deg); }
+}
+
+@keyframes robot-leg-right-step {
+  0%, 100% { transform: rotate(0deg); }
+  25% { transform: rotate(22deg); }
+  50% { transform: rotate(-18deg); }
+  75% { transform: rotate(15deg); }
+}
+
+.animate-robot-walk-greeting {
+  animation: robot-walk-greeting 6s cubic-bezier(0.34, 1.25, 0.64, 1) forwards;
+  transform-origin: center bottom;
+}
+
+/* These two are `infinite`, so they were the worst place of all to pin a layer:
+   the mascot only walks for six seconds after login, but the element stayed
+   mounted, so the reserved layers outlived the animation by the whole session. */
+.animate-robot-leg-left {
+  animation: robot-leg-left-step 1.8s ease-in-out infinite;
+  transform-origin: 42px 103px;
+}
+
+.animate-robot-leg-right {
+  animation: robot-leg-right-step 1.8s ease-in-out infinite;
+  transform-origin: 68px 103px;
+}
+
+/* ── Peeking Head Animation on Hover ───────────────────────────────── */
+@keyframes robot-head-peek {
+  0% {
+    opacity: 0;
+    transform: translate3d(0, 40px, 0) scale(0.65);
+  }
+  70% {
+    opacity: 1;
+    transform: translate3d(0, -4px, 0) scale(0.92);
+  }
+  100% {
+    opacity: 1;
+    transform: translate3d(0, 0px, 0) scale(0.88);
+  }
+}
+
+.animate-robot-head-peek {
+  animation: robot-head-peek 0.35s cubic-bezier(0.34, 1.56, 0.64, 1) forwards;
+}
+
+/* ══════════════════════════════════════════════════════════════════════
+   LOGIN PAGE ENTRANCE ANIMATIONS (GPU-Accelerated)
+   ══════════════════════════════════════════════════════════════════════ */
+
+@keyframes login-slide-left {
+  0% { opacity: 0; transform: translate3d(-120px, 0, 0) scale(0.85) rotate(-6deg); }
+  70% { opacity: 1; transform: translate3d(8px, 0, 0) scale(1.02) rotate(1deg); }
+  100% { opacity: 1; transform: translate3d(0, 0, 0) scale(1) rotate(0deg); }
+}
+
+@keyframes login-slide-right {
+  0% { opacity: 0; transform: translate3d(120px, 0, 0) scale(0.85) rotate(6deg); }
+  70% { opacity: 1; transform: translate3d(-8px, 0, 0) scale(1.02) rotate(-1deg); }
+  100% { opacity: 1; transform: translate3d(0, 0, 0) scale(1) rotate(0deg); }
+}
+
+@keyframes login-slide-up {
+  0% { opacity: 0; transform: translate3d(0, 50px, 0) scale(0.9); }
+  70% { opacity: 1; transform: translate3d(0, -5px, 0) scale(1.02); }
+  100% { opacity: 1; transform: translate3d(0, 0, 0) scale(1); }
+}
+
+/* The login error alert has always asked for `animate-shake`, but the
+   keyframes were never written — so a wrong password produced a silent,
+   easy-to-miss appearance. One-shot and transform-only. */
+@keyframes shake {
+  0%, 100% { transform: translate3d(0, 0, 0); }
+  20% { transform: translate3d(-5px, 0, 0); }
+  40% { transform: translate3d(4px, 0, 0); }
+  60% { transform: translate3d(-3px, 0, 0); }
+  80% { transform: translate3d(2px, 0, 0); }
+}
+.animate-shake {
+  animation: shake 0.4s ease-in-out;
+}
+
+/* Login Success: Split & Fly Away */
+@keyframes login-split-left {
+  0% { opacity: 1; transform: translate3d(0, 0, 0) scale(1) rotate(0deg); }
+  100% { opacity: 0; transform: translate3d(-200px, -60px, 0) scale(0.5) rotate(-20deg); }
+}
+
+@keyframes login-split-right {
+  0% { opacity: 1; transform: translate3d(0, 0, 0) scale(1) rotate(0deg); }
+  100% { opacity: 0; transform: translate3d(200px, -60px, 0) scale(0.5) rotate(20deg); }
+}
+
+@keyframes login-split-up {
+  0% { opacity: 1; transform: translate3d(0, 0, 0) scale(1); }
+  100% { opacity: 0; transform: translate3d(0, -120px, 0) scale(0.4); }
+}
+
+.animate-login-slide-left {
+  animation: login-slide-left 0.7s cubic-bezier(0.34, 1.56, 0.64, 1) forwards;
+}
+.animate-login-slide-right {
+  animation: login-slide-right 0.7s cubic-bezier(0.34, 1.56, 0.64, 1) forwards;
+}
+.animate-login-slide-up {
+  animation: login-slide-up 0.6s cubic-bezier(0.34, 1.56, 0.64, 1) forwards;
+}
+/* There was a `login-glow-pulse` here, on the ambient orbs in
+   `app/login/page.tsx`. It animated `opacity` and `scale` on a 384px element
+   carrying `blur-3xl`, forever. A blur that large is not free to composite even
+   once, and scaling it invalidated the blurred raster on every single frame, so
+   the login screen held a core and the GPU busy for as long as it was left
+   open — which, on a shared workshop PC, is all day. The orbs are now static:
+   blurred once, cached, free. */
+.animate-login-split-left {
+  animation: login-split-left 0.5s cubic-bezier(0.4, 0, 0.2, 1) forwards;
+}
+.animate-login-split-right {
+  animation: login-split-right 0.5s cubic-bezier(0.4, 0, 0.2, 1) forwards;
+}
+.animate-login-split-up {
+  animation: login-split-up 0.5s cubic-bezier(0.4, 0, 0.2, 1) forwards;
+}
+
+/* ══════════════════════════════════════════════════════════════════════
+   HOME PAGE ENTRANCE ANIMATIONS (Post-Login Success)
+   ══════════════════════════════════════════════════════════════════════ */
+
+/* `home-entrance` lived here and is now `.enter-up` in the entrance system
+   below — same movement, but with `backwards` fill so the dashboard no longer
+   needs its 700ms timer to strip the class off again afterwards. */
+
+/* ══════════════════════════════════════════════════════════════════════
+   ENTRANCE SYSTEM
+   ══════════════════════════════════════════════════════════════════════
+
+   One vocabulary for "this element just arrived", used by pages, cards,
+   dialogs and panels so the whole app moves the same way.
+
+   Three rules hold everything here to the cheap path:
+
+   1. `opacity` and `transform` only. Both are handled entirely by the
+      compositor — no layout, no repaint, no main-thread work per frame. The
+      moment an entrance animates `height`, `top`, `filter` or `box-shadow` it
+      stops being free, so none of them do.
+   2. One shot, never `infinite`. Each runs once when its element mounts and
+      then it is over; nothing here contributes to idle cost. (This is the
+      distinction that matters — the animations removed from this file
+      previously were removed for looping forever, not for existing.)
+   3. No `will-change`. The browser promotes an animating element for exactly
+      the duration of its animation and releases the layer afterwards, which is
+      the behaviour we want; declaring it by hand only prevents the release.
+
+   `backwards` fill mode, and the choice matters more than it looks.
+
+   It buys the thing a stagger needs: the element holds the `from` frame during
+   its delay, so a card waiting 180ms is invisible for those 180ms instead of
+   flashing in at full opacity and then jumping back to start.
+
+   What it deliberately does *not* do is hold the final frame, and that is the
+   important half. `forwards`/`both` would leave `transform: translate3d(0,0,0)`
+   set on the element permanently — and an element with any transform other
+   than `none` becomes the containing block for every `position: fixed`
+   descendant inside it. Every full-screen `fixed inset-0` dialog in this app
+   is a descendant of the page container, so holding the end frame would have
+   quietly re-anchored those dialogs to the content area instead of the
+   viewport, long after the animation was over. Because the `to` frame here is
+   identical to each element's natural resting state, dropping it costs nothing
+   visually.
+
+   Durations are short on purpose. An interface people use all day should feel
+   quick, not cinematic — 260-380ms reads as responsive, past ~500ms it starts
+   to feel like waiting. */
+
+@keyframes enter-fade {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+@keyframes enter-up {
+  from { opacity: 0; transform: translate3d(0, 14px, 0); }
+  to   { opacity: 1; transform: translate3d(0, 0, 0); }
+}
+
+@keyframes enter-pop {
+  from { opacity: 0; transform: translate3d(0, 8px, 0) scale(0.97); }
+  to   { opacity: 1; transform: translate3d(0, 0, 0) scale(1); }
+}
+
+@keyframes enter-left {
+  from { opacity: 0; transform: translate3d(-16px, 0, 0); }
+  to   { opacity: 1; transform: translate3d(0, 0, 0); }
+}
+
+@keyframes enter-right {
+  from { opacity: 0; transform: translate3d(24px, 0, 0); }
+  to   { opacity: 1; transform: translate3d(0, 0, 0); }
+}
+
+/* `--enter-i` is the stagger position, set inline by the component
+   (`style={{ "--enter-i": index }}`). Absent, it resolves to 0 and the element
+   simply starts immediately — so these classes are always safe to use alone.
+
+   The caller is responsible for capping the index. A stagger is a flourish for
+   a handful of sibling elements; multiplied across a long list it turns into
+   dead waiting time, and the last row of a 50-row table arriving two seconds
+   after the first is not a nice effect, it is a slow page. */
+.enter-fade,
+.enter-up,
+.enter-pop,
+.enter-left,
+.enter-right {
+  animation-duration: 0.32s;
+  animation-timing-function: cubic-bezier(0.22, 1, 0.36, 1); /* ease-out-quint */
+  animation-fill-mode: backwards;
+  animation-delay: calc(var(--enter-i, 0) * 55ms);
+}
+
+.enter-fade  { animation-name: enter-fade; animation-duration: 0.22s; }
+.enter-up    { animation-name: enter-up; }
+.enter-pop   { animation-name: enter-pop; animation-duration: 0.26s; }
+.enter-left  { animation-name: enter-left; }
+.enter-right { animation-name: enter-right; animation-duration: 0.38s; }
+
+/* ══════════════════════════════════════════════════════════════════════
+   ROUTE TRANSITION
+   ══════════════════════════════════════════════════════════════════════
+
+   The whole content stage, entering as one object when the route changes.
+
+   ── Why this needs a `key`, not just a class ───────────────────────────
+   Every workflow page renders the same `<PageWrapper>`. Navigating between
+   two of them is, to React, the same component in the same position — so it
+   reuses the DOM nodes rather than replacing them. A CSS animation only runs
+   when an element is *inserted*, so on a reused node it never re-fires and
+   the content swaps with no motion whatsoever. `PageTransition` keys its
+   inner element on the pathname, which forces the remount that makes this
+   animation replay. The class alone does nothing.
+
+   ── The curve ─────────────────────────────────────────────────────────
+   The reference is a spring at stiffness 420 / damping 30, which with unit
+   mass is underdamped (ζ ≈ 0.73) — it passes its target and settles back.
+   That barely-perceptible overshoot is what reads as "spring" instead of
+   "fade". `cubic-bezier(0.34, 1.26, 0.64, 1)` reproduces it: the 1.26
+   control point is what carries the curve past 1 before it returns.
+
+   Transform and opacity only, so the entire transition runs on the
+   compositor and costs no layout on any page — including the queues, where
+   the stage contains a table of several hundred rows. */
+/* `page-enter` lived here and is gone. The route stage is now animated by
+   framer-motion in `components/PageTransition.tsx`, which can do the half a
+   keyframe cannot: animate the OUTGOING page out instead of letting it vanish
+   in one frame. A CSS animation only runs on an element that exists, and by
+   the time the route has changed the old page no longer does.
+
+   The constraint that shaped this rule still applies and is restated there —
+   a *held* transform makes the element the containing block for every
+   `position: fixed` dialog inside it, which is how a modal ends up anchored to
+   the page body instead of the viewport. `backwards` is what avoided it here;
+   framer avoids it by clearing the inline transform once the spring settles,
+   so the resting state is `transform: none` either way.
+
+   The `.enter-up` stagger the pages use INSIDE the stage is untouched — it is
+   still CSS, and still fires on mount. */
+
+/* ══════════════════════════════════════════════════════════════════════
+   LARGE-TABLE RENDERING
+   ══════════════════════════════════════════════════════════════════════
+
+   Skip layout and paint for rows that are scrolled out of view.
+
+   Measured on the spare-parts table with all 626 rows loaded (Chrome, CDP
+   Performance metrics): 129,556 DOM nodes and 224 MB of JS heap. Scrolling
+   still held 60fps (median frame 16.7ms, p95 23.4ms), so this is not a
+   scroll-jank fix — the browser was already coping. What it reduces is the
+   standing layout/paint cost of keeping several hundred off-screen rows
+   fully realised, which is what that heap figure is made of.
+
+   `contain-intrinsic-size` is the part that must be right. Without it, a
+   skipped row reports zero height, the scroll container collapses, and the
+   scrollbar jumps around as rows enter and leave. The value is the real
+   rendered row height for each table — measured, not guessed — so the
+   scrollbar geometry is identical whether a row is painted or skipped.
+
+   Deliberately NOT applied to `thead`: the header is `position: sticky` and
+   always on screen, and containing it would break the stickiness.
+
+   This is not a substitute for row virtualization. It lowers the cost of
+   each off-screen row; it does not reduce the node count, and it does not
+   help the ~450ms React spends unmounting a fully-loaded table on
+   navigation. See the audit notes for that. */
+/* Spare parts — measured mode 96px (56px thumbnail + padding + the stacked
+   quantity / badge / progress-bar cell, which is the tallest column). */
+.av-rows-contained-lg > tr {
+  content-visibility: auto;
+  contain-intrinsic-size: auto 96px;
+}
+
+/* Ticket queues and customer rows — measured mode 53–57px, text only. */
+.av-rows-contained-sm > tr {
+  content-visibility: auto;
+  contain-intrinsic-size: auto 55px;
+}
+
+/* ══════════════════════════════════════════════════════════════════════
+   SKELETONS
+   ══════════════════════════════════════════════════════════════════════
+
+   The shimmer behind `components/av/Skeleton.tsx`.
+
+   CSS rather than framer, and this is the one place that choice is load-
+   bearing rather than stylistic: a loading table renders dozens of these at
+   once, and a framer instance per element would mean dozens of rAF loops
+   writing inline styles every frame — on the main thread, while the page is
+   already busy fetching and parsing. One CSS animation is handled by the
+   compositor and costs the same whether there are three on screen or ninety.
+
+   `background-position` is the animated property. It is not one of the two
+   cheap ones, but on a `linear-gradient` background it repaints only the
+   element's own box with no layout and no effect on anything around it —
+   the alternative (a translating pseudo-element behind `overflow: hidden`)
+   needs an extra layer per skeleton, which is the more expensive trade at
+   this count. */
+@keyframes av-skeleton-sweep {
+  from { background-position: 200% 0; }
+  to   { background-position: -200% 0; }
+}
+
+.av-skeleton {
+  background-image: linear-gradient(
+    90deg,
+    var(--av-bg-sunken) 0%,
+    var(--av-bg-cushion) 45%,
+    var(--av-bg-sunken) 90%
+  );
+  background-size: 200% 100%;
+  animation: av-skeleton-sweep 1.4s linear infinite;
+}
+
+/* ══════════════════════════════════════════════════════════════════════
+   REDUCED MOTION
+   ══════════════════════════════════════════════════════════════════════
+
+   Windows "Show animations in Windows" (Settings → Accessibility → Visual
+   effects) and the equivalent on macOS/Linux surface to the browser as
+   `prefers-reduced-motion: reduce`. Honouring it is both the accessibility
+   answer and the performance escape hatch: a user on an old machine can turn
+   one OS switch off and every animation in this app collapses to an instant
+   state change, with no compositor work at all.
+
+   `0.01ms` rather than `none` on purpose — an animation that is cancelled
+   never fires `animationend`, and several one-shot entrances here end in
+   `forwards` to hold their final frame. Running them instantly preserves both.
+   Spinners are exempt: a frozen spinner next to a pending request reads as a
+   hung screen, so they keep turning, just slowly. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+
+    /* Delays must go to zero too, and this line is load-bearing rather than
+       tidiness. The entrance classes above combine `animation-fill-mode: both`
+       with a staggered delay, which means an element renders its `from` frame —
+       opacity 0 — for the whole delay. Collapsing only the duration would leave
+       a staggered card invisible for its full 55ms x n wait and then snap in:
+       reduced motion would have made the app feel broken rather than calm. */
+    animation-delay: 0ms !important;
+    transition-delay: 0ms !important;
+  }
+
+  .animate-spin {
+    animation-duration: 1.2s !important;
+    animation-iteration-count: infinite !important;
+  }
+
+  /* Same exemption, same reasoning: a frozen skeleton next to a pending
+     request reads as a hung screen. Slowed rather than stopped — at 3s the
+     sweep is a slow breath instead of a pulse, which is what someone asking
+     for reduced motion actually wants, and is still visibly "working". */
+  .av-skeleton {
+    animation-duration: 3s !important;
+    animation-iteration-count: infinite !important;
+  }
+}
+
+/* The same collapse, driven by the app's own setting rather than the OS one.
+   Someone may want a calm interface here without changing a system-wide
+   accessibility preference — and on a shared workshop PC, the OS setting is
+   not theirs to change. Kept as a separate block rather than merged into the
+   media query above because a selector and a media query cannot share one
+   rule, and duplicating four declarations is cheaper than the indirection. */
+html[data-motion="reduced"] *,
+html[data-motion="reduced"] *::before,
+html[data-motion="reduced"] *::after {
+  animation-duration: 0.01ms !important;
+  animation-iteration-count: 1 !important;
+  animation-delay: 0ms !important;
+  transition-duration: 0.01ms !important;
+  transition-delay: 0ms !important;
+  scroll-behavior: auto !important;
+}
+
+html[data-motion="reduced"] .av-skeleton {
+  animation-duration: 3s !important;
+  animation-iteration-count: infinite !important;
+}
+
+html[data-motion="reduced"] .animate-spin {
+  animation-duration: 1.2s !important;
+  animation-iteration-count: infinite !important;
 }
 
 /* Print Styles for Technical Service Report */
@@ -75,3 +1296,27 @@ body {
     margin: 10mm;
   }
 }
+
+/* ── Scrollbars ─────────────────────────────────────────────────────
+   One definition. The `.dark` and `[data-preset="aura"]` variants that
+   used to follow were removed with the rest of the old system — with no
+   `.dark` class and no presets, neither selector could ever match. */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--av-border-prominent) transparent;
+}
+*::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+*::-webkit-scrollbar-thumb {
+  background: var(--av-border-prominent);
+  border-radius: 9999px;
+}
+*::-webkit-scrollbar-thumb:hover {
+  background: var(--av-text-muted);
+}
+

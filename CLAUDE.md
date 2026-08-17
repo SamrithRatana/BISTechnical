@@ -150,3 +150,98 @@ known-good state, without needing to redo work from scratch.
 General rule: never `git push --force` to `main` unless you're certain
 no one else (including you, on another PC) has pulled the commits
 you're rewriting.
+
+# UI Redesign — "Aura Velvet" (OS 3.2)
+
+Frontend-wide redesign of `./TestingReact`. Component-level detail lives in
+`TestingReact/src/components/CLAUDE.md` (the `av/` section) — not repeated here.
+Reference implementation is the separate `aura-soft-ui` demo app (port 3001).
+
+## What changed
+
+- **Design tokens** — all colour/elevation/radius/motion defined once in
+  `TestingReact/src/app/globals.css` as `--av-*`, bridged into Tailwind via
+  `@theme inline` as semantic utilities (`bg-surface`, `text-ink-secondary`,
+  `border-subtle`, `bg-success-soft`, …).
+- **Old design system deleted** — 7 presets, 6 accents and the dark palette.
+  3,028 hardcoded palette utilities → 0; 1,104 dead `dark:` utilities → 0.
+- **New component library** at `src/components/av/`: Card, Badge, ProgressBar,
+  ToggleGroup, Sparkline, KpiCard, ChartPanel, AreaChart.
+- **Route-change animation** — `PageTransition` keyed on pathname.
+- **Shared SSE connection** — `useRealtimeTickets` multiplexes one EventSource
+  per tab instead of one per call site.
+- **Responsive drawer** — sidebar is off-canvas below `lg`, icon rail above.
+
+## Key decisions (and why)
+
+- **Light-only. Dark mode removed at the source**, not just the palette —
+  `ThemeScript` used to stamp `.dark` on <html> by the clock, and with the dark
+  palette gone the app would have rendered half-broken every evening. The `dark`
+  Tailwind custom-variant is deliberately KEPT so any stray `dark:` utility
+  stays inert rather than reactivating via `prefers-color-scheme`.
+- **`useTheme()` now carries ergonomics only** — radius, density, font scale,
+  motion. No colour. The `ui.theme.*` assistant actions were removed with it.
+- **Status colours were MAPPED, not collapsed** — emerald→success,
+  rose→danger, amber→warning, blue/teal/cyan→info. They encode ticket state;
+  making everything accent-green would have destroyed meaning. `teal`→`info`
+  on purpose: beside an emerald accent, a teal "done" chip and a green
+  "selected" row stop being distinguishable.
+- **No fabricated metrics.** The old KPI cards showed hardcoded `"+100%"` /
+  `"23.5% vs last month"` that never changed with the data. Trends/sparklines
+  are now computed from real ticket dates, and are OMITTED when the comparison
+  window is empty (a rise from zero has no percentage).
+- **CSS transitions, not framer-motion** — matches the transform/opacity-only
+  performance requirement and adds no dependency.
+- **View Transitions API: tried, reverted.** `<ViewTransition>` exists in the
+  canary React that Next 16.3 vendors and the bundled docs say it works with no
+  config, but the router never activates it — `onEnter`/`onExit`/`onShare`/
+  `onUpdate` never fire and `document.startViewTransition` is never called;
+  `experimental.viewTransition` is not a valid key in this release. Re-check on
+  a future Next upgrade; `PageTransition` is the single file to change.
+
+## Known issues left unresolved
+
+- **47 ESLint problems, all pre-existing** (was 77): 20 `no-explicit-any`,
+  11 unused *variables*, 8 `<img>` instead of `next/image`, 4
+  `react-hooks/set-state-in-effect`, 3 unescaped entities, 1 immutability.
+  - The unused variables are NOT safe to bulk-delete — e.g.
+    `const ok = await deleteTechnicalService(item.id)` has an unused binding but
+    the call performs the deletion.
+  - The 4 `set-state-in-effect` are real cascading-render smells in
+    `ServiceDetailModal`, `PrintPreviewSidebar`, `AiLauncher`, `users/page` —
+    each needs a real refactor, not a mechanical edit.
+- **No time-series endpoint.** `DashboardStats` returns running totals only, so
+  sparklines are bucketed client-side from a bounded ~400-ticket sample
+  (`hooks/useTicketSeries.ts`). A busier window than that is clipped. Proper fix
+  is a server-side aggregate endpoint.
+- **Not built from the original spec**: sidebar per-item subtitles + trailing
+  badges (needs ~40 new i18n strings), navbar ⌘K hint / credits badge / sound
+  icon, list virtualization.
+- `MaxListenersExceededWarning` in the dev log is **noise, not a leak** — it
+  only ever reports 11 (Node warns once per emitter past its default of 10),
+  never climbing.
+
+## Conventions to keep
+
+- **Never write a raw palette utility.** No `bg-slate-50`, `text-violet-600`.
+  There are currently ZERO in `src/` — keep it that way. Use the semantic
+  names, or add a token if one is genuinely missing.
+- **Colour lives in `globals.css` only.** No component hardcodes a hex.
+  Exceptions that must stay hardcoded: `ExcelViewer` (renders the
+  spreadsheet's own colours), `PrintPreviewSidebar` (legacy print replica),
+  `global-error.tsx` (renders when the stylesheet may be unavailable).
+- **Animate transform/opacity only.** Never width/height/top/left. Route
+  animations need `key={pathname}` — a CSS animation does NOT replay on a
+  reused DOM node, which is what made the old page transitions silently do
+  nothing.
+- **All user-visible text goes through i18n** in BOTH `en` and `km`
+  (`km` is typed against `TranslationKey`, so a missing key is a compile error).
+- **Verify in a real browser, not by assertion.** Playwright driving the system
+  Chrome (`channel: "chrome"`) works here; AuthGuard only checks for a
+  `jwt_token` in localStorage, so an init script gets you past login. Watch out
+  for measurement artifacts: sampling `getAnimations()` at a fixed delay misses
+  dev-mode route compilation — listen for `animationstart` instead; and
+  counting SSE requests client-side over-reports, so read the server's own
+  `activeSessions` from `/api/system-activity`.
+- **Flex items holding wide content need `min-w-0`**, or `overflow-x-auto` on
+  an inner scroller is ignored and the whole document scrolls sideways.

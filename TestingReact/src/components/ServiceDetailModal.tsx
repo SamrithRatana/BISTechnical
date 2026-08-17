@@ -1,6 +1,7 @@
 "use client";
 
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect } from "react";
+import { useSafeTimeout } from "@/hooks/useSafeTimeout";
 import {
   RepairServiceItem,
   SparePartItemDetail,
@@ -14,7 +15,7 @@ import {
   fetchSparePartById,
   createItem,
   deleteTechnicalService,
-  invalidateCachePrefix,
+  invalidateCachePrefix
 } from "@/services/api";
 import {
   calculateDaysTaken,
@@ -22,10 +23,11 @@ import {
   formatTime24HourWithAmPm,
   SERVICE_PRIORITIES,
   getServicePriorityId,
-  normaliseServicePriority,
+  normaliseServicePriority
 } from "@/services/types";
 import { fetchUserMap, resolveUserNameSync, getCurrentUserGuid } from "@/services/userService";
 import { useInfiniteList } from "@/hooks/useInfiniteList";
+import type { ActionValues } from "./ActionBus";
 import InfiniteScrollStatus from "./InfiniteScrollStatus";
 import { useI18n } from "@/i18n/LanguageProvider";
 import type { TranslationKey } from "@/i18n/translations";
@@ -33,7 +35,7 @@ import {
   translatePriority,
   translateServiceLocation,
   translateServiceType,
-  translateStatus,
+  translateStatus
 } from "@/i18n/statusLabel";
 import {
   X,
@@ -41,18 +43,12 @@ import {
   Save,
   CheckCircle2,
   Building2,
-  Phone,
-  MapPin,
   User,
   Calendar,
-  Clock,
   Package,
-  ShieldCheck,
-  ChevronDown,
-  ChevronUp,
   Edit3,
   Eye,
-  Trash2,
+  Trash2
 } from "lucide-react";
 import ModernSelect from "./ModernSelect";
 
@@ -65,6 +61,54 @@ interface ModalProps {
   /** default "view" — read-only audit trail; "edit" — form submission */
   mode?: "view" | "edit";
   onSave?: (updatedItem: RepairServiceItem) => void;
+  /**
+   * Field values to type into the edit form on open — the assistant filling it
+   * in on the user's behalf. Strictly prefill: the form still has to be
+   * submitted by hand, and an item typed in this way still needs picking from
+   * the dropdown before it will save, because only that yields a real itemId.
+   */
+  prefill?: ActionValues;
+}
+
+/**
+ * Turns the assistant's string values into the ticket's own field types.
+ * Unknown keys are already filtered out upstream by `sanitizeActionValues`;
+ * what is left is a per-field parse, skipping anything that doesn't convert so
+ * a bad value leaves the form's current one alone rather than blanking it.
+ */
+function ticketPrefillPatch(values: ActionValues): Partial<RepairServiceItem> {
+  const patch: Partial<RepairServiceItem> = {};
+  const text = (key: "companyName" | "contactName" | "phoneNumber" | "address" | "itemName" | "serialNumber" | "customerRequest") => {
+    const value = values[key];
+    if (typeof value === "string" && value.trim()) patch[key] = value.trim();
+  };
+  text("companyName");
+  text("contactName");
+  text("phoneNumber");
+  text("address");
+  text("itemName");
+  text("serialNumber");
+  text("customerRequest");
+
+  if (values.servicePriority) patch.servicePriority = normaliseServicePriority(values.servicePriority);
+
+  if (values.serviceLocation) {
+    const onSite = /site|customer|ក្រៅ/i.test(values.serviceLocation);
+    patch.serviceLocation = onSite ? "OnSite" : "CompanyService";
+  }
+
+  if (values.serviceDate) {
+    const parsed = new Date(values.serviceDate);
+    if (!Number.isNaN(parsed.getTime())) patch.serviceDate = parsed.toISOString();
+  }
+
+  const bool = (raw?: string) => (raw === undefined ? undefined : /^(true|yes|1|y)$/i.test(raw.trim()));
+  const contract = bool(values.hasContract);
+  if (contract !== undefined) patch.hasContract = contract;
+  const thirdParty = bool(values.isThirdPartyRepair);
+  if (thirdParty !== undefined) patch.isThirdPartyRepair = thirdParty;
+
+  return patch;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -77,7 +121,7 @@ function fmtDate(d?: string | null): string | null {
     const datePart = date.toLocaleDateString("en-GB", {
       year: "numeric",
       month: "2-digit",
-      day: "2-digit",
+      day: "2-digit"
     });
     return `${datePart} ${formatTime24HourWithAmPm(date)}`;
   } catch {
@@ -127,14 +171,14 @@ function isRealName(name?: string | null) {
 
 function getStatusBadgeClass(status: string) {
   const s = status?.toUpperCase();
-  if (s === "FINISHED") return "bg-emerald-100 text-emerald-700 dark:bg-emerald-950/60 dark:text-emerald-300";
-  if (s?.includes("AWAITING CUSTOMER")) return "bg-amber-100 text-amber-800 dark:bg-amber-950/60 dark:text-amber-300";
-  if (s?.includes("AWAITING SPAREPART") || s?.includes("SENT SPAREPARTS")) return "bg-blue-100 text-blue-700 dark:bg-blue-950/60 dark:text-blue-300";
-  if (s?.includes("THIRD-PARTY") || s?.includes("THIRD PARTY")) return "bg-purple-100 text-purple-700 dark:bg-purple-950/60 dark:text-purple-300";
-  if (s?.includes("REJECTED")) return "bg-rose-100 text-rose-700 dark:bg-rose-950/60 dark:text-rose-300";
-  if (s?.includes("UNREPAIRABLE")) return "bg-orange-100 text-orange-700 dark:bg-orange-950/60 dark:text-orange-300";
-  if (s?.includes("REPAIRING")) return "bg-cyan-100 text-cyan-700 dark:bg-cyan-950/60 dark:text-cyan-300";
-  return "bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300";
+  if (s === "FINISHED") return "bg-success-soft text-success-fg ";
+  if (s?.includes("AWAITING CUSTOMER")) return "bg-warning-soft text-warning-fg ";
+  if (s?.includes("AWAITING SPAREPART") || s?.includes("SENT SPAREPARTS")) return "bg-info-soft text-info-fg ";
+  if (s?.includes("THIRD-PARTY") || s?.includes("THIRD PARTY")) return "bg-accent-soft text-accent ";
+  if (s?.includes("REJECTED")) return "bg-danger-soft text-danger-fg ";
+  if (s?.includes("UNREPAIRABLE")) return "bg-warning-soft text-warning-fg ";
+  if (s?.includes("REPAIRING")) return "bg-info-soft text-info-fg ";
+  return "bg-sunken text-ink ";
 }
 
 // Returns a translation key rather than a finished label: this is a plain
@@ -145,13 +189,17 @@ function resolveStockBadge(
   condition?: string,
   stockQty = 0
 ): { labelKey: TranslationKey; bg: string; fg: string } {
+  // Tokens rather than the old Bootstrap hexes (#28a745 / #6f42c1 / #dc3545),
+  // so these badges follow the design system instead of sitting a shade off it.
+  // The meanings are unchanged: dispatched/in-stock reads as success, "no stock
+  // deduction" as an informational state, out-of-stock as danger.
   if (serviceStatus === "Sent Spareparts")
-    return { labelKey: "stockBadge.allDispatched", bg: "#28a745", fg: "#fff" };
+    return { labelKey: "stockBadge.allDispatched", bg: "var(--av-success)", fg: "#fff" };
   if (condition === "Fix")
-    return { labelKey: "stockBadge.noStockDeduction", bg: "#6f42c1", fg: "#fff" };
+    return { labelKey: "stockBadge.noStockDeduction", bg: "var(--av-info)", fg: "#fff" };
   if (stockQty <= 0)
-    return { labelKey: "stockBadge.outOfStock", bg: "#dc3545", fg: "#fff" };
-  return { labelKey: "stockBadge.inStock", bg: "#28a745", fg: "#fff" };
+    return { labelKey: "stockBadge.outOfStock", bg: "var(--av-danger)", fg: "#fff" };
+  return { labelKey: "stockBadge.inStock", bg: "var(--av-success)", fg: "#fff" };
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -163,7 +211,7 @@ function TimelineRow({
   label,
   date,
   byName,
-  byGuid,
+  byGuid
 }: {
   label: string;
   date?: string | null;
@@ -178,14 +226,14 @@ function TimelineRow({
     : resolveUserNameSync(byGuid || "");
 
   return (
-    <tr className="border-b border-slate-100 dark:border-slate-800">
-      <td className="py-2 px-3 text-xs font-semibold text-slate-500 dark:text-slate-400 whitespace-nowrap w-48">
+    <tr className="border-b border-subtle ">
+      <td className="py-2 px-3 text-xs font-semibold text-ink-secondary whitespace-nowrap w-48">
         {label}
       </td>
-      <td className="py-2 px-3 text-xs text-slate-800 dark:text-slate-200">
+      <td className="py-2 px-3 text-xs text-ink ">
         {formatted}
         {isRealName(resolvedName) && (
-          <span className="ml-2 text-slate-400 dark:text-slate-500 font-medium">
+          <span className="ml-2 text-ink-muted font-medium">
             | {resolvedName}
           </span>
         )}
@@ -200,7 +248,7 @@ function SectionHeader({ icon, label }: { icon: React.ReactNode; label: string }
     <tr>
       <td
         colSpan={2}
-        className="py-2 px-3 text-xs font-bold text-slate-700 dark:text-slate-200 bg-slate-50 dark:bg-slate-800/60 border-t border-b border-slate-200 dark:border-slate-700"
+        className="py-2 px-3 text-xs font-bold text-ink bg-cushion border-t border-b border-subtle "
       >
         <span className="flex items-center gap-1.5">
           {icon}
@@ -215,11 +263,11 @@ function SectionHeader({ icon, label }: { icon: React.ReactNode; label: string }
 function InfoRow({ label, value }: { label: string; value?: string | number | null }) {
   if (value === undefined || value === null || value === "") return null;
   return (
-    <tr className="border-b border-slate-100 dark:border-slate-800">
-      <td className="py-2 px-3 text-xs font-semibold text-slate-500 dark:text-slate-400 whitespace-nowrap w-48">
+    <tr className="border-b border-subtle ">
+      <td className="py-2 px-3 text-xs font-semibold text-ink-secondary whitespace-nowrap w-48">
         {label}
       </td>
-      <td className="py-2 px-3 text-xs text-slate-800 dark:text-slate-200">{value}</td>
+      <td className="py-2 px-3 text-xs text-ink ">{value}</td>
     </tr>
   );
 }
@@ -245,7 +293,7 @@ function ViewContent({ item }: { item: RepairServiceItem }) {
   return (
     <div className="overflow-y-auto flex-1 p-6">
       {/* ── Audit Timeline table ── */}
-      <table className="w-full mb-4 rounded-xl overflow-hidden border border-slate-200 dark:border-slate-700">
+      <table className="w-full mb-4 rounded-xl overflow-hidden border border-subtle ">
         <tbody>
           <InfoRow label={t("field.refNo")} value={item.reportNo} />
           <TimelineRow label={t("detail.tlReceived")} date={item.serviceDate} byName={item.createdByName} byGuid={item.createBy || item.userId} />
@@ -263,11 +311,11 @@ function ViewContent({ item }: { item: RepairServiceItem }) {
             const days = item.daysTaken ?? calculateDaysTaken(item);
             if (days == null) return null;
             return (
-              <tr className="border-b border-slate-100 dark:border-slate-800">
-                <td className="py-2 px-3 text-xs font-semibold text-slate-500 dark:text-slate-400 w-48">
+              <tr className="border-b border-subtle ">
+                <td className="py-2 px-3 text-xs font-semibold text-ink-secondary w-48">
                   {t("detail.duration")}
                 </td>
-                <td className="py-2 px-3 text-xs text-slate-800 dark:text-slate-200">
+                <td className="py-2 px-3 text-xs text-ink ">
                   {days === 1 ? t("detail.day", { count: days }) : t("detail.days", { count: days })}
                 </td>
               </tr>
@@ -276,7 +324,7 @@ function ViewContent({ item }: { item: RepairServiceItem }) {
 
           {/* Customer Info Section */}
           <SectionHeader
-            icon={<Building2 className="w-3.5 h-3.5 text-blue-500" />}
+            icon={<Building2 className="w-3.5 h-3.5 text-info" />}
             label={t("detail.customerInfo")}
           />
           <InfoRow label={t("field.companyName")} value={item.companyName} />
@@ -286,7 +334,7 @@ function ViewContent({ item }: { item: RepairServiceItem }) {
 
           {/* Machine Info Section */}
           <SectionHeader
-            icon={<Package className="w-3.5 h-3.5 text-blue-500" />}
+            icon={<Package className="w-3.5 h-3.5 text-info" />}
             label={t("detail.machineInfo")}
           />
           <InfoRow label={t("field.itemName")} value={item.itemName} />
@@ -297,15 +345,15 @@ function ViewContent({ item }: { item: RepairServiceItem }) {
 
           {/* Repair Status Section */}
           <SectionHeader
-            icon={<Wrench className="w-3.5 h-3.5 text-blue-500" />}
+            icon={<Wrench className="w-3.5 h-3.5 text-info" />}
             label={t("detail.repairStatus")}
           />
           <InfoRow label={t("field.serviceLocation")} value={translateServiceLocation(item.serviceLocation, t)} />
           <InfoRow label={t("field.serviceType")} value={translateServiceType(item.serviceType, t)} />
           <InfoRow label={t("field.priority")} value={translatePriority(item.servicePriority, t)} />
           {item.status && (
-            <tr className="border-b border-slate-100 dark:border-slate-800">
-              <td className="py-2 px-3 text-xs font-semibold text-slate-500 dark:text-slate-400 w-48">
+            <tr className="border-b border-subtle ">
+              <td className="py-2 px-3 text-xs font-semibold text-ink-secondary w-48">
                 {t("field.status")}
               </td>
               <td className="py-2 px-3">
@@ -317,20 +365,20 @@ function ViewContent({ item }: { item: RepairServiceItem }) {
               </td>
             </tr>
           )}
-          <tr className="border-b border-slate-100 dark:border-slate-800">
-            <td className="py-2 px-3 text-xs font-semibold text-slate-500 dark:text-slate-400 w-48">
+          <tr className="border-b border-subtle ">
+            <td className="py-2 px-3 text-xs font-semibold text-ink-secondary w-48">
               {t("detail.contract")}
             </td>
-            <td className="py-2 px-3 text-xs text-slate-800 dark:text-slate-200">
+            <td className="py-2 px-3 text-xs text-ink ">
               {item.hasContract ? t("value.yes") : t("value.no")}
             </td>
           </tr>
           {item.isThirdPartyRepair && (
-            <tr className="border-b border-slate-100 dark:border-slate-800">
-              <td className="py-2 px-3 text-xs font-semibold text-slate-500 dark:text-slate-400 w-48">
+            <tr className="border-b border-subtle ">
+              <td className="py-2 px-3 text-xs font-semibold text-ink-secondary w-48">
                 {t("detail.thirdPartyRepair")}
               </td>
-              <td className="py-2 px-3 text-xs text-slate-800 dark:text-slate-200">{t("value.yes")}</td>
+              <td className="py-2 px-3 text-xs text-ink ">{t("value.yes")}</td>
             </tr>
           )}
         </tbody>
@@ -339,14 +387,14 @@ function ViewContent({ item }: { item: RepairServiceItem }) {
       {/* ── Spare Parts Table ── */}
       {spareParts.length > 0 && (
         <div className="mt-4">
-          <h3 className="text-xs font-bold text-slate-700 dark:text-slate-200 mb-2 flex items-center gap-1.5">
-            <Wrench className="w-3.5 h-3.5 text-blue-500" />
+          <h3 className="text-xs font-bold text-ink mb-2 flex items-center gap-1.5">
+            <Wrench className="w-3.5 h-3.5 text-info" />
             {t("detail.sparePartDetails")}
           </h3>
-          <div className="overflow-x-auto rounded-xl border border-slate-200 dark:border-slate-700">
+          <div className="overflow-x-auto rounded-xl border border-subtle ">
             <table className="w-full text-xs">
               <thead>
-                <tr className="bg-blue-600 text-white">
+                <tr className="bg-accent text-white">
                   <th className="px-2 py-2 text-center w-10">{t("inspect.colImage")}</th>
                   <th className="px-3 py-2 text-left">{t("field.itemName")}</th>
                   <th className="px-3 py-2 text-left">{t("field.useFor")}</th>
@@ -364,48 +412,52 @@ function ViewContent({ item }: { item: RepairServiceItem }) {
                     sp.stockQuantity
                   );
                   return (
-                    <tr key={sp.id} className="border-b border-slate-100 dark:border-slate-800 hover:bg-slate-50 dark:hover:bg-slate-800/40">
+                    <tr key={sp.id} className="border-b border-subtle hover:bg-cushion ">
                       <td className="px-2 py-1.5 text-center">
                         {sp.pictureUrl ? (
                           <img
                             src={sp.pictureUrl}
                             alt="part"
-                            className="w-9 h-9 object-cover rounded border border-slate-200 mx-auto"
+                            width={36}
+                            height={36}
+                            loading="lazy"
+                            decoding="async"
+                            className="w-9 h-9 object-cover rounded border border-subtle mx-auto"
                           />
                         ) : (
-                          <div className="w-9 h-9 bg-slate-100 dark:bg-slate-800 rounded border border-slate-200 dark:border-slate-700 flex items-center justify-center mx-auto">
-                            <Package className="w-4 h-4 text-slate-400" />
+                          <div className="w-9 h-9 bg-sunken rounded border border-subtle flex items-center justify-center mx-auto">
+                            <Package className="w-4 h-4 text-ink-muted" />
                           </div>
                         )}
                       </td>
                       <td
-                        className="px-3 py-1.5 font-medium text-slate-800 dark:text-slate-200 max-w-[130px] truncate"
+                        className="px-3 py-1.5 font-medium text-ink max-w-[130px] truncate"
                         title={sp.itemName}
                       >
                         {sp.itemName || "—"}
                       </td>
                       <td
-                        className="px-3 py-1.5 text-slate-500 dark:text-slate-400 max-w-[130px] truncate"
+                        className="px-3 py-1.5 text-ink-secondary max-w-[130px] truncate"
                         title={sp.useFor}
                       >
                         {sp.useFor || "—"}
                       </td>
-                      <td className="px-2 py-1.5 text-center font-bold text-slate-800 dark:text-slate-200">
+                      <td className="px-2 py-1.5 text-center font-bold text-ink ">
                         {sp.quantity}
                       </td>
                       <td className="px-2 py-1.5 text-center">
                         {sp.condition ? (
-                          <span className="bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 px-2 py-0.5 rounded-full text-[11px]">
+                          <span className="bg-sunken text-ink-secondary px-2 py-0.5 rounded-full text-[11px]">
                             {sp.condition}
                           </span>
                         ) : (
-                          <span className="text-slate-400">—</span>
+                          <span className="text-ink-muted">—</span>
                         )}
                       </td>
-                      <td className="px-2 py-1.5 text-right font-semibold text-emerald-600 dark:text-emerald-400 whitespace-nowrap">
+                      <td className="px-2 py-1.5 text-right font-semibold text-success whitespace-nowrap">
                         {sp.defaultPrice != null
                           ? `$${sp.defaultPrice.toFixed(2)}`
-                          : <span className="text-slate-400">—</span>}
+                          : <span className="text-ink-muted">—</span>}
                       </td>
                       <td className="px-2 py-1.5 text-center">
                         {/* Stock badge with hover tooltip matching old Blazor stock-qty-tooltip */}
@@ -426,15 +478,15 @@ function ViewContent({ item }: { item: RepairServiceItem }) {
                 })}
               </tbody>
               <tfoot>
-                <tr className="bg-slate-50 dark:bg-slate-800/50 font-bold border-t-2 border-slate-200 dark:border-slate-700">
-                  <td colSpan={3} className="px-3 py-2 text-right text-slate-500 dark:text-slate-400 text-xs">
+                <tr className="bg-cushion font-bold border-t-2 border-subtle ">
+                  <td colSpan={3} className="px-3 py-2 text-right text-ink-secondary text-xs">
                     {t("detail.total")}
                   </td>
-                  <td className="px-2 py-2 text-center text-slate-800 dark:text-slate-200 text-xs">
+                  <td className="px-2 py-2 text-center text-ink text-xs">
                     {totalQty}
                   </td>
                   <td />
-                  <td className="px-2 py-2 text-right text-emerald-600 dark:text-emerald-400 text-xs whitespace-nowrap">
+                  <td className="px-2 py-2 text-right text-success text-xs whitespace-nowrap">
                     ${grandTotal.toFixed(2)}
                   </td>
                   <td />
@@ -459,7 +511,7 @@ function HighlightMatchText({ text, query }: { text: string; query: string }) {
         regex.test(part) ? (
           <mark
             key={i}
-            className="bg-yellow-300 dark:bg-yellow-500/80 text-slate-900 font-bold px-0.5 rounded"
+            className="bg-warning text-ink font-bold px-0.5 rounded"
           >
             {part}
           </mark>
@@ -481,7 +533,7 @@ function EditContent({
   saveSuccess,
   submitError,
   onClose,
-  handleSubmit,
+  handleSubmit
 }: {
   formData: RepairServiceItem;
   setFormData: (d: RepairServiceItem) => void;
@@ -493,8 +545,8 @@ function EditContent({
 }) {
   const { t } = useI18n();
   const inputCls =
-    "w-full px-3 py-2 text-xs border border-slate-200 dark:border-slate-700 rounded-xl bg-white dark:bg-slate-800 dark:text-slate-100 focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 outline-none";
-  const labelCls = "text-xs font-semibold text-slate-700 dark:text-slate-300";
+    "w-full px-3.5 py-2.5 text-xs border border-subtle rounded-xl bg-surface text-ink placeholder-ink-muted focus:ring-2 focus:ring-accent/20 focus:border-accent outline-none transition-colors duration-150";
+  const labelCls = "text-xs font-semibold text-ink-secondary";
 
   // ── Company Autocomplete state ──
   const [showCompanyDropdown, setShowCompanyDropdown] = useState(false);
@@ -513,13 +565,13 @@ function EditContent({
     reachedEnd: companiesReachedEnd,
     limitReached: companiesLimitReached,
     scrollRootRef: companyScrollRootRef,
-    sentinelRef: companySentinelRef,
+    sentinelRef: companySentinelRef
   } = useInfiniteList<CustomerItem, HTMLDivElement, HTMLDivElement>({
     fetchPage: (pageNumber, size) => fetchCustomerCenter(pageNumber, size, companyTerm),
     pageSize: 50,
     resetKey: companyTerm,
     getId: (c) => c.id,
-    disabled: companyTerm.length < 1,
+    disabled: companyTerm.length < 1
   });
 
   const itemTerm = itemSearchQuery.trim();
@@ -530,13 +582,13 @@ function EditContent({
     reachedEnd: itemsReachedEnd,
     limitReached: itemsLimitReached,
     scrollRootRef: itemScrollRootRef,
-    sentinelRef: itemSentinelRef,
+    sentinelRef: itemSentinelRef
   } = useInfiniteList<ItemModel, HTMLDivElement, HTMLDivElement>({
     fetchPage: (pageNumber, size) => fetchItemsInventory(pageNumber, size, itemTerm),
     pageSize: 20,
     resetKey: itemTerm,
     getId: (m) => m.id,
-    disabled: itemTerm.length < 1,
+    disabled: itemTerm.length < 1
   });
 
   const handleCompanySearch = (val: string) => {
@@ -552,7 +604,7 @@ function EditContent({
       companyName: comp.companyName,
       phoneNumber: comp.phoneNumber && comp.phoneNumber !== "—" ? comp.phoneNumber : (formData.phoneNumber ?? ""),
       contactName: comp.contactName && comp.contactName !== "—" ? comp.contactName : (formData.contactName ?? ""),
-      address: comp.address && comp.address !== "—" ? comp.address : (formData.address ?? ""),
+      address: comp.address && comp.address !== "—" ? comp.address : (formData.address ?? "")
     });
     setShowCompanyDropdown(false);
   };
@@ -572,7 +624,7 @@ function EditContent({
       ...formData,
       itemId: item.id,
       itemName: item.itemName ?? "",
-      serialNumber: item.serialNumber ?? "",
+      serialNumber: item.serialNumber ?? ""
     });
     setShowItemDropdown(false);
   };
@@ -614,13 +666,13 @@ function EditContent({
     >
       <div className="flex-1 overflow-y-auto p-4 sm:p-6 space-y-5">
         {saveSuccess && (
-          <div className="p-3 bg-emerald-50 text-emerald-800 border border-emerald-200 rounded-xl text-xs flex items-center gap-2 font-medium">
-            <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+          <div className="p-3 bg-success-soft text-success-fg border border-success rounded-xl text-xs flex items-center gap-2 font-medium">
+            <CheckCircle2 className="w-4 h-4 text-success shrink-0" />
             Ticket updated successfully!
           </div>
         )}
         {submitError && (
-          <div className="p-3 bg-rose-50 text-rose-800 border border-rose-200 dark:bg-rose-950/40 dark:text-rose-300 dark:border-rose-900 rounded-xl text-xs flex items-center gap-2 font-medium">
+          <div className="p-3 bg-danger-soft text-danger-fg border border-danger rounded-xl text-xs flex items-center gap-2 font-medium">
             <X className="w-4 h-4 shrink-0" />
             {submitError}
           </div>
@@ -629,7 +681,7 @@ function EditContent({
       {/* Service Date — kept at the top: it is the ticket's anchor date and
           the field most often corrected on arrival. */}
       <div>
-        <p className="text-[11px] font-bold text-slate-400 uppercase tracking-wider mb-2 flex items-center gap-1.5">
+        <p className="text-[11px] font-bold text-ink-muted uppercase tracking-wider mb-2 flex items-center gap-1.5">
           <Calendar className="w-3.5 h-3.5" /> {t("detail.serviceDate")}
         </p>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
@@ -647,7 +699,7 @@ function EditContent({
 
       {/* Customer Info */}
       <div>
-        <p className="text-[11px] font-bold text-slate-400 uppercase tracking-wider mb-2 flex items-center gap-1.5">
+        <p className="text-[11px] font-bold text-ink-muted uppercase tracking-wider mb-2 flex items-center gap-1.5">
           <Building2 className="w-3.5 h-3.5" /> {t("detail.customerInfo")}
         </p>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
@@ -669,17 +721,17 @@ function EditContent({
             {showCompanyDropdown && companies.length > 0 && (
               <div
                 ref={companyScrollRootRef}
-                className="absolute left-0 right-0 top-full mt-1 z-50 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl shadow-xl max-h-60 overflow-y-auto text-xs"
+                className="absolute left-0 right-0 top-full mt-1 z-50 bg-surface border border-subtle rounded-xl shadow-xl max-h-60 overflow-y-auto text-xs"
               >
-                <div className="sticky top-0 bg-slate-50 dark:bg-slate-800 px-3 py-2 border-b border-slate-200 dark:border-slate-700 flex items-center justify-between font-semibold text-slate-600 dark:text-slate-300">
+                <div className="sticky top-0 bg-cushion px-3 py-2 border-b border-subtle flex items-center justify-between font-semibold text-ink-secondary ">
                   <span className="flex items-center gap-1.5">
-                    <Building2 className="w-3.5 h-3.5 text-blue-500" />
+                    <Building2 className="w-3.5 h-3.5 text-info" />
                     {t("detail.foundCompanies", { count: totalCompanies })}
                   </span>
                   <button
                     type="button"
                     onClick={() => setShowCompanyDropdown(false)}
-                    className="text-red-500 font-bold hover:bg-red-50 dark:hover:bg-red-950/40 p-0.5 rounded text-sm"
+                    className="text-danger font-bold hover:bg-danger-soft p-0.5 rounded text-sm"
                   >
                     ×
                   </button>
@@ -688,13 +740,13 @@ function EditContent({
                   <div
                     key={comp.id}
                     onClick={() => handleSelectCompany(comp)}
-                    className="px-3 py-2 border-b border-slate-100 dark:border-slate-800 hover:bg-blue-50 dark:hover:bg-slate-800 cursor-pointer transition-colors"
+                    className="px-3 py-2 border-b border-subtle hover:bg-accent-soft cursor-pointer transition-colors"
                   >
-                    <div className="font-semibold text-slate-800 dark:text-slate-100">
+                    <div className="font-semibold text-ink ">
                       <HighlightMatchText text={comp.companyName} query={formData.companyName || ""} />
                     </div>
                     {(comp.address !== "—" || comp.phoneNumber !== "—") && (
-                      <div className="text-[11px] text-slate-400 dark:text-slate-500 truncate">
+                      <div className="text-[11px] text-ink-muted truncate">
                         {[
                           comp.contactName !== "—" ? comp.contactName : null,
                           comp.phoneNumber !== "—" ? comp.phoneNumber : null,
@@ -721,20 +773,20 @@ function EditContent({
             <label className={labelCls}>{t("field.contactName")}</label>
             <input type="text" value={formData.contactName || ""}
               disabled
-              className={`${inputCls} disabled:bg-slate-100 disabled:text-slate-500 disabled:cursor-not-allowed dark:disabled:bg-slate-800/60 dark:disabled:text-slate-500`} />
+              className={`${inputCls} disabled:bg-sunken disabled:text-ink-secondary disabled:cursor-not-allowed `} />
           </div>
           <div className="space-y-1">
             <label className={labelCls}>{t("field.address")}</label>
             <input type="text" value={formData.address || ""}
               disabled
-              className={`${inputCls} disabled:bg-slate-100 disabled:text-slate-500 disabled:cursor-not-allowed dark:disabled:bg-slate-800/60 dark:disabled:text-slate-500`} />
+              className={`${inputCls} disabled:bg-sunken disabled:text-ink-secondary disabled:cursor-not-allowed `} />
           </div>
         </div>
       </div>
 
       {/* Machine Info */}
       <div>
-        <p className="text-[11px] font-bold text-slate-400 uppercase tracking-wider mb-2 flex items-center gap-1.5">
+        <p className="text-[11px] font-bold text-ink-muted uppercase tracking-wider mb-2 flex items-center gap-1.5">
           <Package className="w-3.5 h-3.5" /> {t("detail.machineInfo")}
         </p>
         <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
@@ -756,17 +808,17 @@ function EditContent({
             {showItemDropdown && itemModels.length > 0 && (
               <div
                 ref={itemScrollRootRef}
-                className="absolute left-0 right-0 top-full mt-1 z-50 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl shadow-xl max-h-60 overflow-y-auto text-xs"
+                className="absolute left-0 right-0 top-full mt-1 z-50 bg-surface border border-subtle rounded-xl shadow-xl max-h-60 overflow-y-auto text-xs"
               >
-                <div className="sticky top-0 bg-slate-50 dark:bg-slate-800 px-3 py-2 border-b border-slate-200 dark:border-slate-700 flex items-center justify-between font-semibold text-slate-600 dark:text-slate-300">
+                <div className="sticky top-0 bg-cushion px-3 py-2 border-b border-subtle flex items-center justify-between font-semibold text-ink-secondary ">
                   <span className="flex items-center gap-1.5">
-                    <Package className="w-3.5 h-3.5 text-emerald-500" />
+                    <Package className="w-3.5 h-3.5 text-success" />
                     {t("detail.foundItems", { count: totalItems })}
                   </span>
                   <button
                     type="button"
                     onClick={() => setShowItemDropdown(false)}
-                    className="text-red-500 font-bold hover:bg-red-50 dark:hover:bg-red-950/40 p-0.5 rounded text-sm"
+                    className="text-danger font-bold hover:bg-danger-soft p-0.5 rounded text-sm"
                   >
                     ×
                   </button>
@@ -775,9 +827,9 @@ function EditContent({
                   <div
                     key={model.id}
                     onClick={() => handleSelectItem(model)}
-                    className="px-3 py-2 border-b border-slate-100 dark:border-slate-800 hover:bg-emerald-50 dark:hover:bg-slate-800 cursor-pointer transition-colors"
+                    className="px-3 py-2 border-b border-subtle hover:bg-success-soft cursor-pointer transition-colors"
                   >
-                    <div className="font-semibold text-slate-800 dark:text-slate-100">
+                    <div className="font-semibold text-ink ">
                       <HighlightMatchText
                         text={`${model.itemName} | ${model.serialNumber}`}
                         query={formData.itemName || formData.serialNumber || ""}
@@ -796,15 +848,15 @@ function EditContent({
               </div>
             )}
             {showItemDropdown && itemModels.length === 0 && (formData.itemName || "").trim().length >= 1 && (
-              <div className="absolute left-0 right-0 top-full mt-1 z-50 bg-white dark:bg-slate-900 border border-amber-300 dark:border-amber-800 rounded-xl shadow-xl text-xs p-3 space-y-2">
-                <p className="text-amber-700 dark:text-amber-400">
+              <div className="absolute left-0 right-0 top-full mt-1 z-50 bg-surface border border-warning rounded-xl shadow-xl text-xs p-3 space-y-2">
+                <p className="text-warning-fg ">
                   {t("detail.noItemMatches", { name: formData.itemName ?? "" })}
                 </p>
                 <button
                   type="button"
                   onClick={handleCreateNewItem}
                   disabled={isCreatingItem}
-                  className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-white bg-emerald-600 rounded-lg hover:bg-emerald-700 transition-colors disabled:opacity-60"
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-white bg-success rounded-lg hover:bg-success transition-colors disabled:opacity-60"
                 >
                   {isCreatingItem
                     ? t("detail.creating")
@@ -813,7 +865,7 @@ function EditContent({
               </div>
             )}
             {formData.itemId && (
-              <p className="text-[11px] text-emerald-600 dark:text-emerald-400 flex items-center gap-1">
+              <p className="text-[11px] text-success flex items-center gap-1">
                 <CheckCircle2 className="w-3 h-3" /> {t("detail.linkedToItem")}
               </p>
             )}
@@ -852,7 +904,7 @@ function EditContent({
 
       {/* Service / Status */}
       <div>
-        <p className="text-[11px] font-bold text-slate-400 uppercase tracking-wider mb-2 flex items-center gap-1.5">
+        <p className="text-[11px] font-bold text-ink-muted uppercase tracking-wider mb-2 flex items-center gap-1.5">
           <Wrench className="w-3.5 h-3.5" /> {t("detail.serviceStatus")}
         </p>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
@@ -865,11 +917,9 @@ function EditContent({
             <ModernSelect
               value={normaliseServicePriority(formData.servicePriority)}
               onChange={(v) => setFormData({ ...formData, servicePriority: v })}
-              // Only the label is translated — `value` stays the backend's
-              // own spelling, per the casing note above.
               options={SERVICE_PRIORITIES.map((p) => ({
                 value: p.name,
-                label: translatePriority(p.name, t),
+                label: translatePriority(p.name, t)
               }))}
             />
           </div>
@@ -880,19 +930,19 @@ function EditContent({
               onChange={(v) => setFormData({ ...formData, serviceLocation: v })}
               options={SERVICE_LOCATIONS.map((loc) => ({
                 value: loc,
-                label: translateServiceLocation(loc, t),
+                label: translateServiceLocation(loc, t)
               }))}
             />
           </div>
         </div>
         <div className="flex items-center gap-4 mt-3">
-          <label className="flex items-center gap-2 text-xs text-slate-600 dark:text-slate-400 cursor-pointer">
+          <label className="flex items-center gap-2 text-xs text-ink-secondary cursor-pointer">
             <input type="checkbox" checked={!!formData.hasContract}
               onChange={(e) => setFormData({ ...formData, hasContract: e.target.checked })}
               className="rounded" />
             {t("detail.hasContract")}
           </label>
-          <label className="flex items-center gap-2 text-xs text-slate-600 dark:text-slate-400 cursor-pointer">
+          <label className="flex items-center gap-2 text-xs text-ink-secondary cursor-pointer">
             <input type="checkbox" checked={!!formData.isThirdPartyRepair}
               onChange={(e) => setFormData({ ...formData, isThirdPartyRepair: e.target.checked })}
               className="rounded" />
@@ -903,13 +953,13 @@ function EditContent({
       </div>
 
       {/* Actions (Sticky footer) */}
-      <div className="sticky bottom-0 z-20 px-6 py-3.5 bg-slate-50/90 dark:bg-slate-900/90 backdrop-blur border-t border-slate-100 dark:border-slate-800 flex items-center justify-end gap-3 shrink-0">
+      <div className="sticky bottom-0 z-20 px-6 py-3.5 flex items-center justify-end gap-3 shrink-0 bg-cushion backdrop-blur border-t border-subtle">
         <button type="button" onClick={onClose}
-          className="px-4 py-2 text-xs font-semibold text-slate-700 dark:text-slate-300 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors shadow-sm">
+          className="px-4 py-2 text-xs font-semibold rounded-xl transition-colors duration-150 shadow-soft-sm text-ink bg-surface border border-subtle hover:bg-cushion">
           {t("action.cancel")}
         </button>
         <button type="submit" disabled={isSaving}
-          className="inline-flex items-center gap-1.5 px-5 py-2 text-xs font-semibold text-white bg-blue-600 rounded-xl hover:bg-blue-700 shadow-md shadow-blue-500/20 transition-all disabled:opacity-60">
+          className="inline-flex items-center gap-1.5 px-5 py-2 text-xs font-bold rounded-xl shadow-soft-md transition-colors duration-150 disabled:opacity-60 text-accent-fg bg-accent hover:bg-accent-hover">
           <Save className="w-3.5 h-3.5" />
           {isSaving ? t("action.saving") : t("detail.saveChanges")}
         </button>
@@ -921,9 +971,10 @@ function EditContent({
 // ─────────────────────────────────────────────────────────────────────────────
 // Main export
 // ─────────────────────────────────────────────────────────────────────────────
-export default function ServiceDetailModal({ item, onClose, mode = "view", onSave }: ModalProps) {
+export default function ServiceDetailModal({ item, onClose, mode = "view", onSave, prefill }: ModalProps) {
   // Every hook must run before the `!item` bail-out below — React requires an
   // identical hook order on every render of a component instance.
+  const later = useSafeTimeout();
   const [currentMode, setCurrentMode] = useState<"view" | "edit">(mode);
   const [formData, setFormData] = useState<RepairServiceItem>(
     () => ({ ...(item ?? {}) }) as RepairServiceItem
@@ -1001,7 +1052,7 @@ export default function ServiceDetailModal({ item, onClose, mode = "view", onSav
                 useFor: catalog?.useFor ?? "",
                 pictureUrl: catalog?.pictureUrl ?? "",
                 defaultPrice: catalog?.defaultPrice ?? 0,
-                stockQuantity: catalog?.quantity ?? 0,
+                stockQuantity: catalog?.quantity ?? 0
               } as SparePartItemDetail;
             })
           )
@@ -1015,6 +1066,15 @@ export default function ServiceDetailModal({ item, onClose, mode = "view", onSav
     })();
     return () => { cancelled = true; };
   }, [itemId]);
+
+  // Applied after `fullItem` lands, not on mount: the fetch above replaces
+  // formData wholesale with the authoritative record, so a prefill written
+  // first would be silently overwritten by whatever was already stored.
+  // Re-running on `fullItem` puts the user's instruction back on top.
+  useEffect(() => {
+    if (!prefill) return;
+    setFormData((prev) => ({ ...prev, ...ticketPrefillPatch(prefill) }));
+  }, [prefill, fullItem]);
 
   if (!item) return null;
 
@@ -1073,7 +1133,7 @@ export default function ServiceDetailModal({ item, onClose, mode = "view", onSav
           description: (p.description ?? p.itemName ?? p.useFor ?? "") as string,
           quantity: (p.quantity ?? 1) as number,
           condition: ((p.condition as string) || "Replace"),
-          isHoldStatus: Boolean(p.isHoldStatus),
+          isHoldStatus: Boolean(p.isHoldStatus)
         }))
         .filter((p) => Boolean(p.sparepartId));
 
@@ -1093,14 +1153,14 @@ export default function ServiceDetailModal({ item, onClose, mode = "view", onSav
           servicePriorityId: priorityId,
           itemId: formData.itemId,
           customerRequest:
-            formData.customerRequest?.trim() || formData.inspection?.trim() || "Receive Item Service Request",
+            formData.customerRequest?.trim() || formData.inspection?.trim() || "Receive Item Service Request"
         };
         if (userGuid) payload.createBy = userGuid;
 
         const res = await fetch("/api/proxy/receiveitem", {
           method: "POST",
           headers,
-          body: JSON.stringify(payload),
+          body: JSON.stringify(payload)
         });
         if (!res.ok) {
           const errText = await res.text().catch(() => "");
@@ -1174,13 +1234,13 @@ export default function ServiceDetailModal({ item, onClose, mode = "view", onSav
           servicePriorityId: priorityId,
           statusId,
           hasContract: Boolean(formData.hasContract),
-          sparepartItems: spareparts,
+          sparepartItems: spareparts
         };
 
         const res = await fetch("/api/proxy/technicalservices", {
           method: "PUT",
           headers,
-          body: JSON.stringify(servicePayload),
+          body: JSON.stringify(servicePayload)
         });
         if (!res.ok) {
           const errText = await res.text().catch(() => "");
@@ -1200,7 +1260,9 @@ export default function ServiceDetailModal({ item, onClose, mode = "view", onSav
 
       setSaveSuccess(true);
       if (onSave) onSave(savedItem);
-      setTimeout(() => {
+      // Cancelled on unmount: all three of these touch state or the
+      // parent, and 600ms is long enough to close the modal by hand.
+      later(() => {
         setIsSaving(false);
         setSaveSuccess(false);
         onClose();
@@ -1213,28 +1275,32 @@ export default function ServiceDetailModal({ item, onClose, mode = "view", onSav
   };
 
   const isView = currentMode === "view";
+  const modalWrapperClass = "bg-surface border border-subtle shadow-soft-xl text-ink";
+  const headerBgClass = "border-b border-subtle bg-cushion";
+
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center p-2 sm:p-4 bg-slate-950/60 backdrop-blur-sm"
+      className="enter-fade fixed inset-0 z-50 flex items-center justify-center p-2 sm:p-4 bg-ink/70 backdrop-blur-md overflow-hidden"
       onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
     >
-      <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 w-full max-w-4xl rounded-2xl shadow-2xl overflow-hidden flex flex-col max-h-[96vh] sm:max-h-[90vh] my-auto">
+
+      <div className={`enter-pop w-full max-w-4xl rounded-2xl overflow-hidden flex flex-col max-h-[92vh] sm:max-h-[85vh] my-auto relative z-10 ${modalWrapperClass}`}>
 
         {/* ── Header ── */}
-        <div className="px-5 py-3.5 border-b border-slate-100 dark:border-slate-800 flex items-center justify-between bg-slate-50/50 dark:bg-slate-900/50 shrink-0">
+        <div className={`px-5 py-3 flex items-center justify-between shrink-0 ${headerBgClass}`}>
           <div className="flex items-center gap-3">
-            <div className="w-9 h-9 rounded-xl bg-blue-50 dark:bg-blue-950/50 text-blue-600 dark:text-blue-400 flex items-center justify-center">
+            <div className="w-9 h-9 rounded-xl bg-info-soft text-info flex items-center justify-center">
               <Wrench className="w-4 h-4" />
             </div>
             <div>
-              <h2 className="text-sm font-bold text-slate-900 dark:text-slate-100 flex items-center gap-2">
+              <h2 className="text-sm font-bold text-ink flex items-center gap-2">
                 {isView ? t("detail.viewTitle") : t("detail.editTitle")}
-                <span className="font-mono text-xs px-2 py-0.5 rounded bg-blue-100 text-blue-700 dark:bg-blue-950 dark:text-blue-300">
+                <span className="font-mono text-xs px-2 py-0.5 rounded bg-info-soft text-info-fg ">
                   {item.reportNo || "TICKET"}
                 </span>
               </h2>
-              <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
+              <p className="text-xs text-ink-secondary mt-0.5">
                 {t("detail.receivedPrefix")} {fmtDate(item.serviceDate) ?? "N/A"}
                 &nbsp;·&nbsp;
                 <span className={`text-[11px] font-semibold px-1.5 py-0.5 rounded-full ${getStatusBadgeClass(item.status)}`}>
@@ -1249,7 +1315,7 @@ export default function ServiceDetailModal({ item, onClose, mode = "view", onSav
             <button
               type="button"
               onClick={() => setCurrentMode(isView ? "edit" : "view")}
-              className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
+              className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg border border-subtle text-ink-secondary hover:bg-sunken transition-colors"
             >
               {isView ? (
                 <><Edit3 className="w-3.5 h-3.5" /> {t("action.edit")}</>
@@ -1260,14 +1326,14 @@ export default function ServiceDetailModal({ item, onClose, mode = "view", onSav
             <button
               type="button"
               onClick={() => setShowConfirmDelete(true)}
-              className="p-1.5 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50 dark:hover:bg-slate-800 transition-colors"
+              className="p-1.5 rounded-lg text-ink-muted hover:text-danger hover:bg-danger-soft transition-colors"
               title={t("action.deleteTicket")}
             >
               <Trash2 className="w-4 h-4" />
             </button>
             <button
               onClick={onClose}
-              className="p-1.5 rounded-lg text-slate-400 hover:text-slate-600 hover:bg-slate-100 dark:hover:bg-slate-800 dark:hover:text-slate-200 transition-colors"
+              className="p-1.5 rounded-lg text-ink-muted hover:text-ink-secondary hover:bg-sunken transition-colors"
             >
               <X className="w-4 h-4" />
             </button>
@@ -1292,27 +1358,27 @@ export default function ServiceDetailModal({ item, onClose, mode = "view", onSav
         {/* Delete Ticket Confirmation Dialog */}
         {showConfirmDelete && (
           <div
-            className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-slate-950/60 backdrop-blur-sm"
+            className="enter-fade fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-ink/60 backdrop-blur-sm"
             onClick={(e) => { if (e.target === e.currentTarget) setShowConfirmDelete(false); }}
           >
-            <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 w-full max-w-md rounded-2xl shadow-2xl p-6 space-y-4 my-auto">
-              <div className="w-12 h-12 rounded-2xl bg-rose-50 dark:bg-rose-950/50 text-rose-600 dark:text-rose-400 flex items-center justify-center mx-auto">
+            <div className="enter-pop bg-surface border border-subtle w-full max-w-md rounded-2xl shadow-2xl p-6 space-y-4 my-auto">
+              <div className="w-12 h-12 rounded-2xl bg-danger-soft text-danger flex items-center justify-center mx-auto">
                 <Trash2 className="w-6 h-6" />
               </div>
               <div className="text-center space-y-1">
-                <h3 className="text-sm font-bold text-slate-900 dark:text-slate-100">{t("table.deleteTicketTitle")}</h3>
-                <p className="text-xs text-slate-500 dark:text-slate-400">
+                <h3 className="text-sm font-bold text-ink ">{t("table.deleteTicketTitle")}</h3>
+                <p className="text-xs text-ink-secondary ">
                   {t("table.deleteTicketBody", {
                     ref: item.reportNo ?? "",
-                    company: item.companyName ?? "",
+                    company: item.companyName ?? ""
                   })}
                 </p>
               </div>
-              <div className="flex items-center justify-end gap-3 pt-2 border-t border-slate-100 dark:border-slate-800">
+              <div className="flex items-center justify-end gap-3 pt-2 border-t border-subtle ">
                 <button
                   type="button"
                   onClick={() => setShowConfirmDelete(false)}
-                  className="px-4 py-2 text-xs font-semibold text-slate-700 dark:text-slate-300 bg-slate-100 dark:bg-slate-800 rounded-xl hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors"
+                  className="px-4 py-2 text-xs font-semibold text-ink bg-sunken rounded-xl hover:bg-sunken transition-colors"
                 >
                   {t("action.cancel")}
                 </button>
@@ -1328,7 +1394,7 @@ export default function ServiceDetailModal({ item, onClose, mode = "view", onSav
                     onClose();
                   }}
                   disabled={isDeleting}
-                  className="px-5 py-2 text-xs font-semibold text-white bg-rose-600 rounded-xl hover:bg-rose-700 shadow-md shadow-rose-500/20 transition-all disabled:opacity-60"
+                  className="px-5 py-2 text-xs font-semibold text-white bg-danger rounded-xl hover:bg-danger shadow-md transition-all disabled:opacity-60"
                 >
                   {isDeleting ? t("table.deleting") : t("table.confirmDelete")}
                 </button>

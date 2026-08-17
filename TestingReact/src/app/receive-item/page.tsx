@@ -6,7 +6,7 @@ import ServiceTable from "@/components/ServiceTable";
 
 export default function ReceiveItemPage() {
   return (
-    <PageWrapper title="Received Items" subtitle="Technical service queue for items newly received in maintenance">
+    <PageWrapper titleKey="nav.receivedItems" subtitleKey="sub.receivedItems">
       <ServiceTable activeFilter="Received" />
     </PageWrapper>
   );

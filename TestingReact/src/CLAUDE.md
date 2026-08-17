@@ -1,13 +1,36 @@
-# src/hooks and src/services index
+# src/hooks, src/services and src/i18n index
 
-Index of `TestingReact/src/hooks` (4 files) and `TestingReact/src/services` (5 files). `src/app` and `src/components` each have their own CLAUDE.md — not duplicated here.
+Index of `TestingReact/src/hooks` (4 files), `TestingReact/src/services` (5 files) and `TestingReact/src/i18n` (3 files). `src/app` and `src/components` each have their own CLAUDE.md — not duplicated here.
+
+## i18n
+
+The whole UI is English/Khmer. Khmer wording is inherited from the legacy Blazor app's `src/Apps/ServiceMaintenance/Resources/App.km-KH.resx` so terminology matches what staff already read.
+
+### `TestingReact/src/i18n/translations.ts`
+The dictionary — one namespaced key per string, both languages side by side.
+- `LANGUAGES`, `LANGUAGE_LABELS`, `LANGUAGE_SHORT`; types `Language` (`"en" | "km"`) and `TranslationKey`.
+- `translations: Record<Language, Record<TranslationKey, string>>`. `km` is typed against `TranslationKey`, so a missing or misspelled key on either side is a **compile error**, not a silent English fallback.
+- Add new UI strings here first; never hardcode display text in a component.
+
+### `TestingReact/src/i18n/LanguageProvider.tsx`
+Context + provider, persisted in `localStorage["lang"]` (default `"en"`).
+- `LanguageProvider`, `useI18n(): { lang, setLang, toggleLang, t }`, `LanguageScript`, `STORAGE_KEY`, `DEFAULT_LANGUAGE`.
+- `t(key, vars?)` interpolates `{placeholder}` markers, e.g. `t("approve.success", { ref: "SVC-1024" })`.
+- Reads the preference through `useSyncExternalStore` (not an on-mount effect) so SSR/hydration see `DEFAULT_LANGUAGE` with no mismatch, and `storage` events sync the choice across tabs.
+- `LanguageScript` is a blocking `<head>` script that stamps `lang`/`data-lang` on `<html>` before first paint, so Khmer users get no flash of Latin-font English. Mounted in `app/layout.tsx`, which also wraps the tree in `LanguageProvider`.
+- `globals.css` swaps in the Battambang font via `html[data-lang="km"]`.
+
+### `TestingReact/src/i18n/statusLabel.ts`
+Translates backend enum-ish values at render time only — the raw English strings stay in state and on the wire, because the app compares and posts them as identity.
+- `statusTranslationKey(status)`, `translateStatus(status, t)`, `translatePriority(p, t)`, `translateServiceType(s, t)`, `translateServiceLocation(l, t)`.
+- Lookups are normalised (lowercase, whitespace-collapsed) because the same status arrives spelled several ways — notably the DB's long-standing misspelling `"Item Recieved"` vs the filters' `"Received"`.
 
 ## Hooks
 
 ### `TestingReact/src/hooks/useRealtimeTickets.ts`
 Subscribes a page to the SSE ticket event stream and calls a refresh callback when a relevant event arrives.
 - `useRealtimeTickets(filter: string, onUpdate: () => void, options?: { disabled?: boolean }): void`
-- Opens `new EventSource("/api/events")`, filters incoming events by `STATUS_EVENT_MAP[filter]` (status_changed events also matched against `filter`), debounces `onUpdate` calls by 400ms, and reconnects with exponential back-off (1s → 30s cap) on error. Cleans up EventSource/timers on unmount or filter change.
+- Subscribes to ONE shared `EventSource("/api/events")` per tab, multiplexed at module scope — the first subscriber opens it, the last to unmount closes it. Previously each call site opened its own connection, so the dashboard alone held two: one per subscriber wastes the browser's ~6-connection budget and holds a separate `ServerResponse` + heartbeat open server-side. Each subscriber filters the shared firehose locally by `resource` and event type, debounces `onUpdate` by 400ms, and falls back to a 30s visible-tab poll. Reconnect back-off (1s → 30s cap) is shared, so a restarting server sees one retry rather than N. Verified: 1 server-held connection for the dashboard, stable across navigation, 0 after the tab closes.
 
 ### `TestingReact/src/hooks/useDebouncedValue.ts`
 Debounces a value so a search input doesn't fire one API call per keystroke.
@@ -84,6 +107,13 @@ Shared TypeScript interfaces/constants for the whole app (API request/response s
 - `toBackendLocalDateTime(date?)` — formats a `Date` as unmarked local Phnom Penh wall-clock (`YYYY-MM-DDTHH:MM:SS`, no timezone suffix) to match how the backend stores/reads DateTimes (UTC+7 with no tz marker) — use this instead of `toISOString()` when sending times.
 - Key exported types: `RepairServiceItem`, `SparePartItem`, `SparePartItemDetail`, `CustomerItem`, `ItemModel`, `PaginatedResult<T>`, `DashboardStats`, `LoginResponse`, `ServiceStatusDbItem`.
 - Key constants: `SERVICE_STATUSES_DB` (12 statuses with DB ids), `SERVICE_PRIORITIES`, `SERVICE_LOCATIONS` (`"CompanyService" | "OnSite"`).
+
+### `TestingReact/src/services/smartQuery.ts`
+Shared shape of an "Ask AI" result, plus the offline fallback. The interpretation itself happens server-side in `app/api/ai-search` — see `src/app`'s CLAUDE.md.
+- `SmartQueryResult` — `answer` (grounded, written after the model queried the system), `category` (`tickets`/`spareParts`/`customers`/`items`/`users`/`general`), `searchTerm`, `status`, `listStatus`, date bounds, `staffName`, `extras` (a `ServiceSearchExtras` with staff GUIDs already resolved), `navigateTo`, `actions`, `grounded`.
+- `SmartQueryAction` — one interface step the assistant performs: `id` (an id from `@/config/actions`), `recordRef`, and `values` (field name → value, to be typed into the form that action opens). `AiAssistantProvider` hands the whole `actions` list to the action bus. Every id resolves to a handler that opens or fills a dialog and stops — nothing in this path submits, so save/edit/delete stay with the user.
+- `parseSmartQuery(question)` — used only when `/api/ai-search` is unreachable; returns a plain keyword search with `grounded: false` and no answer text.
+- `category: "general"` means a conversational reply with **no** record list — `GlobalSearch` skips every fetch for it.
 
 ### `TestingReact/src/services/mockData.ts`
 Offline/fallback datasets (`MOCK_ITEM_MODELS`, `MOCK_SERVICE_TICKETS`, `MOCK_SPARE_PARTS`, `MOCK_CUSTOMERS`) used only inside `api.ts`'s `catch` blocks when the backend is unreachable. No exported functions — plain data arrays. Not for production logic.

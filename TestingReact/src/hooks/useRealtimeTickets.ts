@@ -54,6 +54,115 @@ const DEBOUNCE_MS = 400; // batch rapid events (e.g. 10 users saving at once)
  */
 const POLL_MS = 30_000;
 
+/* ══════════════════════════════════════════════════════════════════════
+   ONE SHARED EVENTSOURCE FOR THE WHOLE TAB
+   ══════════════════════════════════════════════════════════════════════
+
+   Every call of this hook used to open its own `EventSource`. That is one
+   permanently-open HTTP connection per subscribing component — and the
+   dashboard has two (the ticket table and the chart panel), while a queue page
+   with a live sidebar widget would have more.
+
+   Three costs, all real:
+
+   1. **Browser connection budget.** HTTP/1.1 allows ~6 concurrent connections
+      per origin. Each SSE stream holds one open forever, so two subscribers
+      permanently spend a third of the budget that the app's own API calls need.
+      A third and fourth subscriber start starving normal requests.
+
+   2. **Server-held streams.** Each connection is a `ServerResponse` the Node
+      process keeps alive with its own heartbeat interval and event-bus
+      subscriber. This is the source of the `MaxListenersExceededWarning:
+      11 close listeners added to [ServerResponse]` flooding the dev log.
+
+   3. **Duplicated delivery.** The same broadcast is serialised and pushed N
+      times to one tab, then parsed N times by the client.
+
+   The stream carries no per-subscriber state — every connection receives the
+   identical firehose and each hook filters locally — so there is no reason for
+   more than one. This multiplexes: the first subscriber opens the connection,
+   the last one to leave closes it, and reconnect back-off is shared rather
+   than N independent back-off timers stampeding a restarting server.
+*/
+
+type StreamHandler = (event: TicketEvent) => void;
+
+const streamHandlers = new Set<StreamHandler>();
+let sharedSource: EventSource | null = null;
+let sharedReconnectTimer: ReturnType<typeof setTimeout> | null = null;
+let sharedReconnectDelay = 1000;
+
+function openSharedStream() {
+  if (sharedSource || typeof window === "undefined") return;
+
+  const es = new EventSource("/api/events");
+  sharedSource = es;
+
+  es.onopen = () => {
+    sharedReconnectDelay = 1000; // reset back-off on a successful connect
+  };
+
+  es.onmessage = (e: MessageEvent<string>) => {
+    let event: TicketEvent;
+    try {
+      event = JSON.parse(e.data) as TicketEvent;
+    } catch {
+      return; // malformed frame — ignore
+    }
+    if ((event.type as string) === "connected") return;
+
+    // Snapshot before iterating: a handler that unsubscribes during dispatch
+    // would otherwise mutate the Set mid-iteration.
+    for (const handler of Array.from(streamHandlers)) {
+      try {
+        handler(event);
+      } catch {
+        // One subscriber throwing must not stop delivery to the others.
+      }
+    }
+  };
+
+  es.onerror = () => {
+    es.close();
+    if (sharedSource === es) sharedSource = null;
+
+    // Only retry while someone is still listening. Without this check a
+    // fully-unmounted app would keep reconnecting forever in the background.
+    if (streamHandlers.size === 0) return;
+    if (sharedReconnectTimer !== null) return;
+
+    sharedReconnectTimer = setTimeout(() => {
+      sharedReconnectTimer = null;
+      sharedReconnectDelay = Math.min(sharedReconnectDelay * 2, 30_000);
+      openSharedStream();
+    }, sharedReconnectDelay);
+  };
+}
+
+function closeSharedStream() {
+  sharedSource?.close();
+  sharedSource = null;
+  if (sharedReconnectTimer !== null) {
+    clearTimeout(sharedReconnectTimer);
+    sharedReconnectTimer = null;
+  }
+  sharedReconnectDelay = 1000;
+}
+
+/** Adds a handler, opening the shared stream if it is the first. */
+function subscribeToStream(handler: StreamHandler): () => void {
+  streamHandlers.add(handler);
+  openSharedStream();
+
+  return () => {
+    streamHandlers.delete(handler);
+    // Last one out closes the connection. In React's development double-mount
+    // the count dips to 0 and back to 1 within a tick; the reopen is cheap and
+    // correctness does not depend on the connection surviving it.
+    if (streamHandlers.size === 0) closeSharedStream();
+  };
+}
+
 interface UseRealtimeTicketsOptions {
   /** Disable the SSE subscription (e.g. during heavy operations). Default: false */
   disabled?: boolean;
@@ -95,80 +204,35 @@ export function useRealtimeTickets(
   useEffect(() => {
     if (disabled || typeof window === "undefined") return;
 
-    let es: EventSource | null = null;
-    let reconnectTimeout: ReturnType<typeof setTimeout> | null = null;
-    let reconnectDelay = 1000; // start at 1s, cap at 30s
-    let mounted = true;
+    // Filtering happens here, per subscriber, against the shared firehose —
+    // which is exactly why one connection can serve every consumer.
+    const unsubscribe = subscribeToStream((event) => {
+      // Ignore other record types — a spare-part save shouldn't reload the
+      // ticket queues, and vice versa. Events without a resource predate that
+      // field and are treated as tickets.
+      if ((event.resource ?? "ticket") !== resource) return;
 
-    function connect() {
-      if (!mounted) return;
+      if (!TICKET_EVENT_TYPES.includes(event.type)) return;
 
-      es = new EventSource("/api/events");
+      // NOTE: deliberately NOT filtered by `event.status`.
+      //
+      // A status change affects two lists — the one the ticket left and the one
+      // it joined — but the event only carries the *destination* status.
+      // Matching on it meant the source page ignored the very event that should
+      // have removed the row: moving a ticket Inspecting → Inspection broadcast
+      // status "Inspection", which the Inspecting queue discarded, so other
+      // users kept seeing a ticket that had already moved on. Refreshing on
+      // every relevant ticket event costs one bounded request (debounced 400ms)
+      // and is always correct.
+      scheduleUpdate();
+    });
 
-      es.onopen = () => {
-        reconnectDelay = 1000; // reset back-off on successful connect
-      };
-
-      es.onmessage = (e: MessageEvent<string>) => {
-        try {
-          const event = JSON.parse(e.data) as TicketEvent;
-
-          if ((event.type as string) === "connected") return;
-
-          // Ignore other record types — a spare-part save shouldn't reload the
-          // ticket queues, and vice versa. Events without a resource predate
-          // that field and are treated as tickets.
-          if ((event.resource ?? "ticket") !== resource) return;
-
-          if (!TICKET_EVENT_TYPES.includes(event.type)) return;
-
-          // NOTE: deliberately NOT filtered by `event.status`.
-          //
-          // A status change affects two lists — the one the ticket left and the
-          // one it joined — but the event only carries the *destination*
-          // status. Matching on it meant the source page ignored the very event
-          // that should have removed the row: moving a ticket Inspecting →
-          // Inspection broadcast status "Inspection", which the Inspecting
-          // queue discarded, so other users kept seeing a ticket that had
-          // already moved on. Refreshing on every relevant ticket event costs
-          // one bounded request (debounced 400ms) and is always correct.
-          scheduleUpdate();
-        } catch {
-          // Malformed event — ignore
-        }
-      };
-
-      es.onerror = () => {
-        // EventSource will attempt its own native reconnect.
-        // If it fails, we add exponential back-off with a 30s cap.
-        es?.close();
-        es = null;
-        if (!mounted) return;
-
-        reconnectTimeout = setTimeout(() => {
-          reconnectDelay = Math.min(reconnectDelay * 2, 30_000);
-          connect();
-        }, reconnectDelay);
-      };
-    }
-
-    connect();
-
-    // ✅ Cleanup: runs on unmount OR when filter/disabled changes
+    // Cleanup: runs on unmount OR when filter/disabled/resource changes.
     return () => {
-      mounted = false;
+      unsubscribe();
 
-      // Close SSE connection
-      es?.close();
-      es = null;
-
-      // Clear reconnect timer
-      if (reconnectTimeout !== null) {
-        clearTimeout(reconnectTimeout);
-        reconnectTimeout = null;
-      }
-
-      // Clear debounce timer
+      // Clear the debounce timer, or a queued refresh fires after unmount and
+      // calls setState on a component that no longer exists.
       if (debounceRef.current !== null) {
         clearTimeout(debounceRef.current);
         debounceRef.current = null;

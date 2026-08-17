@@ -16,7 +16,11 @@ import React, { useState, useCallback } from "react";
 import ModernSelect from "@/components/ModernSelect";
 import { useDebouncedValue } from "@/hooks/useDebouncedValue";
 import { useRealtimeResource } from "@/hooks/useRealtimeTickets";
+import { useSearchQueryParam } from "@/hooks/useSearchQueryParam";
 import { useInfiniteList } from "@/hooks/useInfiniteList";
+import { useSearchAction } from "@/hooks/useSearchAction";
+import { useActionHandler, type ActionValues } from "@/components/ActionBus";
+import { useI18n } from "@/i18n/LanguageProvider";
 import InfiniteScrollStatus from "@/components/InfiniteScrollStatus";
 import PageWrapper from "@/components/PageWrapper";
 import HighlightText from "@/components/HighlightText";
@@ -32,6 +36,7 @@ function getAuthHeaders() {
   return headers;
 }
 export default function ReceivedInventoryPage() {
+  const { t } = useI18n();
   const [searchTerm, setSearchTerm] = useState("");
   const pageSize = 25;
   const [selectedItem, setSelectedItem] = useState<ItemModel | null>(null);
@@ -44,8 +49,11 @@ export default function ReceivedInventoryPage() {
     id: "",
     itemName: "",
     serialNumber: "",
-    itemType: "Printer",
+    itemType: "Printer"
   });
+
+  // Seed from ?q= when arriving via the header's global search.
+  useSearchQueryParam(setSearchTerm);
 
   const debouncedSearch = useDebouncedValue(searchTerm, 300);
 
@@ -60,12 +68,12 @@ export default function ReceivedInventoryPage() {
     limitReached,
     scrollRootRef,
     sentinelRef,
-    refresh: loadData,
+    refresh: loadData
   } = useInfiniteList<ItemModel, HTMLDivElement, HTMLTableRowElement>({
     fetchPage: (pageNumber, size) => fetchItemsInventory(pageNumber, size, term),
     pageSize,
     resetKey: term,
-    getId: (i) => i?.id,
+    getId: (i) => i?.id
   });
 
   // Live updates so another user's add/edit/delete shows up here without a
@@ -91,24 +99,24 @@ export default function ReceivedInventoryPage() {
         const response = await fetch('/api/proxy/items', {
           method: 'PUT',
           headers: getAuthHeaders(),
-          body: JSON.stringify(formState),
+          body: JSON.stringify(formState)
         });
-        if (!response.ok) throw new Error("Failed to update item.");
+        if (!response.ok) throw new Error(t("items.updateFailed"));
       } else {
         // Create new item model
         const { id, ...payload } = formState; // exclude empty id
         const response = await fetch('/api/proxy/items', {
           method: 'POST',
           headers: getAuthHeaders(),
-          body: JSON.stringify(payload),
+          body: JSON.stringify(payload)
         });
-        if (!response.ok) throw new Error("Failed to create item.");
+        if (!response.ok) throw new Error(t("items.createFailed"));
       }
       invalidateCachePrefix("items");
       await loadData();
       setActiveModal(null);
     } catch (err: any) {
-      setModalError(err.message || "An error occurred.");
+      setModalError(err.message || t("items.genericError"));
     } finally {
       setIsSaving(false);
     }
@@ -121,14 +129,14 @@ export default function ReceivedInventoryPage() {
     try {
       const response = await fetch(`/api/proxy/items/${selectedItem.id}`, {
         method: 'DELETE',
-        headers: getAuthHeaders(),
+        headers: getAuthHeaders()
       });
-      if (!response.ok) throw new Error("Failed to delete item.");
+      if (!response.ok) throw new Error(t("items.deleteFailed"));
       invalidateCachePrefix("items");
       await loadData();
       setActiveModal(null);
     } catch (err: any) {
-      setModalError(err.message || "An error occurred.");
+      setModalError(err.message || t("items.genericError"));
     } finally {
       setIsSaving(false);
     }
@@ -152,30 +160,123 @@ export default function ReceivedInventoryPage() {
     document.body.removeChild(link);
   };
 
+  // ── Actions requested from elsewhere (the AI assistant today) ────────────
+  //
+  // The add/edit dialogs open with whatever the user dictated already typed in;
+  // saving stays a click they make themselves. Record-targeted requests are
+  // retried as rows load, keyed on `items.length`.
+  const findItem = useCallback(
+    (ref?: string): ItemModel | null => {
+      if (!ref) return null;
+      const needle = ref.trim().toLowerCase();
+      const match = (value?: string | null) => value?.trim().toLowerCase() === needle;
+      return (
+        items.find((i) => match(i.serialNumber)) ??
+        items.find((i) => match(i.itemName)) ??
+        items.find((i) => i.itemName?.toLowerCase().includes(needle)) ??
+        null
+      );
+    },
+    [items]
+  );
+
+  const itemFormPatch = (values?: ActionValues): Partial<ItemModel> => {
+    if (!values) return {};
+    const patch: Partial<ItemModel> = {};
+    if (values.itemName?.trim()) patch.itemName = values.itemName.trim();
+    if (values.serialNumber?.trim()) patch.serialNumber = values.serialNumber.trim();
+    if (values.itemType?.trim()) patch.itemType = values.itemType.trim();
+    return patch;
+  };
+
+  useActionHandler("item.create", (_ref, values) => {
+    setSelectedItem(null);
+    setModalError(null);
+    setFormState({
+      id: "",
+      itemName: "",
+      serialNumber: "",
+      itemType: "Printer",
+      ...itemFormPatch(values)
+    });
+    setActiveModal("edit");
+    return true;
+  });
+
+  useActionHandler(
+    "item.edit",
+    (ref, values) => {
+      const found = findItem(ref);
+      if (!found) return false;
+      setSelectedItem(found);
+      setModalError(null);
+      // Over the stored record, so untouched fields keep their values.
+      setFormState({ ...found, ...itemFormPatch(values) });
+      setActiveModal("edit");
+      return true;
+    },
+    items.length
+  );
+
+  useActionHandler(
+    "item.delete",
+    (ref) => {
+      const found = findItem(ref);
+      if (!found) return false;
+      setSelectedItem(found);
+      setActiveModal("delete");
+      return true;
+    },
+    items.length
+  );
+
+  useSearchAction(setSearchTerm);
+
+  // Closes whatever this page currently has open — the same thing Cancel or X
+  // does, discarding anything typed. Always reports success: the request is
+  // "leave nothing open", and that is true afterwards whether or not a dialog
+  // happened to be showing.
+  useActionHandler("ui.dialog.close", () => {
+    setActiveModal(null);
+    return true;
+  });
+
+  useActionHandler("ui.refresh", () => {
+    invalidateCachePrefix("items");
+    void loadData();
+    return true;
+  });
+
+  useActionHandler("export.csv", () => {
+    if (items.length === 0) return false;
+    handleExportCSV();
+    return true;
+  }, items.length);
+
   return (
     <PageWrapper
-      title="Item Models Inventory"
-      subtitle="View and manage all item models currently registered in technical inventory (ItemModelList.razor)"
+      titleKey="nav.itemModelsInventory"
+      subtitleKey="sub.receivedInventory"
     >
-      <div className="flex-1 flex flex-col min-h-0 bg-white rounded-2xl border border-slate-200/80 shadow-sm overflow-hidden dark:bg-slate-900 dark:border-slate-800">
+      <div className="flex-1 flex flex-col min-h-0 bg-surface rounded-2xl border border-subtle/80 shadow-sm overflow-hidden ">
         {/* Table Toolbar */}
-        <div className="p-4 border-b border-slate-100 bg-slate-50/50 flex flex-wrap items-center justify-between gap-4 dark:border-slate-800 dark:bg-slate-900/50 shrink-0">
+        <div className="p-4 border-b border-subtle bg-cushion/50 flex flex-wrap items-center justify-between gap-4 shrink-0">
           <div className="flex items-center gap-3">
             <div className="relative">
-              <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+              <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-ink-muted" />
               <input
                 type="text"
-                placeholder="Search by Item Name, Serial Number, Type..."
+                placeholder={t("items.searchPlaceholder")}
                 value={searchTerm}
                 onChange={(e) => setSearchTerm(e.target.value)}
-                className="pl-9 pr-4 py-2 text-xs border border-slate-200 rounded-xl bg-white focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 w-64 md:w-80 dark:bg-slate-800 dark:border-slate-700 dark:text-slate-200"
+                className="pl-9 pr-4 py-2 text-xs border border-subtle rounded-xl bg-surface focus:outline-none focus:ring-2 focus:ring-accent/20 focus:border-accent w-64 md:w-80 "
               />
             </div>
 
             <button
               onClick={() => void loadData()}
-              className="p-2 text-slate-500 hover:bg-slate-100 rounded-xl transition-colors dark:text-slate-400 dark:hover:bg-slate-800"
-              title="Reload Item Inventory Data"
+              className="p-2 text-ink-secondary hover:bg-sunken rounded-xl transition-colors "
+              title={t("items.reload")}
             >
               <RefreshCw className={`w-4 h-4 ${isLoading ? "animate-spin" : ""}`} />
             </button>
@@ -188,18 +289,18 @@ export default function ReceivedInventoryPage() {
                 setModalError(null);
                 setActiveModal("edit");
               }}
-              className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-semibold text-white bg-blue-600 rounded-xl hover:bg-blue-700 transition-colors shadow-sm shadow-blue-500/20"
+              className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-semibold text-white bg-accent rounded-xl hover:bg-accent-hover transition-colors shadow-sm shadow-accent/20"
             >
               <Plus className="w-3.5 h-3.5" />
-              <span>Add Item Model</span>
+              <span>{t("items.addModel")}</span>
             </button>
 
             <button
               onClick={handleExportCSV}
-              className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-semibold text-slate-700 bg-white border border-slate-200 rounded-xl hover:bg-slate-50 transition-colors shadow-sm dark:bg-slate-800 dark:border-slate-700 dark:text-slate-200"
+              className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-semibold text-ink bg-surface border border-subtle rounded-xl hover:bg-cushion transition-colors shadow-sm "
             >
               <Download className="w-3.5 h-3.5" />
-              <span>Export</span>
+              <span>{t("action.export")}</span>
             </button>
           </div>
         </div>
@@ -209,20 +310,20 @@ export default function ReceivedInventoryPage() {
         <div ref={scrollRootRef} className="flex-1 overflow-x-auto overflow-y-auto min-h-0">
           <table className="w-full text-left border-collapse min-w-full text-xs">
             <thead>
-              <tr className="bg-slate-50 border-b border-slate-200/80 text-[11px] font-bold text-slate-500 uppercase tracking-wider dark:bg-slate-800/60 dark:border-slate-800 dark:text-slate-400">
-                <th className="py-3.5 px-5 whitespace-nowrap">Item Name</th>
-                <th className="py-3.5 px-5 whitespace-nowrap">SerialNumber</th>
-                <th className="py-3.5 px-5 whitespace-nowrap">Item Type</th>
-                <th className="py-3.5 px-5 text-right whitespace-nowrap">Actions</th>
+              <tr className="bg-cushion border-b border-subtle/80 text-[11px] font-bold text-ink-secondary uppercase tracking-wider ">
+                <th className="py-3.5 px-5 whitespace-nowrap">{t("field.itemName")}</th>
+                <th className="py-3.5 px-5 whitespace-nowrap">{t("field.serialNumber")}</th>
+                <th className="py-3.5 px-5 whitespace-nowrap">{t("field.itemType")}</th>
+                <th className="py-3.5 px-5 text-right whitespace-nowrap">{t("field.actions")}</th>
               </tr>
             </thead>
 
-            <tbody className="divide-y divide-slate-100 dark:divide-slate-800 text-slate-700 dark:text-slate-300">
+            <tbody className="divide-y divide-subtle text-ink ">
               {isLoading ? (
                 Array.from({ length: 5 }).map((_, idx) => (
                   <tr key={idx} className="animate-pulse">
                     <td colSpan={4} className="py-3.5 px-5">
-                      <div className="h-5 bg-slate-200 dark:bg-slate-800 rounded w-full"></div>
+                      <div className="h-5 bg-sunken rounded w-full"></div>
                     </td>
                   </tr>
                 ))
@@ -230,15 +331,15 @@ export default function ReceivedInventoryPage() {
                 items.map((item, idx) => (
                   <tr
                     key={item.id || idx}
-                    className="hover:bg-slate-50/80 transition-colors dark:hover:bg-slate-800/40"
+                    className="hover:bg-cushion/80 transition-colors "
                   >
-                    <td className="py-3.5 px-5 font-medium text-slate-900 dark:text-slate-100">
+                    <td className="py-3.5 px-5 font-medium text-ink ">
                       <HighlightText text={item.itemName || "N/A"} query={searchTerm} />
                     </td>
-                    <td className="py-3.5 px-5 font-mono text-slate-800 dark:text-slate-300">
+                    <td className="py-3.5 px-5 font-mono text-ink ">
                       <HighlightText text={item.serialNumber || "N/A"} query={searchTerm} />
                     </td>
-                    <td className="py-3.5 px-5 text-slate-600 dark:text-slate-400">
+                    <td className="py-3.5 px-5 text-ink-secondary ">
                       <HighlightText text={item.itemType || "N/A"} query={searchTerm} />
                     </td>
                     <td className="py-3.5 px-5 text-right">
@@ -249,8 +350,8 @@ export default function ReceivedInventoryPage() {
                             setSelectedItem(item);
                             setActiveModal("view");
                           }}
-                          className="p-1.5 rounded-lg text-blue-600 hover:bg-blue-50 transition-colors dark:text-blue-400 dark:hover:bg-slate-800"
-                          title="View Details"
+                          className="p-1.5 rounded-lg text-info hover:bg-accent-soft transition-colors "
+                          title={t("action.viewDetails")}
                         >
                           <Eye className="w-4 h-4" />
                         </button>
@@ -262,8 +363,8 @@ export default function ReceivedInventoryPage() {
                             setModalError(null);
                             setActiveModal("edit");
                           }}
-                          className="p-1.5 rounded-lg text-slate-600 hover:bg-slate-100 transition-colors dark:text-slate-400 dark:hover:bg-slate-800"
-                          title="Edit Item Model"
+                          className="p-1.5 rounded-lg text-ink-secondary hover:bg-sunken transition-colors "
+                          title={t("items.editModel")}
                         >
                           <Edit3 className="w-4 h-4" />
                         </button>
@@ -274,8 +375,8 @@ export default function ReceivedInventoryPage() {
                             setModalError(null);
                             setActiveModal("delete");
                           }}
-                          className="p-1.5 rounded-lg text-rose-500 hover:bg-rose-50 transition-colors dark:hover:bg-slate-800"
-                          title="Delete Item Model"
+                          className="p-1.5 rounded-lg text-danger hover:bg-danger-soft transition-colors "
+                          title={t("items.deleteModel")}
                         >
                           <Trash2 className="w-4 h-4" />
                         </button>
@@ -285,8 +386,8 @@ export default function ReceivedInventoryPage() {
                 ))
               ) : (
                 <tr>
-                  <td colSpan={4} className="py-12 text-center text-slate-400">
-                    No item models found matching your search.
+                  <td colSpan={4} className="py-12 text-center text-ink-muted">
+                    {t("items.empty")}
                   </td>
                 </tr>
               )}
@@ -309,11 +410,11 @@ export default function ReceivedInventoryPage() {
         </div>
 
         {/* Status Bar — infinite scroll replaces the page controls */}
-        <div className="p-4 border-t border-slate-100 bg-slate-50/50 flex items-center justify-between dark:border-slate-800 dark:bg-slate-900/50 shrink-0">
-          <span className="text-xs text-slate-500 dark:text-slate-400">
-            Loaded <strong className="text-slate-700 dark:text-slate-200">{items.length}</strong>
+        <div className="p-4 border-t border-subtle bg-cushion/50 flex items-center justify-between shrink-0">
+          <span className="text-xs text-ink-secondary ">
+            Loaded <strong className="text-ink ">{items.length}</strong>
             {totalCount > items.length && (
-              <> of <strong className="text-slate-700 dark:text-slate-200">{totalCount}</strong></>
+              <> of <strong className="text-ink ">{totalCount}</strong></>
             )}{" "}
             {items.length === 1 ? "item" : "items"}
             {term && <> matching &ldquo;{term}&rdquo;</>}
@@ -323,32 +424,32 @@ export default function ReceivedInventoryPage() {
 
       {/* ── VIEW MODAL ── */}
       {activeModal === "view" && selectedItem && (
-        <div className="fixed inset-0 z-50 bg-slate-950/60 backdrop-blur-xs flex items-center justify-center p-4">
-          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl shadow-xl max-w-md w-full p-6 animate-in fade-in zoom-in-95 duration-150">
-            <div className="flex items-center justify-between border-b border-slate-100 dark:border-slate-800 pb-3 mb-4">
-              <h3 className="font-bold text-slate-900 dark:text-slate-100 text-base">Item Model Details</h3>
-              <button onClick={() => setActiveModal(null)} className="p-1 text-slate-400 hover:text-slate-600">
+        <div className="enter-fade fixed inset-0 z-50 bg-ink/60 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-surface border border-subtle rounded-2xl shadow-xl max-w-md w-full p-6 enter-pop">
+            <div className="flex items-center justify-between border-b border-subtle pb-3 mb-4">
+              <h3 className="font-bold text-ink text-base">{t("items.detailsTitle")}</h3>
+              <button onClick={() => setActiveModal(null)} className="p-1 text-ink-muted hover:text-ink-secondary">
                 <X className="w-4 h-4" />
               </button>
             </div>
             <div className="space-y-3 text-xs">
               <div>
-                <span className="text-slate-400 font-semibold block mb-0.5">Item Name:</span>
-                <span className="text-slate-800 dark:text-slate-200 font-medium text-sm">{selectedItem.itemName}</span>
+                <span className="text-ink-muted font-semibold block mb-0.5">{t("field.itemName")}</span>
+                <span className="text-ink font-medium text-sm">{selectedItem.itemName}</span>
               </div>
               <div>
-                <span className="text-slate-400 font-semibold block mb-0.5">Serial Number:</span>
-                <code className="px-2 py-1 rounded bg-slate-100 dark:bg-slate-800 text-slate-800 dark:text-slate-200 font-mono">{selectedItem.serialNumber || "N/A"}</code>
+                <span className="text-ink-muted font-semibold block mb-0.5">{t("field.serialNumber")}</span>
+                <code className="px-2 py-1 rounded bg-sunken text-ink font-mono">{selectedItem.serialNumber || "N/A"}</code>
               </div>
               <div>
-                <span className="text-slate-400 font-semibold block mb-0.5">Item Type:</span>
-                <span className="text-slate-800 dark:text-slate-200 font-medium">{selectedItem.itemType || "N/A"}</span>
+                <span className="text-ink-muted font-semibold block mb-0.5">{t("field.itemType")}</span>
+                <span className="text-ink font-medium">{selectedItem.itemType || "N/A"}</span>
               </div>
             </div>
             <div className="mt-6 text-right">
               <button
                 onClick={() => setActiveModal(null)}
-                className="px-4 py-2 text-xs font-semibold bg-slate-100 text-slate-700 rounded-xl hover:bg-slate-200 dark:bg-slate-800 dark:text-slate-300"
+                className="px-4 py-2 text-xs font-semibold bg-sunken text-ink rounded-xl hover:bg-sunken "
               >
                 Close
               </button>
@@ -359,77 +460,77 @@ export default function ReceivedInventoryPage() {
 
       {/* ── EDIT / CREATE MODAL ── */}
       {activeModal === "edit" && (
-        <div className="fixed inset-0 z-50 bg-slate-950/60 backdrop-blur-xs flex items-center justify-center p-4">
-          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl shadow-xl max-w-md w-full p-6 animate-in fade-in zoom-in-95 duration-150">
-            <div className="flex items-center justify-between border-b border-slate-100 dark:border-slate-800 pb-3 mb-4">
-              <h3 className="font-bold text-slate-900 dark:text-slate-100 text-base">
-                {formState.id ? "Edit Item Model" : "Add New Item Model"}
+        <div className="enter-fade fixed inset-0 z-50 bg-ink/60 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-surface border border-subtle rounded-2xl shadow-xl max-w-md w-full p-6 enter-pop">
+            <div className="flex items-center justify-between border-b border-subtle pb-3 mb-4">
+              <h3 className="font-bold text-ink text-base">
+                {formState.id ? t("items.editModel") : t("items.addNewModel")}
               </h3>
-              <button onClick={() => setActiveModal(null)} className="p-1 text-slate-400 hover:text-slate-600">
+              <button onClick={() => setActiveModal(null)} className="p-1 text-ink-muted hover:text-ink-secondary">
                 <X className="w-4 h-4" />
               </button>
             </div>
 
             {modalError && (
-              <div className="mb-4 p-3 rounded-xl bg-rose-50 text-rose-600 text-xs border border-rose-100 dark:bg-rose-950/50 dark:border-rose-900/50">
+              <div className="mb-4 p-3 rounded-xl bg-danger-soft text-danger text-xs border border-danger ">
                 {modalError}
               </div>
             )}
 
             <form onSubmit={handleCreateOrUpdate} className="space-y-4 text-xs">
               <div>
-                <label className="block font-semibold text-slate-700 dark:text-slate-300 mb-1">Item Name *</label>
+                <label className="block font-semibold text-ink mb-1">{t("field.itemName")} *</label>
                 <input
                   type="text"
                   required
                   value={formState.itemName}
                   onChange={(e) => setFormState({ ...formState, itemName: e.target.value })}
-                  placeholder="e.g. 1643I (Verify Brand/Model)"
-                  className="w-full px-3 py-2 border border-slate-200 dark:border-slate-700 rounded-xl bg-white dark:bg-slate-800 dark:text-slate-100 outline-none focus:ring-2 focus:ring-blue-500/20"
+                  placeholder={t("items.egItemName")}
+                  className="w-full px-3 py-2 border border-subtle rounded-xl bg-surface outline-none focus:ring-2 focus:ring-accent/20"
                 />
               </div>
 
               <div>
-                <label className="block font-semibold text-slate-700 dark:text-slate-300 mb-1">SerialNumber *</label>
+                <label className="block font-semibold text-ink mb-1">{t("field.serialNumber")} *</label>
                 <input
                   type="text"
                   required
                   value={formState.serialNumber || ""}
                   onChange={(e) => setFormState({ ...formState, serialNumber: e.target.value })}
-                  placeholder="e.g. 2TW04761"
-                  className="w-full px-3 py-2 border border-slate-200 dark:border-slate-700 rounded-xl bg-white dark:bg-slate-800 dark:text-slate-100 font-mono outline-none focus:ring-2 focus:ring-blue-500/20"
+                  placeholder={t("items.egSerial")}
+                  className="w-full px-3 py-2 border border-subtle rounded-xl bg-surface font-mono outline-none focus:ring-2 focus:ring-accent/20"
                 />
               </div>
 
               <div>
-                <label className="block font-semibold text-slate-700 dark:text-slate-300 mb-1">Item Type</label>
+                <label className="block font-semibold text-ink mb-1">{t("field.itemType")}</label>
                 <select
                   value={formState.itemType || "Printer"}
                   onChange={(e) => setFormState({ ...formState, itemType: e.target.value })}
-                  className="w-full px-3 py-2 border border-slate-200 dark:border-slate-700 rounded-xl bg-white dark:bg-slate-800 dark:text-slate-100 outline-none focus:ring-2 focus:ring-blue-500/20"
+                  className="w-full px-3 py-2 border border-subtle rounded-xl bg-surface outline-none focus:ring-2 focus:ring-accent/20"
                 >
-                  <option value="Printer">Printer</option>
-                  <option value="Bill Counter">Bill Counter</option>
-                  <option value="Generate">Generate</option>
-                  <option value="Scanner">Scanner</option>
+                  <option value="Printer">{t("items.typePrinter")}</option>
+                  <option value="Bill Counter">{t("items.typeBillCounter")}</option>
+                  <option value="Generate">{t("items.typeGenerate")}</option>
+                  <option value="Scanner">{t("items.typeScanner")}</option>
                 </select>
               </div>
 
-              <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-100 dark:border-slate-800">
+              <div className="flex items-center justify-end gap-2 pt-2 border-t border-subtle ">
                 <button
                   type="button"
                   onClick={() => setActiveModal(null)}
-                  className="px-4 py-2 font-semibold text-slate-600 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800 rounded-xl"
+                  className="px-4 py-2 font-semibold text-ink-secondary hover:bg-sunken rounded-xl"
                 >
-                  Cancel
+                  {t("action.cancel")}
                 </button>
                 <button
                   type="submit"
                   disabled={isSaving}
-                  className="px-4 py-2 font-semibold text-white bg-blue-600 hover:bg-blue-700 rounded-xl shadow-sm disabled:opacity-50 flex items-center gap-2"
+                  className="px-4 py-2 font-semibold text-white bg-accent hover:bg-accent-hover rounded-xl shadow-sm disabled:opacity-50 flex items-center gap-2"
                 >
                   {isSaving && <RefreshCw className="w-4 h-4 animate-spin" />}
-                  {isSaving ? "Saving..." : "Save Model"}
+                  {isSaving ? t("action.saving") : t("items.saveModel")}
                 </button>
               </div>
             </form>
@@ -439,35 +540,34 @@ export default function ReceivedInventoryPage() {
 
       {/* ── DELETE CONFIRMATION MODAL ── */}
       {activeModal === "delete" && selectedItem && (
-        <div className="fixed inset-0 z-50 bg-slate-950/60 backdrop-blur-xs flex items-center justify-center p-4">
-          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl shadow-xl max-w-md w-full p-6 animate-in fade-in zoom-in-95 duration-150">
-            <div className="flex items-center gap-3 text-rose-600 mb-3">
+        <div className="enter-fade fixed inset-0 z-50 bg-ink/60 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-surface border border-subtle rounded-2xl shadow-xl max-w-md w-full p-6 enter-pop">
+            <div className="flex items-center gap-3 text-danger mb-3">
               <AlertTriangle className="w-6 h-6 shrink-0" />
-              <h3 className="font-bold text-slate-900 dark:text-slate-100 text-base">Confirm Delete</h3>
+              <h3 className="font-bold text-ink text-base">{t("dialog.confirmDelete")}</h3>
             </div>
-            <p className="text-xs text-slate-600 dark:text-slate-400 mb-4">
-              Are you sure you want to delete item model{" "}
-              <strong className="text-slate-900 dark:text-slate-200">{selectedItem.itemName}</strong>?
+            <p className="text-xs text-ink-secondary mb-4">
+              {t("items.deleteBody", { name: selectedItem.itemName ?? "" })}
             </p>
             {modalError && (
-              <div className="mb-4 p-3 rounded-xl bg-rose-50 text-rose-600 text-xs border border-rose-100 dark:bg-rose-950/50 dark:border-rose-900/50">
+              <div className="mb-4 p-3 rounded-xl bg-danger-soft text-danger text-xs border border-danger ">
                 {modalError}
               </div>
             )}
             <div className="flex items-center justify-end gap-2">
               <button
                 onClick={() => setActiveModal(null)}
-                className="px-4 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800 rounded-xl"
+                className="px-4 py-2 text-xs font-semibold text-ink-secondary hover:bg-sunken rounded-xl"
               >
-                Cancel
+                {t("action.cancel")}
               </button>
               <button
                 onClick={handleDelete}
                 disabled={isSaving}
-                className="px-4 py-2 text-xs font-semibold text-white bg-rose-600 hover:bg-rose-700 rounded-xl shadow-sm disabled:opacity-50 flex items-center gap-2"
+                className="px-4 py-2 text-xs font-semibold text-white bg-danger hover:bg-danger rounded-xl shadow-sm disabled:opacity-50 flex items-center gap-2"
               >
                 {isSaving && <RefreshCw className="w-4 h-4 animate-spin" />}
-                {isSaving ? "Deleting..." : "Delete"}
+                {isSaving ? t("table.deleting") : t("action.delete")}
               </button>
             </div>
           </div>

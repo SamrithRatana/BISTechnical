@@ -71,17 +71,17 @@ export default function ModernSelect({
         }}
         aria-haspopup="listbox"
         aria-expanded={open}
-        className={`w-full flex items-center justify-between gap-1.5 ${triggerCls} border rounded-xl bg-white dark:bg-slate-800 dark:text-slate-100 outline-none transition-all hover:border-slate-300 dark:hover:border-slate-600 ${
+        className={`w-full flex items-center justify-between gap-1.5 ${triggerCls} border rounded-xl bg-elevated   outline-none transition-all hover:border-prominent  ${
           open
-            ? "ring-2 ring-blue-500/20 border-blue-500"
-            : "border-slate-200 dark:border-slate-700"
+            ? "ring-2 ring-accent/20 border-info"
+            : "border-subtle "
         } ${className}`}
       >
-        <span className={`truncate text-left ${current ? "text-slate-800 dark:text-slate-100" : "text-slate-400"}`}>
+        <span className={`truncate text-left ${current ? "text-ink " : "text-ink-muted"}`}>
           {current?.label ?? placeholder}
         </span>
         <ChevronDown
-          className={`w-3.5 h-3.5 shrink-0 text-slate-400 transition-transform duration-200 ${open ? "rotate-180" : ""}`}
+          className={`w-3.5 h-3.5 shrink-0 text-ink-muted transition-transform duration-200 ${open ? "rotate-180" : ""}`}
         />
       </button>
 
@@ -98,7 +98,7 @@ export default function ModernSelect({
               width: coords.width,
               transform: coords.placement === "top" ? "translateY(-100%)" : undefined,
             }}
-            className={`z-[100] bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl shadow-xl shadow-slate-900/10 dark:shadow-black/40 overflow-hidden py-1 max-h-60 overflow-y-auto ${
+            className={`z-[100] bg-elevated  border border-subtle  rounded-xl shadow-xl  overflow-hidden py-1 max-h-60 overflow-y-auto ${
               coords.placement === "top" ? "dropdown-panel-in-top" : "dropdown-panel-in"
             }`}
           >
@@ -116,8 +116,8 @@ export default function ModernSelect({
                   }}
                   className={`w-full flex items-center justify-between gap-2 px-3 py-2 text-xs text-left transition-colors ${
                     selected
-                      ? "bg-blue-50 text-blue-700 dark:bg-blue-950/50 dark:text-blue-300 font-semibold"
-                      : "text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800"
+                      ? "bg-accent-soft text-accent-soft-fg font-semibold"
+                      : "text-ink hover:bg-cushion "
                   }`}
                 >
                   <span className="truncate">{opt.label}</span>

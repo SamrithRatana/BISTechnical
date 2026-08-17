@@ -1,8 +1,14 @@
 import { NextRequest, NextResponse } from "next/server";
+import { recordRequest } from "@/services/activityTracker";
 
 const JWT_API_BASE = process.env.NEXT_PUBLIC_JWT_API_URL || "https://user.camprotec.com.kh";
 
 export async function POST(req: NextRequest) {
+  // Someone signing in is the clearest possible sign the system is about to be
+  // used — a deploy started the second after a login is the worst timing there
+  // is. Not counted as a *write*: it changes nothing in this system's data.
+  recordRequest();
+
   try {
     const body = await req.json();
     const userName = body.userName || body.UserName || "";
@@ -22,16 +28,16 @@ export async function POST(req: NextRequest) {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        Accept: "application/json",
+        Accept: "application/json"
       },
       body: JSON.stringify({
         UserName: userName,
         Password: password,
         RememberMe: true,
         userName: userName,
-        password: password,
+        password: password
       }),
-      cache: "no-store",
+      cache: "no-store"
     });
 
     const responseText = await apiRes.text();
@@ -48,7 +54,7 @@ export async function POST(req: NextRequest) {
       try {
         const usersRes = await fetch(`${JWT_API_BASE}/api/UserManagement?page=1&pageSize=100&api-version=1.0`, {
           headers: { Accept: "application/json" },
-          cache: "no-store",
+          cache: "no-store"
         });
         if (usersRes.ok) {
           const usersData = await usersRes.json();
@@ -66,7 +72,7 @@ export async function POST(req: NextRequest) {
               firstName: matched.FirstName || matched.firstName || "",
               lastName: matched.LastName || matched.lastName || "",
               roles: matched.Roles || matched.roles || ["User"],
-              profilePictureUrl: matched.ProfilePictureUrl || matched.profilePictureUrl || null,
+              profilePictureUrl: matched.ProfilePictureUrl || matched.profilePictureUrl || null
             };
           }
         }
@@ -81,7 +87,7 @@ export async function POST(req: NextRequest) {
           email: `${userName}@camprotec.com.kh`,
           firstName: userName,
           lastName: "",
-          roles: ["User"],
+          roles: ["User"]
         };
       }
 
@@ -89,7 +95,7 @@ export async function POST(req: NextRequest) {
         isSuccess: true,
         token: data.token || data.Token,
         refreshToken: data.refreshToken || data.RefreshToken,
-        user: userObj,
+        user: userObj
       });
     }
 

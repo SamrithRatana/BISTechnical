@@ -6,15 +6,15 @@ import ServiceTable from "@/components/ServiceTable";
 import { TabItem } from "@/components/StatusTabMenu";
 
 const SPARE_REQUEST_TABS: TabItem[] = [
-  { key: "Inspection", label: "វិនិច្ឆ័យ", color: "cyan" },
-  { key: "Awaiting Sparepart", label: "ផ្នែកជាងស្នើរគ្រឿងបន្លាស់", color: "blue" },
+  { key: "Inspection", labelKey: "status.inspection", color: "cyan" },
+  { key: "Awaiting Sparepart", labelKey: "tab.techRequestSpare", color: "blue" },
 ];
 
 export default function SpareRequestPage() {
   const [activeTabKey, setActiveTabKey] = useState("Awaiting Sparepart");
 
   return (
-    <PageWrapper title="Technical Spare Parts Request" subtitle="Spare parts requisition queue for pending repairs">
+    <PageWrapper titleKey="nav.technicalRequestSpare" subtitleKey="sub.spareRequest">
       <ServiceTable
         activeFilter="Awaiting Sparepart"
         activeTabKey={activeTabKey}

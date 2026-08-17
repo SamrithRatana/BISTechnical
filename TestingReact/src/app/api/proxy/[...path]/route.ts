@@ -14,6 +14,7 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { broadcast, type RealtimeResource } from "@/services/eventBus";
+import { beginWrite, recordRequest } from "@/services/activityTracker";
 
 const TECHNICAL_API_BASE =
   process.env.NEXT_PUBLIC_TECHNICAL_API_URL || "https://technicalservicesapi.camprotec.com.kh";
@@ -23,9 +24,45 @@ const JWT_API_BASE =
   process.env.NEXT_PUBLIC_JWT_API_URL || "https://user.camprotec.com.kh";
 const API_VERSION = process.env.NEXT_PUBLIC_API_VERSION || "1.0";
 
+/**
+ * How long to wait on the upstream API before giving up.
+ *
+ * Without a deadline a backend that accepts the connection and then stalls
+ * holds this route handler — and the Node socket behind it — open indefinitely.
+ * Under load that is how a slow database turns into an unresponsive frontend,
+ * because every queue page keeps polling. 30s is well past the slowest real
+ * query (the spare-part usage report) and well short of "never".
+ */
+const UPSTREAM_TIMEOUT_MS = 30_000;
+
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
+
+/**
+ * Per-request logging, development only.
+ *
+ * Every table render, every scroll batch and every 400ms-debounced keystroke
+ * goes through here, so in production this wrote a line per request to the
+ * server log for no diagnostic gain — and each line carried the full upstream
+ * URL including any search terms the user typed.
+ */
+function logProxy(method: string, targetUrl: string): void {
+  if (process.env.NODE_ENV !== "production") {
+    console.log(`📡 [Proxy ${method}] → ${targetUrl}`);
+  }
+}
+
+/**
+ * Combines the client's abort signal with a timeout, so the upstream call ends
+ * when *either* the user navigates away or the deadline passes.
+ */
+function withTimeout(clientSignal?: AbortSignal): AbortSignal {
+  const timeoutSignal = AbortSignal.timeout(UPSTREAM_TIMEOUT_MS);
+  return clientSignal
+    ? AbortSignal.any([clientSignal, timeoutSignal])
+    : timeoutSignal;
+}
 
 function getTargetUrl(req: NextRequest, pathString: string): string {
   const searchParams = new URLSearchParams(req.nextUrl.searchParams);
@@ -111,16 +148,27 @@ export async function GET(
     const queryString = searchParams.toString() ? `?${searchParams.toString()}` : "";
     const targetUrl = `${baseUrl}/api/${pathString}${queryString}`;
 
-    console.log(`📡 [Proxy GET] → ${targetUrl}`);
+    // A read does not block a deploy — nobody loses work to a restart while
+    // reading — but it is evidence someone is here, which the SSE session
+    // count alone would miss on pages that mount no realtime table.
+    recordRequest();
+
+    logProxy("GET", targetUrl);
 
     const authHeader = req.headers.get("authorization");
-    const reqHeaders: Record<string, string> = { Accept: "application/json" };
+    const reqHeaders: Record<string, string> = {
+      Accept: "application/json",
+      // The upstream API now compresses JSON responses; undici decodes this
+      // transparently, so the only visible effect is less data on the wire
+      // between the two services.
+      "Accept-Encoding": "br, gzip",
+    };
     if (authHeader) reqHeaders["Authorization"] = authHeader;
 
     const res = await fetch(targetUrl, {
       headers: reqHeaders,
       cache: "no-store",
-      signal: req.signal,
+      signal: withTimeout(req.signal),
     });
 
     if (!res.ok) {
@@ -137,6 +185,14 @@ export async function GET(
     return response;
   } catch (error: unknown) {
     const msg = error instanceof Error ? error.message : "Unknown error";
+
+    // A timeout also aborts, so check it first — otherwise a backend that
+    // stalled for 30s would be reported as "client went away" and never show
+    // up as a problem worth looking at.
+    if (error instanceof Error && error.name === "TimeoutError") {
+      console.error("❌ Proxy GET timed out after", UPSTREAM_TIMEOUT_MS, "ms");
+      return NextResponse.json({ error: "Backend API timed out" }, { status: 504 });
+    }
     // Ignore abort errors (client disconnected)
     if (msg.includes("abort") || msg.includes("signal")) {
       return NextResponse.json({ error: "Request aborted" }, { status: 499 });
@@ -154,12 +210,19 @@ export async function POST(
   req: NextRequest,
   { params }: { params: Promise<{ path: string[] }> }
 ) {
+  // Declared outside the try so the finally block can always settle it — an
+  // abandoned counter would pin the system at "busy" and make the deploy-safety
+  // indicator permanently wrong.
+  let endWrite: (() => void) | undefined;
+
   try {
     const { path } = await params;
     const pathString = path ? path.join("/") : "";
     const targetUrl = getTargetUrl(req, pathString);
 
-    console.log(`📡 [Proxy POST] → ${targetUrl}`);
+    endWrite = beginWrite(`POST /${pathString}`);
+
+    logProxy("POST", targetUrl);
 
     const authHeader = req.headers.get("authorization");
     const body = await req.text();
@@ -174,6 +237,10 @@ export async function POST(
       headers: reqHeaders,
       body,
       cache: "no-store",
+      // Deliberately not chained to req.signal: a mutation that has already
+      // reached the backend should be allowed to finish even if the user
+      // closed the tab, so the write and the SSE broadcast stay consistent.
+      signal: withTimeout(),
     });
 
     const data = await res.json().catch(() => ({}));
@@ -196,6 +263,8 @@ export async function POST(
     const msg = error instanceof Error ? error.message : "Unknown error";
     console.error("❌ Proxy POST Error:", msg);
     return NextResponse.json({ error: "Failed to connect to backend API service" }, { status: 500 });
+  } finally {
+    endWrite?.();
   }
 }
 
@@ -207,12 +276,16 @@ export async function PUT(
   req: NextRequest,
   { params }: { params: Promise<{ path: string[] }> }
 ) {
+  let endWrite: (() => void) | undefined;
+
   try {
     const { path } = await params;
     const pathString = path ? path.join("/") : "";
     const targetUrl = getTargetUrl(req, pathString);
 
-    console.log(`📡 [Proxy PUT] → ${targetUrl}`);
+    endWrite = beginWrite(`PUT /${pathString}`);
+
+    logProxy("PUT", targetUrl);
 
     const authHeader = req.headers.get("authorization");
     const body = await req.text();
@@ -227,6 +300,7 @@ export async function PUT(
       headers: reqHeaders,
       body,
       cache: "no-store",
+      signal: withTimeout(),
     });
 
     const data = await res.json().catch(() => ({}));
@@ -246,6 +320,8 @@ export async function PUT(
     const msg = error instanceof Error ? error.message : "Unknown error";
     console.error("❌ Proxy PUT Error:", msg);
     return NextResponse.json({ error: "Failed to connect to backend API service" }, { status: 500 });
+  } finally {
+    endWrite?.();
   }
 }
 
@@ -257,12 +333,16 @@ export async function DELETE(
   req: NextRequest,
   { params }: { params: Promise<{ path: string[] }> }
 ) {
+  let endWrite: (() => void) | undefined;
+
   try {
     const { path } = await params;
     const pathString = path ? path.join("/") : "";
     const targetUrl = getTargetUrl(req, pathString);
 
-    console.log(`📡 [Proxy DELETE] → ${targetUrl}`);
+    endWrite = beginWrite(`DELETE /${pathString}`);
+
+    logProxy("DELETE", targetUrl);
 
     const authHeader = req.headers.get("authorization");
     const reqHeaders: Record<string, string> = { Accept: "application/json" };
@@ -272,6 +352,7 @@ export async function DELETE(
       method: "DELETE",
       headers: reqHeaders,
       cache: "no-store",
+      signal: withTimeout(),
     });
 
     const data = await res.json().catch(() => ({}));
@@ -290,5 +371,7 @@ export async function DELETE(
     const msg = error instanceof Error ? error.message : "Unknown error";
     console.error("❌ Proxy DELETE Error:", msg);
     return NextResponse.json({ error: "Failed to connect to backend API service" }, { status: 500 });
+  } finally {
+    endWrite?.();
   }
 }

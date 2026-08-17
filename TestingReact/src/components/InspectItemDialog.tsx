@@ -14,33 +14,36 @@
  */
 
 import React, { useState, useEffect, useCallback } from "react";
+import type { ActionValues } from "./ActionBus";
 import { createPortal } from "react-dom";
 import {
   X,
   ClipboardList,
   Save,
-  Plus,
   Trash2,
   Search,
   Package,
   CheckCircle2,
   Loader2,
-  Eye,
+  Eye
 } from "lucide-react";
 import type { RepairServiceItem, SparePartItem } from "@/services/api";
 import {
   fetchSparePartsInventory,
   fetchServiceById,
   fetchSparePartById,
-  deleteInspectItemSparePart,
+  deleteInspectItemSparePart
 } from "@/services/api";
 import { useFloatingPanel } from "@/hooks/useFloatingPanel";
 import { useDebouncedValue } from "@/hooks/useDebouncedValue";
+import { useSafeTimeout } from "@/hooks/useSafeTimeout";
 import { useInfiniteList } from "@/hooks/useInfiniteList";
 import HighlightText from "./HighlightText";
 import SparePartSpecModal from "./SparePartSpecModal";
 import ModernSelect from "./ModernSelect";
 import InfiniteScrollStatus from "./InfiniteScrollStatus";
+import { useI18n } from "@/i18n/LanguageProvider";
+import type { TranslationKey } from "@/i18n/translations";
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -86,31 +89,52 @@ interface InspectItemDialogProps {
   item:    RepairServiceItem;
   onClose: () => void;
   onSave:  (payload: InspectPayload) => Promise<boolean>;
+  /**
+   * Findings, solution and service type to open with — the assistant writing up
+   * what the technician dictated. Prefill only: the spare-parts list and the
+   * Save click are still theirs, which matters here because saving an
+   * inspection reserves stock against the job.
+   */
+  prefill?: ActionValues;
 }
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
+// The strings themselves are what the backend stores in `condition`, so they
+// stay English regardless of UI language — only their labels are translated.
 const CONDITIONS = ["Fix", "Replace", "Free"] as const;
 
-const SERVICE_TYPES = [
-  { id: 1, label: "Free  (ការជួសជុលឥតគិតថ្លៃ)" },
-  { id: 2, label: "Charge (ការជួសជុលគិតថ្លៃ)" },
+const CONDITION_LABEL_KEYS: Record<(typeof CONDITIONS)[number], TranslationKey> = {
+  Fix: "value.fix",
+  Replace: "value.replace",
+  Free: "value.free"
+};
+
+const SERVICE_TYPES: { id: number; labelKey: TranslationKey }[] = [
+  { id: 1, labelKey: "value.free" },
+  { id: 2, labelKey: "value.charge" },
 ];
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
 function getStockBadge(qty: number): { cls: string; label: string } {
-  if (qty <= 0)  return { cls: "bg-rose-100 text-rose-700 border-rose-200",   label: "OUT" };
-  if (qty <= 2)  return { cls: "bg-amber-100 text-amber-700 border-amber-200", label: `${qty} LOW` };
-  return           { cls: "bg-emerald-100 text-emerald-700 border-emerald-200", label: `${qty}` };
+  if (qty <= 0)  return { cls: "bg-danger-soft text-danger-fg border-danger",   label: "OUT" };
+  if (qty <= 2)  return { cls: "bg-warning-soft text-warning-fg border-warning", label: `${qty} LOW` };
+  return           { cls: "bg-success-soft text-success-fg border-success", label: `${qty}` };
 }
 
 // ─── Component ────────────────────────────────────────────────────────────────
 
-export default function InspectItemDialog({ item, onClose, onSave }: InspectItemDialogProps) {
-  const [inspection,    setInspection]    = useState(item.inspection   ?? "");
-  const [solution,      setSolution]      = useState(item.solution      ?? "");
-  const [serviceTypeId, setServiceTypeId] = useState(1);
+export default function InspectItemDialog({ item, onClose, onSave, prefill }: InspectItemDialogProps) {
+  const { t } = useI18n();
+  const later = useSafeTimeout();
+  // Seeded from the prefill where there is one, so the dictated text is in the
+  // box on first paint rather than appearing a frame later.
+  const [inspection,    setInspection]    = useState(prefill?.inspection ?? item.inspection ?? "");
+  const [solution,      setSolution]      = useState(prefill?.solution   ?? item.solution   ?? "");
+  const [serviceTypeId, setServiceTypeId] = useState(
+    prefill?.serviceType && /charge|paid|គិតលុយ/i.test(prefill.serviceType) ? 2 : 1
+  );
   const [lines,         setLines]         = useState<SparePartLine[]>([]);
   const [isSaving,      setIsSaving]      = useState(false);
   const [saveSuccess,   setSaveSuccess]   = useState(false);
@@ -128,13 +152,19 @@ export default function InspectItemDialog({ item, onClose, onSave }: InspectItem
   const {
     anchorRef: searchInputRef,
     panelRef: searchPanelRef,
-    coords: searchCoords,
+    coords: searchCoords
   } = useFloatingPanel<HTMLInputElement, HTMLDivElement>({
-    open: dropdownOpen,
+    // Suppressed (not just `dropdownOpen`) while the spec modal is open:
+    // that modal is its own top-level portal (see SparePartSpecModal's
+    // z-index comment), so any click inside it — its Close button, the
+    // backdrop — reads as an "outside click" to this panel's own listener
+    // and would force-close the search dropdown a second time, on top of
+    // losing the in-flight search the moment the eye icon was clicked.
+    open: dropdownOpen && !viewPart,
     onClose: () => setDropdownOpen(false),
     width: "match",
     estimatedHeight: 220,
-    align: "start",
+    align: "start"
   });
 
   // Spare parts are searched on the server, not filtered from a preloaded
@@ -154,12 +184,12 @@ export default function InspectItemDialog({ item, onClose, onSave }: InspectItem
     reachedEnd: partsReachedEnd,
     limitReached: partsLimitReached,
     scrollRootRef: partsScrollRootRef,
-    sentinelRef: partsSentinelRef,
+    sentinelRef: partsSentinelRef
   } = useInfiniteList<SparePartItem, HTMLDivElement, HTMLDivElement>({
     fetchPage: (pageNumber, size) => fetchSparePartsInventory(pageNumber, size, partSearchTerm),
     pageSize: 25,
     resetKey: partSearchTerm,
-    getId: (p) => p.id,
+    getId: (p) => p.id
   });
 
   // `item` comes from the Inspecting page's paged search endpoint, which is
@@ -176,8 +206,13 @@ export default function InspectItemDialog({ item, onClose, onSave }: InspectItem
       const full = await fetchServiceById(itemId);
       if (cancelled || !full) return;
 
-      if (full.serviceType === "Charge") setServiceTypeId(2);
-      else if (full.serviceType === "Free") setServiceTypeId(1);
+      // A dictated service type outranks the stored one — the user just said
+      // which they wanted, so restoring the saved value here would quietly
+      // undo the instruction a moment after the dialog opened.
+      if (!prefill?.serviceType) {
+        if (full.serviceType === "Charge") setServiceTypeId(2);
+        else if (full.serviceType === "Free") setServiceTypeId(1);
+      }
 
       const rawParts = (full.sparePartItems ?? full.sparepartItems ?? []) as unknown as Array<
         Record<string, unknown>
@@ -207,7 +242,7 @@ export default function InspectItemDialog({ item, onClose, onSave }: InspectItem
                 itemName,
                 useFor,
                 pictureUrl,
-                quantity: stockQty,
+                quantity: stockQty
               };
               const line: SparePartLine = {
                 lineId: `line-${sparePartId}-${Math.random()}`,
@@ -219,7 +254,7 @@ export default function InspectItemDialog({ item, onClose, onSave }: InspectItem
                 stockQty,
                 quantity: (p.quantity as number) ?? 1,
                 condition,
-                part,
+                part
               };
               return line;
             })
@@ -233,12 +268,17 @@ export default function InspectItemDialog({ item, onClose, onSave }: InspectItem
       }
     })();
     return () => { cancelled = true; };
+    // `prefill` is fixed for the life of the dialog — the caller sets it before
+    // opening — so it is read for the guard above without re-running the fetch.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [itemId]);
 
   const handleAddPart = useCallback((part: SparePartItem) => {
     setLines((prev) => {
       if (prev.some((l) => l.sparePartId === part.id)) {
-        setValidationError(`"${part.itemName ?? "This spare part"}" is already in the list — adjust its quantity instead of adding it again.`);
+        setValidationError(
+          t("inspect.duplicatePart", { name: part.itemName ?? t("inspect.thisSparePart") })
+        );
         return prev;
       }
       return [
@@ -252,13 +292,13 @@ export default function InspectItemDialog({ item, onClose, onSave }: InspectItem
           stockQty:    part.quantity   ?? 0,
           quantity:    1,
           condition:   "Replace",
-          part,
+          part
         },
       ];
     });
     setPartSearch("");
     setDropdownOpen(false);
-  }, []);
+  }, [t]);
 
   const updateLine = useCallback(
     (lineId: string, patch: Partial<SparePartLine>) =>
@@ -287,12 +327,12 @@ export default function InspectItemDialog({ item, onClose, onSave }: InspectItem
       setRemovingLineId(null);
 
       if (!ok) {
-        setValidationError("Failed to remove spare part — please try again.");
+        setValidationError(t("inspect.removeFailed"));
         return;
       }
       setLines((prev) => prev.filter((l) => l.lineId !== line.lineId));
     },
-    [item.id]
+    [item.id, t]
   );
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -310,7 +350,7 @@ export default function InspectItemDialog({ item, onClose, onSave }: InspectItem
     // genuinely optional — not every inspection uses a part — so neither is
     // validated here.
     if (!inspection.trim() || !solution.trim()) {
-      setValidationError("Inspection and Solution are both required before saving.");
+      setValidationError(t("inspect.requiredFields"));
       return;
     }
 
@@ -324,59 +364,81 @@ export default function InspectItemDialog({ item, onClose, onSave }: InspectItem
         sparePartId: l.sparePartId,
         quantity:    l.quantity,
         condition:   l.condition,
-        isHoldStatus: true,
-      })),
+        isHoldStatus: true
+      }))
     };
     const ok = await onSave(payload);
     if (ok) {
       setSaveSuccess(true);
-      setTimeout(onClose, 800);
+      // Held 800ms so the success tick is seen. Cancelled if the
+      // dialog goes first (Escape, or the page navigating), which
+      // would otherwise call the parent's onClose from a dead tree.
+      later(onClose, 800);
     } else {
       setIsSaving(false);
     }
   };
 
   const inputCls =
-    "w-full px-3 py-2 text-xs border border-slate-200 dark:border-slate-700 rounded-xl bg-white dark:bg-slate-800 dark:text-slate-100 focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 outline-none";
+    "w-full px-3 py-2 text-xs border border-subtle rounded-xl bg-surface focus:ring-2 focus:ring-accent/20 focus:border-accent outline-none";
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center p-2 sm:p-4 bg-slate-950/60 backdrop-blur-sm"
+      className="enter-fade fixed inset-0 z-50 flex items-center justify-center p-2 sm:p-4 bg-ink/60 backdrop-blur-sm"
       onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
     >
-      <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 w-full max-w-3xl rounded-2xl shadow-2xl flex flex-col max-h-[96vh] sm:max-h-[90vh] my-auto overflow-hidden">
+      <div className="enter-pop bg-surface border border-subtle w-full max-w-3xl rounded-2xl shadow-2xl flex flex-col max-h-[96vh] sm:max-h-[90vh] my-auto overflow-hidden">
 
         {/* Header */}
-        <div className="px-5 py-3.5 border-b border-slate-100 dark:border-slate-800 flex items-center justify-between bg-slate-50/50 dark:bg-slate-900/50 shrink-0">
+        <div className="px-5 py-3.5 border-b border-subtle flex items-center justify-between bg-cushion/50 shrink-0">
           <div className="flex items-center gap-3">
-            <div className="w-9 h-9 rounded-xl bg-indigo-50 dark:bg-indigo-950/50 text-indigo-600 dark:text-indigo-400 flex items-center justify-center">
+            <div className="w-9 h-9 rounded-xl bg-accent-soft text-accent flex items-center justify-center">
               <ClipboardList className="w-4 h-4" />
             </div>
             <div>
-              <h2 className="text-sm font-bold text-slate-900 dark:text-slate-100">
-                ទទួលការងារ (Accept Inspection)
+              <h2 className="text-sm font-bold text-ink ">
+                {t("inspect.title")}
               </h2>
-              <p className="text-xs text-slate-500 dark:text-slate-400">
+              <p className="text-xs text-ink-secondary ">
                 {item.reportNo} · {item.companyName} · {item.itemName}
               </p>
             </div>
           </div>
-          <button onClick={onClose} className="p-1.5 rounded-lg text-slate-400 hover:text-slate-600 hover:bg-slate-100 dark:hover:bg-slate-800 dark:hover:text-slate-200 transition-colors">
+          <button onClick={onClose} className="p-1.5 rounded-lg text-ink-muted hover:text-ink-secondary hover:bg-sunken transition-colors">
             <X className="w-4 h-4" />
           </button>
         </div>
 
         {/* Form */}
-        <form onSubmit={handleSubmit} className="flex-1 flex flex-col min-h-0 overflow-hidden">
+        <form
+          onSubmit={handleSubmit}
+          // Enter in a single-line input implicitly submits its form. The
+          // spare-part box below is a search field inside this form, so
+          // pressing Enter to "search" — the obvious thing to do — instead
+          // saved the inspection and closed the dialog out from under the
+          // technician, mid-search. It only happened once Inspection and
+          // Solution were filled in, which is why it looked intermittent:
+          // before that, validation caught the submit and the dialog stayed
+          // open. Saving is deliberate here — the Save button below.
+          // Textareas are unaffected (Enter is a newline there, not a
+          // submit), and Enter on the focused Save button still fires its
+          // click, so the keyboard path to saving survives.
+          onKeyDown={(e) => {
+            if (e.key === "Enter" && e.target instanceof HTMLInputElement) {
+              e.preventDefault();
+            }
+          }}
+          className="flex-1 flex flex-col min-h-0 overflow-hidden"
+        >
           <div className="flex-1 overflow-y-auto p-4 sm:p-5 space-y-5">
             {saveSuccess && (
-              <div className="p-3 bg-emerald-50 text-emerald-800 border border-emerald-200 rounded-xl text-xs flex items-center gap-2 font-medium">
-                <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
-                Inspection saved — ticket moved to Inspection queue!
+              <div className="p-3 bg-success-soft text-success-fg border border-success rounded-xl text-xs flex items-center gap-2 font-medium">
+                <CheckCircle2 className="w-4 h-4 text-success shrink-0" />
+                {t("inspect.savedSuccess")}
               </div>
             )}
             {validationError && (
-              <div className="p-3 bg-rose-50 text-rose-800 border border-rose-200 dark:bg-rose-950/40 dark:text-rose-300 dark:border-rose-900 rounded-xl text-xs flex items-center gap-2 font-medium">
+              <div className="p-3 bg-danger-soft text-danger-fg border border-danger rounded-xl text-xs flex items-center gap-2 font-medium">
                 <X className="w-4 h-4 shrink-0" />
                 {validationError}
               </div>
@@ -384,29 +446,29 @@ export default function InspectItemDialog({ item, onClose, onSave }: InspectItem
 
           {/* Section: Diagnostic */}
           <div>
-            <p className="text-[11px] font-bold text-slate-400 uppercase tracking-wider mb-2 flex items-center gap-1.5">
-              <ClipboardList className="w-3.5 h-3.5" /> Diagnostic Report
+            <p className="text-[11px] font-bold text-ink-muted uppercase tracking-wider mb-2 flex items-center gap-1.5">
+              <ClipboardList className="w-3.5 h-3.5" /> {t("inspect.diagnosticReport")}
             </p>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
               <div className="space-y-1">
-                <label className="text-xs font-semibold text-slate-700 dark:text-slate-300">Inspection (ការវិនិច្ឆ័យ) *</label>
+                <label className="text-xs font-semibold text-ink ">{t("inspect.inspectionLabel")} *</label>
                 <textarea
                   rows={4}
                   required
                   value={inspection}
                   onChange={(e) => { setInspection(e.target.value); setValidationError(null); }}
-                  placeholder="Describe what was found during inspection..."
+                  placeholder={t("inspect.inspectionPlaceholder")}
                   className={inputCls}
                 />
               </div>
               <div className="space-y-1">
-                <label className="text-xs font-semibold text-slate-700 dark:text-slate-300">Solution (ដំណោះស្រាយ) *</label>
+                <label className="text-xs font-semibold text-ink ">{t("inspect.solutionLabel")} *</label>
                 <textarea
                   rows={4}
                   required
                   value={solution}
                   onChange={(e) => { setSolution(e.target.value); setValidationError(null); }}
-                  placeholder="Proposed fix or solution..."
+                  placeholder={t("inspect.solutionPlaceholder")}
                   className={inputCls}
                 />
               </div>
@@ -416,20 +478,20 @@ export default function InspectItemDialog({ item, onClose, onSave }: InspectItem
           {/* Section: Spare Parts + Service Type — same row: what was used
               on the left, what it's billed as on the right. */}
           <div>
-            <p className="text-[11px] font-bold text-slate-400 uppercase tracking-wider mb-2 flex items-center gap-1.5">
-              <Package className="w-3.5 h-3.5" /> Spare Parts Used (គ្រឿងបន្លាស់)
+            <p className="text-[11px] font-bold text-ink-muted uppercase tracking-wider mb-2 flex items-center gap-1.5">
+              <Package className="w-3.5 h-3.5" /> {t("inspect.sparePartsUsed")}
             </p>
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mb-3">
               {/* Search + Add */}
               <div className="space-y-1">
-                <label className="text-xs font-semibold text-slate-700 dark:text-slate-300">Search Spare Part</label>
+                <label className="text-xs font-semibold text-ink ">{t("inspect.searchSparePart")}</label>
                 <div className="relative">
-                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-400" />
+                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-ink-muted" />
                   <input
                     ref={searchInputRef}
                     type="text"
-                    placeholder="Search by name, serial, use-for..."
+                    placeholder={t("placeholder.searchSparePart")}
                     value={partSearch}
                     onChange={(e) => { setPartSearch(e.target.value); setDropdownOpen(true); }}
                     onFocus={() => setDropdownOpen(true)}
@@ -439,11 +501,15 @@ export default function InspectItemDialog({ item, onClose, onSave }: InspectItem
               </div>
 
               <div className="space-y-1">
-                <label className="text-xs font-semibold text-slate-700 dark:text-slate-300">Service Type (ប្រភេទសេវាកម្ម)</label>
+                <label className="text-xs font-semibold text-ink ">{t("field.serviceType")}</label>
                 <ModernSelect
                   value={String(serviceTypeId)}
                   onChange={(v) => setServiceTypeId(Number(v))}
-                  options={SERVICE_TYPES.map((t) => ({ value: String(t.id), label: t.label }))}
+                  // `type`, not `t` — `t` is the translate function in this scope.
+                  options={SERVICE_TYPES.map((type) => ({
+                    value: String(type.id),
+                    label: t(type.labelKey)
+                  }))}
                 />
               </div>
 
@@ -456,9 +522,9 @@ export default function InspectItemDialog({ item, onClose, onSave }: InspectItem
                       top: searchCoords.top,
                       left: searchCoords.left,
                       width: searchCoords.width,
-                      transform: searchCoords.placement === "top" ? "translateY(-100%)" : undefined,
+                      transform: searchCoords.placement === "top" ? "translateY(-100%)" : undefined
                     }}
-                    className={`z-[100] bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl shadow-xl overflow-hidden ${
+                    className={`z-[100] bg-surface  border border-subtle  rounded-xl shadow-xl overflow-hidden ${
                       searchCoords.placement === "top" ? "dropdown-panel-in-top" : "dropdown-panel-in"
                     }`}
                   >
@@ -469,10 +535,10 @@ export default function InspectItemDialog({ item, onClose, onSave }: InspectItem
                     <div ref={partsScrollRootRef} className="max-h-52 overflow-y-auto">
                       {partsLoading ? (
                         <div className="flex items-center justify-center py-6">
-                          <Loader2 className="w-5 h-5 animate-spin text-slate-400" />
+                          <Loader2 className="w-5 h-5 animate-spin text-ink-muted" />
                         </div>
                       ) : filteredParts.length === 0 ? (
-                        <p className="px-4 py-3 text-xs text-slate-400">No spare parts found.</p>
+                        <p className="px-4 py-3 text-xs text-ink-muted">No spare parts found.</p>
                       ) : (
                         <>
                           {filteredParts.map((part) => {
@@ -481,20 +547,20 @@ export default function InspectItemDialog({ item, onClose, onSave }: InspectItem
                               <div
                                 key={part.id}
                                 onClick={() => handleAddPart(part)}
-                                className="w-full flex items-center gap-2 px-3 py-2 hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors text-left cursor-pointer"
+                                className="w-full flex items-center gap-2 px-3 py-2 hover:bg-cushion transition-colors text-left cursor-pointer"
                               >
                                 {part.pictureUrl ? (
-                                  <img src={part.pictureUrl} alt="" className="w-8 h-8 object-cover rounded-lg border border-slate-200 shrink-0" />
+                                  <img src={part.pictureUrl} alt="" width={32} height={32} loading="lazy" decoding="async" className="w-8 h-8 object-cover rounded-lg border border-subtle shrink-0" />
                                 ) : (
-                                  <div className="w-8 h-8 bg-slate-100 dark:bg-slate-800 rounded-lg border border-slate-200 dark:border-slate-700 flex items-center justify-center shrink-0">
-                                    <Package className="w-4 h-4 text-slate-400" />
+                                  <div className="w-8 h-8 bg-sunken rounded-lg border border-subtle flex items-center justify-center shrink-0">
+                                    <Package className="w-4 h-4 text-ink-muted" />
                                   </div>
                                 )}
                                 <div className="flex-1 min-w-0">
-                                  <p className="text-xs font-medium text-slate-900 dark:text-slate-100 truncate">
+                                  <p className="text-xs font-medium text-ink truncate">
                                     <HighlightText text={part.itemName} query={partSearch} />
                                   </p>
-                                  <p className="text-[10px] text-slate-500 truncate">
+                                  <p className="text-[10px] text-ink-secondary truncate">
                                     <HighlightText text={part.useFor} query={partSearch} />
                                   </p>
                                 </div>
@@ -505,16 +571,15 @@ export default function InspectItemDialog({ item, onClose, onSave }: InspectItem
                                   onClick={(e) => {
                                     e.stopPropagation();
                                     setViewPart(part);
-                                    setDropdownOpen(false);
                                   }}
-                                  className="shrink-0 p-1.5 rounded-lg text-slate-400 hover:text-blue-600 hover:bg-blue-50 dark:hover:bg-slate-700 dark:hover:text-blue-400 transition-colors"
+                                  className="shrink-0 p-1.5 rounded-lg text-ink-muted hover:text-accent hover:bg-accent-soft transition-colors"
                                 >
                                   <Eye className="w-3.5 h-3.5" />
                                 </button>
                               </div>
                             );
                           })}
-                          <div ref={partsSentinelRef} className="px-3 py-2 text-center border-t border-slate-100 dark:border-slate-800">
+                          <div ref={partsSentinelRef} className="px-3 py-2 text-center border-t border-subtle ">
                             <InfiniteScrollStatus
                               isLoadingMore={partsLoadingMore}
                               reachedEnd={partsReachedEnd}
@@ -532,32 +597,32 @@ export default function InspectItemDialog({ item, onClose, onSave }: InspectItem
 
             {/* Lines Table */}
             {lines.length > 0 ? (
-              <div className="rounded-xl border border-slate-200 dark:border-slate-700 overflow-hidden">
+              <div className="rounded-xl border border-subtle overflow-hidden">
                 <table className="w-full text-xs">
                   <thead>
-                    <tr className="bg-blue-600 text-white">
-                      <th className="px-2 py-2 text-center w-10">Img</th>
-                      <th className="px-3 py-2 text-left">Item Name</th>
-                      <th className="px-2 py-2 text-center w-16">Qty</th>
-                      <th className="px-2 py-2 text-center w-28">Condition</th>
+                    <tr className="bg-accent text-white">
+                      <th className="px-2 py-2 text-center w-10">{t("inspect.colImage")}</th>
+                      <th className="px-3 py-2 text-left">{t("field.itemName")}</th>
+                      <th className="px-2 py-2 text-center w-16">{t("inspect.colQty")}</th>
+                      <th className="px-2 py-2 text-center w-28">{t("field.condition")}</th>
                       <th className="px-2 py-2 text-center w-16"></th>
                     </tr>
                   </thead>
-                  <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+                  <tbody className="divide-y divide-subtle ">
                     {lines.map((line) => (
-                      <tr key={line.lineId} className="hover:bg-slate-50 dark:hover:bg-slate-800/40">
+                      <tr key={line.lineId} className="hover:bg-cushion ">
                         <td className="px-2 py-1.5 text-center">
                           {line.pictureUrl ? (
-                            <img src={line.pictureUrl} alt="" className="w-8 h-8 object-cover rounded border border-slate-200 mx-auto" />
+                            <img src={line.pictureUrl} alt="" width={32} height={32} loading="lazy" decoding="async" className="w-8 h-8 object-cover rounded border border-subtle mx-auto" />
                           ) : (
-                            <div className="w-8 h-8 bg-slate-100 dark:bg-slate-800 rounded border border-slate-200 dark:border-slate-700 flex items-center justify-center mx-auto">
-                              <Package className="w-4 h-4 text-slate-400" />
+                            <div className="w-8 h-8 bg-sunken rounded border border-subtle flex items-center justify-center mx-auto">
+                              <Package className="w-4 h-4 text-ink-muted" />
                             </div>
                           )}
                         </td>
                         <td className="px-3 py-1.5">
-                          <p className="font-medium text-slate-900 dark:text-slate-100 truncate max-w-[180px]">{line.itemName}</p>
-                          <p className="text-[10px] text-slate-500 truncate max-w-[180px]">{line.useFor}</p>
+                          <p className="font-medium text-ink truncate max-w-[180px]">{line.itemName}</p>
+                          <p className="text-[10px] text-ink-secondary truncate max-w-[180px]">{line.useFor}</p>
                         </td>
                         <td className="px-2 py-1.5 text-center">
                           <input
@@ -565,7 +630,7 @@ export default function InspectItemDialog({ item, onClose, onSave }: InspectItem
                             min={1}
                             value={line.quantity}
                             onChange={(e) => updateLine(line.lineId, { quantity: Math.max(1, parseInt(e.target.value) || 1) })}
-                            className="w-14 text-center px-1 py-1 border border-slate-200 dark:border-slate-700 rounded-lg text-xs bg-white dark:bg-slate-800 dark:text-slate-100 focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 outline-none"
+                            className="w-14 text-center px-1 py-1 border border-subtle rounded-lg text-xs bg-surface focus:ring-2 focus:ring-accent/20 focus:border-accent outline-none"
                           />
                         </td>
                         <td className="px-2 py-1.5 text-center">
@@ -573,25 +638,25 @@ export default function InspectItemDialog({ item, onClose, onSave }: InspectItem
                             dense
                             value={line.condition}
                             onChange={(v) => updateLine(line.lineId, { condition: v as SparePartLine["condition"] })}
-                            options={CONDITIONS.map((c) => ({ value: c, label: c }))}
+                            options={CONDITIONS.map((c) => ({ value: c, label: t(CONDITION_LABEL_KEYS[c]) }))}
                           />
                         </td>
                         <td className="px-2 py-1.5 text-center">
                           <div className="flex items-center justify-center gap-1">
                             <button
                               type="button"
-                              title="View specification"
+                              title={t("action.viewSpec")}
                               onClick={() => setViewPart(line.part)}
-                              className="p-1 rounded-lg text-slate-400 hover:bg-blue-50 hover:text-blue-600 dark:hover:bg-slate-800 dark:hover:text-blue-400 transition-colors"
+                              className="p-1 rounded-lg text-ink-muted hover:bg-accent-soft hover:text-accent transition-colors"
                             >
                               <Eye className="w-3.5 h-3.5" />
                             </button>
                             <button
                               type="button"
-                              title="Remove"
+                              title={t("action.remove")}
                               disabled={removingLineId === line.lineId || isSaving}
                               onClick={() => void removeLine(line)}
-                              className="p-1 rounded-lg text-rose-400 hover:bg-rose-50 hover:text-rose-600 dark:hover:bg-rose-950/40 transition-colors disabled:opacity-50"
+                              className="p-1 rounded-lg text-danger hover:bg-danger-soft hover:text-danger transition-colors disabled:opacity-50"
                             >
                               {removingLineId === line.lineId ? (
                                 <Loader2 className="w-3.5 h-3.5 animate-spin" />
@@ -607,30 +672,30 @@ export default function InspectItemDialog({ item, onClose, onSave }: InspectItem
                 </table>
               </div>
             ) : (
-              <div className="border-2 border-dashed border-slate-200 dark:border-slate-700 rounded-xl py-6 text-center">
-                <Package className="w-6 h-6 text-slate-300 mx-auto mb-1" />
-                <p className="text-xs text-slate-400">No spare parts added yet. Search above to add.</p>
+              <div className="border-2 border-dashed border-subtle rounded-xl py-6 text-center">
+                <Package className="w-6 h-6 text-ink-muted mx-auto mb-1" />
+                <p className="text-xs text-ink-muted">{t("inspect.noPartsAdded")}</p>
               </div>
             )}
           </div>
         </div>
 
           {/* Actions (Sticky footer) */}
-          <div className="sticky bottom-0 z-20 px-5 py-3.5 bg-slate-50/90 dark:bg-slate-900/90 backdrop-blur border-t border-slate-100 dark:border-slate-800 flex items-center justify-end gap-3 shrink-0">
+          <div className="sticky bottom-0 z-20 px-5 py-3.5 bg-cushion/90 backdrop-blur border-t border-subtle flex items-center justify-end gap-3 shrink-0">
             <button
               type="button"
               onClick={onClose}
-              className="px-4 py-2 text-xs font-semibold text-slate-700 dark:text-slate-300 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors shadow-sm"
+              className="px-4 py-2 text-xs font-semibold text-ink bg-surface border border-subtle rounded-xl hover:bg-sunken transition-colors shadow-sm"
             >
-              Cancel
+              {t("action.cancel")}
             </button>
             <button
               type="submit"
               disabled={isSaving}
-              className="inline-flex items-center gap-1.5 px-5 py-2 text-xs font-semibold text-white bg-indigo-600 rounded-xl hover:bg-indigo-700 shadow-md shadow-indigo-500/20 transition-all disabled:opacity-60"
+              className="inline-flex items-center gap-1.5 px-5 py-2 text-xs font-semibold text-white bg-accent rounded-xl hover:bg-accent shadow-md transition-all disabled:opacity-60"
             >
               {isSaving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Save className="w-3.5 h-3.5" />}
-              {isSaving ? "Saving..." : "ទទួលការងារ (Accept & Save)"}
+              {isSaving ? t("action.saving") : t("inspect.acceptAndSave")}
             </button>
           </div>
         </form>
