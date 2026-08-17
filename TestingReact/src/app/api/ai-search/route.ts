@@ -88,11 +88,18 @@ export const maxDuration = 60;
  *
  * Order is strongest first, because whichever model answers *is* the feature's
  * quality. `gemini-3.7-flash` leads: Google builds it for agentic workflows and
- * reliable multi-step execution, which is exactly this route's tool loop.
- * `gemini-flash-latest` follows as an alias that always resolves to a current
- * Flash model, so a retirement can't empty the front of the list. The lite
- * models sit near the end on purpose — a slightly worse answer beats no answer,
- * but only once the full models are spent.
+ * reliable multi-step execution, which is exactly this route's tool loop. The
+ * lite models sit near the end on purpose — a slightly worse answer beats no
+ * answer, but only once the full models are spent.
+ *
+ * **An alias is insurance, not extra allowance.** `gemini-flash-latest` sits
+ * fourth rather than second even though it is the joint-best model here,
+ * because it *resolves to* `gemini-3.7-flash` and draws on the same bucket.
+ * Observed live: one session spent the leader, and both names came back with an
+ * identical 1782s cooldown. Second place therefore has to be a model with its
+ * own allowance, or the rotation's whole first fallback is a guaranteed 429.
+ * What the alias is genuinely for is the day `3.7-flash` is *retired* — then it
+ * repoints at whatever replaced it and the front of the list is never empty.
  *
  * That paragraph was true of the *comment* and false of the *array* for a long
  * time: the three lite entries actually sat in slots 1-3 with 3.7-flash seventh,
@@ -128,9 +135,9 @@ export const maxDuration = 60;
  */
 const GEMINI_MODELS = [
   "gemini-3.7-flash",
-  "gemini-flash-latest",
   "gemini-3-flash-preview",
   "gemini-3.5-flash",
+  "gemini-flash-latest",
   "gemini-3.5-flash-lite",
   "gemini-flash-lite-latest",
   "gemini-3.1-flash-lite",
