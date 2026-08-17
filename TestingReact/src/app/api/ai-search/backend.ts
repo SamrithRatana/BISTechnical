@@ -124,16 +124,25 @@ async function getJson(
   return (await res.json()) as Row;
 }
 
-/** Unwraps the several envelope shapes these backends use for a page of rows. */
-function unwrap(data: Row): { rows: Row[]; totalCount: number } {
+/**
+ * Unwraps the several envelope shapes these backends use for a page of rows.
+ *
+ * `totalKnown` says whether the envelope really carried a total or whether the
+ * count fell back to "how many rows are on this page". The two are not
+ * interchangeable: for a paged read the fallback is a reasonable display value,
+ * but for a count it is a fabrication — see `countTickets`.
+ */
+function unwrap(data: Row): { rows: Row[]; totalCount: number; totalKnown: boolean } {
   const rows = (data.items ??
     data.Items ??
     data.data ??
     data.Data ??
     (Array.isArray(data) ? data : [])) as Row[];
   const list = Array.isArray(rows) ? rows : [];
-  const totalCount = Number(data.totalCount ?? data.TotalCount ?? list.length);
-  return { rows: list, totalCount: Number.isFinite(totalCount) ? totalCount : list.length };
+  const reported = data.totalCount ?? data.TotalCount;
+  const parsed = Number(reported);
+  const totalKnown = reported !== undefined && reported !== null && Number.isFinite(parsed);
+  return { rows: list, totalCount: totalKnown ? parsed : list.length, totalKnown };
 }
 
 // ---------------------------------------------------------------------------
@@ -343,7 +352,21 @@ export async function countTickets(
     authorization,
     signal
   );
-  return unwrap(data).totalCount;
+  const { totalCount, totalKnown } = unwrap(data);
+
+  // This request deliberately asks for a single row, so `unwrap`'s fallback —
+  // the number of rows on the page — is 1 no matter what the real total is.
+  // Returning it would answer "there is 1 ticket" for a filter matching
+  // hundreds, stated with exactly the confidence of a real count and with no
+  // way for the reader to tell the difference. A failed lookup reaches the
+  // model as an error instead, which it reports as the system being
+  // unreachable.
+  if (!totalKnown) {
+    throw new Error(
+      "technicalservices/search returned no totalCount — refusing to report a page size as a count"
+    );
+  }
+  return totalCount;
 }
 
 // ---------------------------------------------------------------------------

@@ -344,3 +344,120 @@ Route-level detail lives in `TestingReact/src/app/CLAUDE.md`; not repeated here.
   tool fails and the assistant correctly says "unreachable". That is a local
   config state, not a regression; start the API or override the var to the
   remote host when testing the assistant.
+
+# AI Assistant — fallback and accuracy pass (2026-08-17, later session)
+
+Follows the Gemini audit above. Same route; the rotation already existed, so
+this was about why it still gave up, and whether the answers were true.
+
+## Model rotation: it rotated, but nothing was ever skipped
+
+- **A cooldown never removed anything from the rotation.** `readyKeysFor`
+  ended in `ready.length > 0 ? ready : live`, so once *every* key for a model
+  was cooling it fell back to trying them all anyway. `noteRateLimit`'s comment
+  said parking a model "makes the rotation skip them outright"; it did not.
+  Every question for the rest of the day re-walked all eight spent models, one
+  guaranteed 429 each, and the *picker* meanwhile showed them as unavailable
+  because it read `modelCooldowns` directly. Cooldown entries now carry their
+  `scope`: a short-term one is still probed (it is an estimate), a `day` one is
+  skipped (it is a fact from Google's own `quotaId`).
+- **"AI daily limit reached" was mostly a mislabelled timeout.** The leaders
+  429 in under a second, so the first thing a question hit late in the day
+  pinned `degraded` to `quotaExceeded`; if the budget then ran out further down
+  the list, that stale reason was what the user saw — "it resets tomorrow",
+  while models with quota were still in the list untried. Quota and non-quota
+  failures are now tracked separately and the reason is decided at the end:
+  `quotaExceeded` only when the rotation genuinely ran out of models.
+- **Per-attempt timeout added** (`MODEL_ATTEMPT_MS`). Every attempt used to get
+  the whole remaining budget, so one stalling model starved the rest of the
+  list. Plus `MAX_MODEL_ATTEMPTS`, because the budget bounds the wait, not the
+  spend.
+- **Measured live, one key, 2026-08-17:** `3.7-flash`, `3-flash-preview` and
+  `flash-latest` all 429 with `GenerateRequestsPerDayPerProjectPerModel-FreeTier`
+  — confirming again that the alias shares the leader's bucket — while five
+  models still answered. That is the state the feature was degrading in.
+  Latencies moved a lot between probes on the same day (`3.6-flash` 21–45s then
+  1.8s; `3.1-flash-lite` 2.7s then 15.5s), which is the argument for capping an
+  attempt rather than re-sorting the list on one sample.
+- Docs re-checked: the model list matches `ai.google.dev/gemini-api/docs/models`.
+  The rate-limits page still publishes **no** per-model free-tier table (it
+  defers to AI Studio) but now states plainly that limits are **per project,
+  not per API key** — so extra keys from the same project still buy nothing.
+
+## Dates: two bugs, both of the confident-wrong-answer kind
+
+- **`today` was UTC.** `new Date().toISOString().slice(0,10)` in a UTC+7
+  workshop names *yesterday* from 00:00 to 07:00 ICT, every day. The model was
+  told "Today is <yesterday>" and resolved "today"/"ថ្ងៃនេះ" against it, then
+  showed the wrong day back under "Understood as" and agreed with itself. Now
+  `businessToday()` via `Intl` in `Asia/Phnom_Penh` (`AI_BUSINESS_TIMEZONE`
+  overrides), and the zone is named in the prompt so the model cannot re-derive
+  it.
+- **A date window means different things with and without a status, and the
+  prompt had it backwards.** Measured against the live API:
+  - window alone → filters on **arrival** (`serviceDate`);
+  - window **plus a status** → filters on **when that status was set**;
+  - `useProcessDateFiltering` → matches the ticket's **process history**, a
+    broader set again.
+
+  The prompt instructed that "how many machines came in today" be asked as
+  status `Item Recieved` **plus** today's window — which silently answers "how
+  many arrived today *and nobody has touched yet*". Verified: it reported **1**
+  when three machines had come in, because the other two had already moved on.
+  With the status dropped it reports 3, matching a direct query. The
+  `dateFilterMode` tool description made the same false claim and is corrected.
+
+## Other fixes
+
+- **`countTickets` could fabricate a count.** It asks for `pageSize: 1`, and
+  `unwrap` fell back to "rows on this page" when an envelope carried no
+  `totalCount` — so a filter matching hundreds would answer **1**, indistinguishable
+  from a real count. `unwrap` now reports `totalKnown` and `countTickets`
+  throws instead, which reaches the model as a failed lookup.
+- **"Understood as" is reconciled against what actually ran.** The badges came
+  from `present_results`, which is a *separate* object from the tool calls —
+  nothing tied the two together, so the label could describe a query that never
+  happened. `ToolContext.executedTicketQueries` records each real lookup and
+  `buildFilters` fills gaps from the values every lookup agreed on. Fields the
+  lookups disagreed on (a comparison across statuses or months) are left alone,
+  and nothing the model stated is overwritten.
+
+## Verified, not asserted (all against the running app + local API)
+
+| Question | Assistant | Direct query |
+|---|---|---|
+| machines came in today | 3 | 3 |
+| moved to Awaiting Sparepart today | 5 | 5 (3 still there + 2 moved on) |
+| Awaiting Sparepart today | 3 | 3 |
+| came in on 2020-01-01 | "No machines came in" | 0 |
+
+Unknown part and unknown staff name both answered honestly ("not in our
+system", "not a registered user") rather than being invented.
+
+## Known issues left unresolved
+
+- **The TechnicalServices API serves reads with no `Authorization` header —
+  in production, not just locally.** Confirmed 2026-08-17 by a plain
+  unauthenticated `curl`:
+  `https://technicalservicesapi.camprotec.com.kh/api/technicalservices/search`
+  answers **200** with `totalCount: 3662` and full 44-field ticket rows —
+  company name, contact name, address, phone. The local :8000 API behaves the
+  same way, so this is not a dev-only config.
+
+  This is the most serious thing in this file. It means the assistant's
+  "it can only surface rows that user could already open" guarantee is
+  **decorative in production** — not because of anything in `ai-search`, whose
+  auth gate and token forwarding are correct, but because the data underneath
+  has no gate at all. Fixing the assistant cannot fix this; the API has to
+  require and validate the bearer token. Until it does, treat every ticket,
+  customer and machine record as publicly readable.
+
+  (`user.camprotec.com.kh/api/UserManagement` also answers 200 unauthenticated
+  but returned **no rows**, so it may be gated differently — check it properly
+  rather than assuming either way.)
+- The backend's status+date semantics are described accurately to the model now
+  but were **not changed** — whether "Awaiting Sparepart between two dates"
+  *should* mean the transition date is a business-rule call, not a code fix.
+- An explicitly picked model that is day-parked is now skipped rather than
+  probed. The substitution is reported (`servedBy` / `requestedModel`), but it
+  is a behaviour change from "the user may know the quota just reset".

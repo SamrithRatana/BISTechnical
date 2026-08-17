@@ -107,7 +107,7 @@ const TICKET_FILTERS: Record<string, JsonSchema> = {
     type: "string",
     enum: ["received", "statusChanged"],
     description:
-      "What the date window means. 'received' (default) filters on when the machine came in. 'statusChanged' filters on when the status in `status` was actually set — use it for questions like 'what was finished today' or 'who confirmed sales this week'. It requires `status` to be set.",
+      "What the date window means. On the default 'received', a window with NO status filters on when the machine came in, while a window combined with a status filters on when that status was set — so 'what came in today' must leave status unset, or it silently becomes 'what reached that stage today'. 'statusChanged' matches the window against the ticket's process history instead, which is a broader match than status-plus-dates; use it for questions about work a named person did, such as 'who confirmed sales this week'. It requires `status` to be set.",
   },
 };
 
@@ -325,6 +325,16 @@ export interface ToolContext {
    */
   getUsers: () => Promise<UserRecord[]>;
   signal?: AbortSignal;
+  /**
+   * The filters of every ticket lookup that actually ran, appended in order.
+   *
+   * The route reconciles these against what the model later states in
+   * `present_results`, because the two are independent objects and the UI
+   * labels the second one "Understood as". Recorded as the real argument
+   * object rather than reconstructed afterwards, and shared across model
+   * attempts so a fallback inherits what its predecessor already looked up.
+   */
+  executedTicketQueries?: TicketFilterInput[];
 }
 
 export interface TicketFilterInput {
@@ -397,6 +407,7 @@ export async function runTool(
     switch (name) {
       case "search_tickets": {
         const users = await ctx.getUsers();
+        ctx.executedTicketQueries?.push(input as TicketFilterInput);
         const { query, matched } = toTicketQuery(input as TicketFilterInput, users);
         const result = await searchTickets(query, ctx.authorization, users, ctx.signal);
         if (input.staffName && matched.length === 0) {
@@ -417,6 +428,7 @@ export async function runTool(
       }
 
       case "count_tickets": {
+        ctx.executedTicketQueries?.push(input as TicketFilterInput);
         const { query, matched } = toTicketQuery(input as TicketFilterInput, await ctx.getUsers());
         const count = await countTickets(query, ctx.authorization, ctx.signal);
         return input.staffName && matched.length === 0

@@ -118,6 +118,25 @@ export const maxDuration = 60;
  * fallback, but one round of it can consume most of `AGENT_BUDGET_MS` — it can
  * realistically only finish a question that needs a single tool call.
  *
+ * **Re-probed later the same day, and two entries had swapped places:**
+ *
+ *   3.5-flash 1.6s · 3.5-flash-lite 1.2s · flash-lite-latest 1.7s
+ *   3.6-flash 1.8s · 3.1-flash-lite 15.5s
+ *   3.7-flash / flash-latest / 3-flash-preview — 429, daily quota spent
+ *
+ * So `3.6-flash` is not reliably the slow one, and the *deprecated*
+ * `3.1-flash-lite` can be six times slower than the model it was kept below.
+ * Single samples on a shared free tier move this much between probes, which is
+ * the argument for the per-attempt cap (`MODEL_ATTEMPT_MS`) rather than for
+ * re-sorting the list every time someone measures it: the order encodes answer
+ * *quality*, and latency is handled by not letting any one entry hold the
+ * question. Both readings are kept above on purpose — one of them would look
+ * authoritative on its own.
+ *
+ * That probe is also what the rotation exists for: three entries were spent and
+ * five still answered, so a question asked in that state must be served by
+ * `3.5-flash`, never degraded to a keyword search.
+ *
  * Deliberately NOT in this list, each verified against the live API rather than
  * assumed — re-check before re-adding:
  * - `gemini-3.1-pro-preview` / `gemini-pro-latest` — **no free tier at all**
@@ -189,7 +208,7 @@ function slot(keyIndex: number, model: string): string {
  * right lifetime: it is a latency optimisation, not a source of truth, and
  * being wrong only costs one probe.
  */
-const modelCooldowns = new Map<string, { until: number; strikes: number }>();
+const modelCooldowns = new Map<string, { until: number; strikes: number; scope?: QuotaScope }>();
 
 /**
  * Pairs that cannot be reached at all, learned from a 404.
@@ -223,25 +242,90 @@ const aliasTargets = new Map<string, string>();
 const COOLDOWN_MIN_MS = 30_000;
 const COOLDOWN_MAX_MS = 30 * 60_000;
 
+/**
+ * Whether a (key, model) pair is parked until a *daily* allowance resets,
+ * rather than merely cooling off after a short-term limit.
+ *
+ * This distinction is what makes the rotation work once the leading models are
+ * spent. A short cooldown is an **estimate** — worth one probe when nothing
+ * better is available. A daily park is a **fact**: that bucket answers 429
+ * until the Pacific midnight, so probing it can only burn a round-trip.
+ *
+ * Conflating the two is what the code did before. `readyKeysFor` fell back to
+ * "every live key" whenever all of them were cooling, so a cooldown never
+ * actually removed anything from the rotation — every question for the rest of
+ * the day re-walked all eight spent models, one guaranteed 429 each, until the
+ * 50s budget ran out and it degraded to a keyword search anyway. The comment on
+ * `noteRateLimit` claimed parking "makes the rotation skip them outright"; it
+ * did not, and the model picker (which reads `modelCooldowns` directly) showed
+ * them as unavailable while the rotation was still calling them.
+ */
+function isParkedForDay(id: string, now: number): boolean {
+  const entry = modelCooldowns.get(id);
+  return Boolean(entry && entry.scope === "day" && entry.until > now);
+}
+
 /** Keys still worth trying for one model, best-known first. */
 function readyKeysFor(model: string, keyCount: number): number[] {
   const now = Date.now();
   const live = Array.from({ length: keyCount }, (_, i) => i).filter(
-    (i) => !retiredSlots.has(slot(i, model))
+    (i) => !retiredSlots.has(slot(i, model)) && !isParkedForDay(slot(i, model), now)
   );
   const ready = live.filter((i) => (modelCooldowns.get(slot(i, model))?.until ?? 0) <= now);
-  // Cooldowns are estimates and may be stale, so a model with every key cooling
-  // is still worth one attempt rather than being skipped outright.
+  // Short cooldowns are estimates and may be stale, so a model whose keys are
+  // merely cooling is still worth one attempt rather than being skipped
+  // outright. Keys parked until the daily reset are already gone from `live` —
+  // that one is not a guess.
   return ready.length > 0 ? ready : live;
 }
 
-/** Models with at least one key that isn't known-retired for them. */
+/** Models worth trying at all this turn, in list order. */
 function readyModels(keyCount: number): string[] {
-  const live = GEMINI_MODELS.filter((m) => readyKeysFor(m, keyCount).length > 0);
+  const keys = Array.from({ length: keyCount }, (_, i) => i);
+  const reachable = GEMINI_MODELS.filter((m) => keys.some((i) => !retiredSlots.has(slot(i, m))));
+
   // Every entry 404ing on every key is not a real state — more likely the keys
   // or the whole API are misconfigured — so fall back to the full list rather
   // than giving up permanently on a wrong conclusion.
-  return live.length > 0 ? live : GEMINI_MODELS;
+  if (reachable.length === 0) return GEMINI_MODELS;
+
+  // A spent daily allowance, by contrast, *is* a real state, and an empty list
+  // is the correct answer to it: the caller degrades to a keyword search
+  // immediately instead of paying a guaranteed 429 for every model first.
+  return reachable.filter((m) => readyKeysFor(m, keyCount).length > 0);
+}
+
+/**
+ * The daily park the rotation is sitting behind, when every reachable model is
+ * in one.
+ *
+ * Needed because skipping the rotation outright means no attempt runs, so no
+ * `ProviderError` is caught and `degraded` would come back as a generic
+ * "unavailable" — telling the user the assistant broke when in truth its
+ * allowance is spent until the reset. Reports the soonest reset, which is when
+ * it genuinely comes back.
+ */
+function pendingQuotaPark(keyCount: number): AiSearchDegraded | undefined {
+  const now = Date.now();
+  const keys = Array.from({ length: keyCount }, (_, i) => i);
+  let soonest = Infinity;
+
+  for (const model of GEMINI_MODELS) {
+    for (const keyIndex of keys) {
+      const id = slot(keyIndex, model);
+      if (retiredSlots.has(id)) continue;
+      // Something is still worth trying, so this is not a quota story.
+      if (!isParkedForDay(id, now)) return undefined;
+      soonest = Math.min(soonest, modelCooldowns.get(id)!.until);
+    }
+  }
+
+  if (!Number.isFinite(soonest)) return undefined;
+  return {
+    reason: "quotaExceeded",
+    retryAfterSeconds: Math.max(Math.ceil((soonest - now) / 1000), 1),
+    quotaScope: "day",
+  };
 }
 
 /**
@@ -301,7 +385,10 @@ function noteRateLimit(
       quotaScope === "day"
         ? secondsUntilDailyQuotaReset() * 1000
         : Math.min(COOLDOWN_MIN_MS * 2 ** (strikes - 1), COOLDOWN_MAX_MS);
-    modelCooldowns.set(id, { until: Date.now() + backoff, strikes });
+    // The scope is stored, not just used to size the wait: `readyKeysFor` skips
+    // a daily park outright and only *probes past* a short-term one, so without
+    // this the park is indistinguishable from a stale estimate and gets retried.
+    modelCooldowns.set(id, { until: Date.now() + backoff, strikes, scope: quotaScope });
   }
 }
 
@@ -358,9 +445,16 @@ function geminiModelStatus(keyCount: number): ModelStatus[] {
  * The order to try models in for this question.
  *
  * An explicitly chosen model goes first even when we believe it is cooling
- * down: the belief is an estimate, the user may know the daily quota has just
- * reset, and being wrong costs one request. The rest follow as a fallback so a
- * spent choice still gets answered rather than failing outright.
+ * down: a short-term cooldown is an estimate, and being wrong costs one
+ * request. The rest follow as a fallback so a spent choice still gets answered
+ * rather than failing outright.
+ *
+ * A choice parked until its *daily* allowance resets is the exception, and is
+ * skipped like any other: that park came from Google naming the quota, the
+ * picker already shows it counting down as unavailable, and leading with it
+ * would spend a guaranteed 429 before the substitute runs. The response says
+ * which model actually answered (`servedBy` / `requestedModel`), so the
+ * substitution is visible rather than silent.
  */
 function orderedModels(keyCount: number, preferred?: string): string[] {
   const ready = readyModels(keyCount);
@@ -406,6 +500,61 @@ const MAX_ACTIONS = 6;
  * worst-case wait for Pro being usable at all.
  */
 const AGENT_BUDGET_MS = 50_000;
+
+/**
+ * Longest one model may hold the question before the next candidate is tried.
+ *
+ * Separate from the whole-question budget, because a model that *hangs* is not
+ * the same failure as a model that *refuses*. A 429 comes back in half a second
+ * and the rotation moves on; a model that accepts the request and then stalls
+ * used to be handed the entire remaining budget, so a single slow candidate
+ * starved every model behind it and the question degraded to a keyword search
+ * without the rest of the list ever being asked.
+ *
+ * Sized so the common case is untouched — a healthy Flash round lands in
+ * 1.7-2.7s — while still leaving room behind a stall for two or three more
+ * candidates inside `AGENT_BUDGET_MS`. `gemini-3.6-flash` (21-45s) is the one
+ * entry this can cut short, which is why it sits last: by the time the rotation
+ * reaches it the remaining budget is the binding limit anyway.
+ */
+const MODEL_ATTEMPT_MS = 30_000;
+
+/**
+ * Provider calls one question may make before it gives up and degrades.
+ *
+ * The list is 8 models wide and multiplies by the number of keys, so a bad day
+ * could otherwise queue 16+ round-trips behind one search box. The budget alone
+ * is not enough of a guard: it bounds the wait, not the spend.
+ */
+const MAX_MODEL_ATTEMPTS = 6;
+
+/**
+ * The timezone "today" means in, for a question asked in this workshop.
+ *
+ * `new Date().toISOString()` is UTC, and Phnom Penh is UTC+7 — so for the first
+ * seven hours of every working day it names *yesterday*. The assistant was
+ * being told "Today is <yesterday>", resolving "today" / "ថ្ងៃនេះ" against it,
+ * and reporting a confident count for the wrong day under an "Understood as"
+ * badge that agreed with itself. The rest of the app already standardises on
+ * Phnom Penh wall-clock (`toBackendLocalDateTime` in `services/types.ts`),
+ * which is how the backend stores its dates.
+ *
+ * Overridable for an install in another timezone; the default is the one this
+ * system actually runs in.
+ */
+const BUSINESS_TIME_ZONE = process.env.AI_BUSINESS_TIMEZONE?.trim() || "Asia/Phnom_Penh";
+
+/** The business-local calendar date, as the YYYY-MM-DD the backend filters on. */
+function businessToday(now = new Date()): string {
+  // `en-CA` is the locale whose short date format *is* YYYY-MM-DD, so this
+  // needs no manual zero-padding or field reassembly.
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone: BUSINESS_TIME_ZONE,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(now);
+}
 
 /** Bounded so a pasted document can't turn one search box into a large bill. */
 const MAX_QUERY_CHARS = 500;
@@ -508,9 +657,18 @@ WORKFLOW STATUSES (use these exact spellings, including "Item Recieved")
 - "Unrepairable" — cannot be repaired. មិនជួសជុលបាន, ធ្វើមិនកើត
 
 DATES
-Resolve relative wording ("today", "ថ្ងៃនេះ", "this month", "ខែនេះ", "last week") against the current date given below, and pass real YYYY-MM-DD bounds. A question about when work *happened* ("finished today", "who confirmed sales this week") needs dateFilterMode "statusChanged" together with that status; a question about what *came in* uses the default "received".
+Resolve relative wording ("today", "ថ្ងៃនេះ", "this month", "ខែនេះ", "last week") against the current date you are given, and pass real YYYY-MM-DD bounds. That date is already the workshop's own local date — use it as given, and never work "today" out for yourself.
 
-If a question names a time ("today", "ថ្ងៃនេះ", "this month") it always needs both a date window and the status that stage corresponds to. Never answer it with an unfiltered count — "how many machines came in today" / "តើថ្ងៃនេះមានម៉ាស៊ីនចូលប៉ុន្មាន" is status "Item Recieved" with fromDate and toDate both set to today, not a count of everything currently open.
+A date window ALONE filters on when the machine came in. A date window TOGETHER WITH a status filters on when that status was set. Getting this backwards is the easiest way to give a confident wrong number here, because both readings look reasonable and only one matches the question:
+
+- "how many machines came in today" / "តើថ្ងៃនេះមានម៉ាស៊ីនចូលប៉ុន្មាន" — a date window and NO status. A machine that arrived this morning and has already been inspected still came in today. Adding status "Item Recieved" would count only the ones nobody has picked up yet, which is a much smaller number and a different question.
+- "how many moved to Awaiting Sparepart today", "what was finished today" — the status TOGETHER WITH the date window.
+- "how many are Awaiting Sparepart right now" — the status and NO dates.
+- "who confirmed sales this week", or any question about a named person's work — add dateFilterMode "statusChanged", which matches against the ticket's process history rather than its current stage.
+
+A question that names a time still always needs a date window; never answer one with an unfiltered count.
+
+When you list rows for a status-plus-date question, the window describes when the status changed — not when those machines arrived. Their received dates will often be earlier, so do not describe them as having come in on that date.
 
 SPARE PARTS & STOCK INVENTORY (គ្រឿងបន្លាស់ និងស្តុក)
 - Questions about spare parts catalogue, in-stock quantity, part price, or part numbers ("គ្រឿងបន្លាស់", "ស្តុកគ្រឿងបន្លាស់", "ចំនួនគ្រឿងបន្លាស់ក្នុងស្តុក", "តម្លៃគ្រឿងបន្លាស់") -> call search_spare_parts.
@@ -785,8 +943,68 @@ function cleanAnswer(text: string): string {
  * table re-runs. Staff names are resolved to GUIDs here — the same translation
  * the tools use — so the rows under the answer are the rows the answer is about.
  */
-function buildFilters(args: Record<string, unknown>, users: UserRecord[]): AiSearchFilters {
-  const input = args as TicketFilterInput & { answer?: unknown; category?: unknown };
+/**
+ * The filter values every ticket lookup this turn agreed on.
+ *
+ * `present_results` and the lookups are two *separate* structured objects, and
+ * nothing in the protocol ties them together: the model calls `count_tickets`
+ * with one set of parameters and then writes `present_results` with another.
+ * The badges rendered from the second are labelled "Understood as" and the
+ * table re-runs them — so when they disagree with the query that actually
+ * produced the number, the UI is confidently describing work that did not
+ * happen.
+ *
+ * Only fields every executed lookup used identically are returned. Where the
+ * lookups disagreed with each other — a comparison across two statuses, or two
+ * months — there is no single value that describes the answer, so that field is
+ * left out rather than being picked arbitrarily.
+ */
+const RECONCILED_KEYS = [
+  "searchTerm",
+  "status",
+  "fromDate",
+  "toDate",
+  "serviceType",
+  "serviceLocation",
+  "staffName",
+  "dateFilterMode",
+] as const;
+
+function executedConsensus(queries: TicketFilterInput[]): Partial<TicketFilterInput> {
+  const out: Record<string, string> = {};
+  if (queries.length === 0) return out;
+
+  for (const key of RECONCILED_KEYS) {
+    const values = new Set(queries.map((q) => (q[key] ?? "") as string));
+    // Disagreed between lookups — no one value describes the answer.
+    if (values.size !== 1) continue;
+    const only = [...values][0];
+    if (only) out[key] = only;
+  }
+  return out;
+}
+
+/**
+ * Converts the model's `present_results` arguments into the filter set the
+ * table re-runs, reconciled against what the tools actually ran.
+ *
+ * Gaps are filled, and nothing the model stated is overwritten: if every ticket
+ * lookup used the same date window and the model then omitted it from
+ * `present_results`, the executed window is adopted so the badge and the rows
+ * match the sentence above them.
+ */
+function buildFilters(
+  args: Record<string, unknown>,
+  users: UserRecord[],
+  executed: TicketFilterInput[] = []
+): AiSearchFilters {
+  const stated = args as TicketFilterInput & { answer?: unknown; category?: unknown };
+  const input: TicketFilterInput & { answer?: unknown; category?: unknown } = { ...stated };
+  for (const [key, value] of Object.entries(executedConsensus(executed))) {
+    if (!input[key as keyof TicketFilterInput]) {
+      (input as Record<string, unknown>)[key] = value;
+    }
+  }
   const { query, matched } = toTicketQuery(input, users);
   const status = typeof input.status === "string" && (STATUSES as readonly string[]).includes(input.status)
     ? input.status
@@ -1292,7 +1510,7 @@ async function runGeminiAgent(
         const textPart = parts.find((p) => p.text && p.text.trim())?.text;
         if (textPart) args.answer = cleanAnswer(textPart);
       }
-      return buildFilters(args, await ctx.getUsers());
+      return buildFilters(args, await ctx.getUsers(), ctx.executedTicketQueries);
     }
 
     const responses = await Promise.all(
@@ -1323,7 +1541,7 @@ async function runAnthropicAgent(
 ): Promise<AiSearchFilters | null> {
   const client = new Anthropic({ apiKey });
   const messages: Anthropic.MessageParam[] = [
-    { role: "user", content: `Today is ${today}.\n\n${question}` },
+    { role: "user", content: `Today is ${today} (${BUSINESS_TIME_ZONE} local date).\n\n${question}` },
   ];
 
   for (let round = 0; round < MAX_ROUNDS; round++) {
@@ -1363,7 +1581,11 @@ async function runAnthropicAgent(
 
     const finish = toolUses.find((block) => block.name === "present_results");
     if (finish) {
-      return buildFilters(finish.input as Record<string, unknown>, await ctx.getUsers());
+      return buildFilters(
+        finish.input as Record<string, unknown>,
+        await ctx.getUsers(),
+        ctx.executedTicketQueries
+      );
     }
 
     const results: Anthropic.ToolResultBlockParam[] = await Promise.all(
@@ -1458,6 +1680,9 @@ export async function POST(req: NextRequest) {
     authorization,
     signal: req.signal,
     getUsers: () => (usersPromise ??= loadUsers(authorization, req.signal)),
+    // Owned here, not per attempt, so a model that takes over from an
+    // exhausted one reconciles against every lookup the question has run.
+    executedTicketQueries: [],
   };
 
   const users = await ctx.getUsers();
@@ -1501,13 +1726,31 @@ If the user asks who they are, say plainly that you cannot confirm which account
 
   const effectiveSystemPrompt = `${SYSTEM_PROMPT}${userContextPrompt}`;
 
-  const today = new Date().toISOString().slice(0, 10);
-  const deadline = Date.now() + AGENT_BUDGET_MS;
+  // Business-local, never UTC — see `businessToday`. Every relative date in the
+  // question ("today", "ថ្ងៃនេះ", "this month") is resolved against this one
+  // string, so it is the single point where a whole class of confidently-wrong
+  // inventory answers is decided.
+  const today = businessToday();
+  const startedAt = Date.now();
+  const deadline = startedAt + AGENT_BUDGET_MS;
 
-  // Remembered across the whole model list so the user can be told *why* the
-  // assistant didn't answer. A quota wait is worth reporting; a one-off 503 on
-  // a model we then fell past is not, so quota outranks a generic failure.
-  let degraded: AiSearchDegraded | undefined;
+  // Why the assistant didn't answer, remembered across the whole model list.
+  //
+  // The quota story and the everything-else story are tracked separately, and
+  // which one gets *reported* is decided at the end rather than by whichever
+  // failure happened to land first. That ordering was the bug behind the
+  // original report: the leading models 429 in well under a second, so the
+  // first thing any question hit late in the day was a daily 429, which pinned
+  // `degraded` to "quotaExceeded". If the question then ran out of wall-clock
+  // budget several models later — while models with quota left were still in
+  // the list, and some of them slow — the user was told "AI daily limit
+  // reached, it resets tomorrow" for what was actually a timeout. The
+  // assistant looked dead for the rest of the day when it was not.
+  let quotaDegraded: AiSearchDegraded | undefined;
+  let sawOtherFailure = false;
+  /** Set when the walk stopped with candidates still untried. */
+  let stoppedEarly = false;
+
   const noteFailure = (err: unknown) => {
     if (err instanceof ProviderError && err.status === 429) {
       // For a daily allowance Google's `retryDelay` is a handful of seconds
@@ -1520,16 +1763,16 @@ If the user asks who they are, say plainly that you cannot confirm which account
       // assistant can run again, so the shortest one would be a false promise.
       // A daily exhaustion always outranks a short-term one for the same
       // reason — it is the one that actually has to elapse.
-      const longer = (seconds ?? 0) > (degraded?.retryAfterSeconds ?? 0);
-      if (degraded?.reason !== "quotaExceeded" || daily || longer) {
-        degraded = {
+      const longer = (seconds ?? 0) > (quotaDegraded?.retryAfterSeconds ?? 0);
+      if (!quotaDegraded || daily || longer) {
+        quotaDegraded = {
           reason: "quotaExceeded",
           retryAfterSeconds: seconds,
           quotaScope: daily ? "day" : "shortTerm",
         };
       }
-    } else if (!degraded) {
-      degraded = { reason: "unavailable" };
+    } else {
+      sawOtherFailure = true;
     }
   };
 
@@ -1546,7 +1789,12 @@ If the user asks who they are, say plainly that you cannot confirm which account
         if (!text.trim()) return [];
         return [{ role: turn.role === "assistant" ? "model" : "user", parts: [{ text }] }];
       }),
-      { role: "user", parts: [{ text: `Today is ${today}.\n\n${query}` }] },
+      // The zone is named, not just the date, so the model cannot quietly
+      // re-derive "today" from its own assumptions about the caller.
+      {
+        role: "user",
+        parts: [{ text: `Today is ${today} (${BUSINESS_TIME_ZONE} local date).\n\n${query}` }],
+      },
     ];
 
     // Models outside, keys inside. Quota is per model *per key*, so a spent
@@ -1554,19 +1802,54 @@ If the user asks who they are, say plainly that you cannot confirm which account
     // the strongest model before stepping down keeps quality as high as the
     // budget allows. The reverse nesting would drop to a weaker model while a
     // second key still had the better one available.
-    const exhausted = false;
-    for (const model of orderedModels(geminiKeys.length, preferredModel)) {
-      if (exhausted || Date.now() > deadline) break;
+    const candidates = orderedModels(geminiKeys.length, preferredModel);
+
+    // Nothing left to try: every reachable model is parked until its daily
+    // allowance resets. Said so explicitly, because no attempt runs from here
+    // and so no 429 is caught — without this the answer would come back as a
+    // generic "AI could not read that" when the truth is a spent quota with a
+    // known reset time.
+    if (candidates.length === 0) {
+      quotaDegraded = pendingQuotaPark(geminiKeys.length) ?? quotaDegraded;
+      console.info(
+        "[ai-search] every model is parked until its daily quota resets — degrading to keyword search without calling the provider"
+      );
+    }
+
+    // How many provider calls this question has made, across every model and
+    // key. Bounded so a bad day can't queue a dozen round-trips behind one
+    // search box; the wall-clock budget bounds the wait, not the spend.
+    let attempts = 0;
+
+    for (const model of candidates) {
+      // Out of budget or out of attempts, with candidates still unexamined.
+      // Recorded rather than just broken out of, because it changes what the
+      // user is told: a rotation that stopped early did NOT establish that
+      // every model is spent, so it must not be reported as a spent quota.
+      if (attempts >= MAX_MODEL_ATTEMPTS || Date.now() > deadline) {
+        stoppedEarly = true;
+        break;
+      }
 
       for (const keyIndex of readyKeysFor(model, geminiKeys.length)) {
-        if (Date.now() > deadline) break;
+        if (attempts >= MAX_MODEL_ATTEMPTS || Date.now() > deadline) {
+          stoppedEarly = true;
+          break;
+        }
+        attempts++;
         try {
           const filters = await runGeminiAgent(
             model,
             geminiKeys[keyIndex],
             contents,
             ctx,
-            deadline,
+            // Per attempt, not per question. A model that stalls after
+            // accepting the request used to be handed the whole remaining
+            // budget and starve every candidate behind it; capping the attempt
+            // means a stall costs one slot in the rotation rather than the
+            // entire question. Still clamped by the overall deadline, which
+            // stays the hard ceiling.
+            Math.min(deadline, Date.now() + MODEL_ATTEMPT_MS),
             effectiveSystemPrompt
           );
           clearRateLimit(keyIndex, model);
@@ -1578,6 +1861,18 @@ If the user asks who they are, say plainly that you cannot confirm which account
           // deliberately not reported — that is an infrastructure detail, and
           // naming it in a response is a step towards leaking one.
           if (filters) {
+            // Which model actually served the question, and what it cost to get
+            // there. No query text, no answer text, no key — the model name,
+            // the key's index, the attempt count and the elapsed time are
+            // enough to tell "the rotation is working" from "the rotation is
+            // walking six dead models every time".
+            console.info(
+              `[ai-search] served by ${model} (key #${keyIndex + 1}) — ` +
+                `attempt ${attempts} of ${MAX_MODEL_ATTEMPTS}, ${Date.now() - startedAt}ms` +
+                (preferredModel && preferredModel !== model
+                  ? `, substituted for requested ${preferredModel}`
+                  : "")
+            );
             return NextResponse.json({
               filters,
               servedBy: modelLabel(model),
@@ -1586,17 +1881,32 @@ If the user asks who they are, say plainly that you cannot confirm which account
                 : {}),
             });
           }
-          // If the model produced no usable filters, log and try the next model in rotation
+          // Reachable, and it still didn't produce an answer — it ran out of
+          // rounds, hit its per-attempt cap, or replied with nothing usable.
+          // Counted as a non-quota failure so the ending isn't mislabelled as
+          // an exhausted allowance: this model's allowance was fine.
+          sawOtherFailure = true;
           console.warn(`[ai-search] ${model} on key #${keyIndex + 1} produced no filters, falling back to next candidate.`);
         } catch (err) {
           console.warn(`[ai-search] ${model} failed on key #${keyIndex + 1}, trying next:`, err);
-          if (err instanceof ProviderError) {
-            if (err.status === 429)
-              noteRateLimit(keyIndex, model, err.quotaBucket, err.quotaScope);
-            // 404 is permanent for this project, unlike a quota or busy signal.
-            else if (err.status === 404) noteRetired(keyIndex, model);
-          }
           noteFailure(err);
+          if (err instanceof ProviderError) {
+            if (err.status === 429) {
+              noteRateLimit(keyIndex, model, err.quotaBucket, err.quotaScope);
+            } else if (err.status === 404) {
+              // 404 is permanent for this project, unlike a quota or busy signal.
+              noteRetired(keyIndex, model);
+            } else if (err.status === 400) {
+              // A verdict on the *request*, not on the key: this model rejected
+              // something in the payload (an unsupported `thinkingLevel`, a
+              // schema it won't accept), and every key would be told the same.
+              // Retrying it per key spends the budget to reproduce one answer,
+              // so the remaining keys for this model are skipped — while the
+              // rest of the list still runs, because a 400 here is usually
+              // model-specific rather than global.
+              break;
+            }
+          }
         }
       }
     }
@@ -1612,8 +1922,22 @@ If the user asks who they are, say plainly that you cannot confirm which account
     }
   }
 
-  return NextResponse.json({
-    filters: plainSearch(query),
-    degraded: degraded ?? { reason: "unavailable" },
-  });
+  // "The AI's allowance is spent" is only true when the rotation actually ran
+  // out of models to ask. It is a heavy thing to tell someone — the panel says
+  // it resets *tomorrow*, so a user who reads it stops using the feature for
+  // the day — and it must never be the label on a timeout or a backend fault
+  // that happened to be preceded by one exhausted model. Every other ending
+  // gets the honest, recoverable "couldn't read that" instead.
+  const quotaIsTheWholeStory = Boolean(quotaDegraded) && !stoppedEarly && !sawOtherFailure;
+  const degraded: AiSearchDegraded = quotaIsTheWholeStory
+    ? quotaDegraded!
+    : { reason: "unavailable" };
+
+  console.info(
+    `[ai-search] no model answered — degrading to keyword search (${degraded.reason}` +
+      `${stoppedEarly ? ", stopped early on budget/attempt cap" : ""}` +
+      `${sawOtherFailure ? ", saw non-quota failure" : ""}), ${Date.now() - startedAt}ms`
+  );
+
+  return NextResponse.json({ filters: plainSearch(query), degraded });
 }
