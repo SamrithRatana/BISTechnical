@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { recordRequest } from "@/services/activityTracker";
 
 const TECHNICAL_API_BASE =
-  process.env.NEXT_PUBLIC_TECHNICAL_API_URL || "https://technicalservicesapi.camprotec.com.kh";
+  process.env.NEXT_PUBLIC_TECHNICAL_API_URL || "http://localhost:8000";
 
 export async function GET(
   req: NextRequest,

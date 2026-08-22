@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { recordRequest } from "@/services/activityTracker";
 
-const JWT_API_BASE = process.env.NEXT_PUBLIC_JWT_API_URL || "https://user.camprotec.com.kh";
+const JWT_API_BASE = process.env.NEXT_PUBLIC_JWT_API_URL || "http://localhost:8087";
 
 export async function POST(req: NextRequest) {
   // Someone signing in is the clearest possible sign the system is about to be
