@@ -1,10 +1,19 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useSyncExternalStore } from "react";
 import Sidebar from "@/components/Sidebar";
 import Header from "@/components/Header";
 import PageTransition from "@/components/PageTransition";
 import { useI18n } from "@/i18n/LanguageProvider";
+import { useTheme } from "@/theme/ThemeProvider";
+import { cn } from "@/lib/utils";
+import {
+  readSidebarOpen,
+  readSidebarOpenOnServer,
+  setSidebarOpen,
+  subscribeToSidebar,
+} from "@/services/sidebarPreference";
+import { sidebarMarginClass } from "@/lib/sidebarMetrics";
 import type { TranslationKey } from "@/i18n/translations";
 
 interface PageWrapperProps {
@@ -19,38 +28,48 @@ interface PageWrapperProps {
 }
 
 export default function PageWrapper({ titleKey, subtitleKey, children }: PageWrapperProps) {
-  const [sidebarOpen, setSidebarOpen] = useState(true);
-  const { t } = useI18n();
+  /*
+    Read from a module-scope store, not `useState`.
+
+    This component is rendered by each of the 25 pages rather than by a shared
+    layout, so React unmounts it on every navigation — and a `useState(true)`
+    here went with it. Measured: collapse the rail on `/spareparts` (256px →
+    80px), navigate to `/customers`, and it is 256px again.
+
+    `services/sidebarPreference` outlives the remount and persists a deliberate
+    desktop collapse. See that file for why a phone closing the drawer does not
+    write anything, and why this does not flash on reload.
+  */
+  const sidebarOpen = useSyncExternalStore(
+    subscribeToSidebar,
+    readSidebarOpen,
+    readSidebarOpenOnServer
+  );
+  const { lang, t } = useI18n();
+  const { prefs } = useTheme();
+
+  const marginClass = sidebarMarginClass(prefs.sidebarStyle || "classic", sidebarOpen);
 
   return (
     <div className="h-screen overflow-hidden bg-[var(--background)] text-ink font-sans flex">
       {/* Sidebar Navigation */}
       <Sidebar isOpen={sidebarOpen} setIsOpen={setSidebarOpen} />
 
-      {/* Main Content Body */}
+      {/* Main Content Body. */}
       <div
-        className={`flex-1 flex flex-col h-screen overflow-hidden min-w-0 transition-all duration-300 ${
-          sidebarOpen ? "lg:ml-64" : "lg:ml-20"
-        }`}
+        className={cn(
+          "flex-1 flex flex-col h-screen overflow-hidden min-w-0 transition-[margin] duration-300 ease-out",
+          marginClass
+        )}
       >
         {/* Header Bar */}
         <Header sidebarOpen={sidebarOpen} setSidebarOpen={setSidebarOpen} />
 
         {/* Page Main Content Area */}
-        {/* `PageTransition` keys on the pathname, so the stage genuinely
-            re-mounts on every navigation and the enter animation replays.
-            Without it these `enter-up` classes fire once, on the first page
-            you land on, and never again — React reuses this subtree between
-            routes because all 13 pages render the same wrapper.
-
-            The title leads and the content follows one beat behind. Two
-            elements is the whole choreography: a shell that re-animates every
-            item on every navigation stops feeling designed and starts feeling
-            slow, because the cost is paid on each route change, not once. */}
-        <main className="flex-1 flex flex-col p-3 sm:p-4 lg:p-6 w-full mx-auto overflow-hidden min-h-0">
+        <main className="flex-1 flex flex-col p-2.5 sm:p-3.5 lg:p-3.5 xl:p-6 w-full mx-auto overflow-hidden min-h-0">
           <PageTransition className="flex-1 flex flex-col min-h-0 overflow-hidden gap-2.5 sm:gap-3">
-            <div className="enter-up flex items-center justify-between shrink-0">
-              <div>
+            <div className="flex items-center justify-between shrink-0">
+              <div key={`heading-text-${lang}`} className="transition-all duration-300">
                 <h1 className="text-lg md:text-xl font-bold text-ink">{t(titleKey)}</h1>
                 {subtitleKey && (
                   <p className="text-xs text-ink-secondary mt-0.5">{t(subtitleKey)}</p>
@@ -58,10 +77,7 @@ export default function PageWrapper({ titleKey, subtitleKey, children }: PageWra
               </div>
             </div>
 
-            <div
-              style={{ "--enter-i": 1 } as React.CSSProperties}
-              className="enter-up flex-1 flex flex-col min-h-0 overflow-hidden"
-            >
+            <div className="flex-1 flex flex-col min-h-0 overflow-hidden">
               {children}
             </div>
           </PageTransition>

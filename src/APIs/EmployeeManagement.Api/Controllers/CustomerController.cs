@@ -1,8 +1,8 @@
-﻿using EmployeeManagement.Api.Models;
+using EmployeeManagement.Api.Dtos;
+using EmployeeManagement.Api.Models;
 using EmployeeManagement.Models;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
-using Microsoft.Data.SqlClient;
 using Microsoft.Extensions.Logging;
 using System;
 using System.Collections.Generic;
@@ -16,22 +16,30 @@ namespace EmployeeManagement.Api.Controllers
     [Produces("application/json")]
     public class CustomerController : ControllerBase
     {
-        private readonly ICustomerRespository customerRepository;
+        /// <summary>Page size used when the caller asks for a page but not a size.</summary>
+        private const int DefaultPageSize = 10;
+
+        /// <summary>Hard ceiling on page size so one request cannot pull the whole table.</summary>
+        private const int MaxPageSize = 100;
+
+        private readonly ICustomerRepository _customerRepository;
         private readonly ILogger<CustomerController> _logger;
 
-        public CustomerController(ICustomerRespository customerRepository, ILogger<CustomerController> logger)
+        public CustomerController(ICustomerRepository customerRepository, ILogger<CustomerController> logger)
         {
-            this.customerRepository = customerRepository;
+            _customerRepository = customerRepository;
             _logger = logger;
         }
 
         /// <summary>
-        /// Get customers with optional pagination
-        /// GET: api/customer (returns all)
-        /// GET: api/customer?pageNumber=1&pageSize=10 (returns paginated)
-        /// GET: api/customer?pageNumber=1&pageSize=10&searchTerm=abc&isActive=true
+        /// Gets customers, optionally paginated and filtered.
+        /// GET: api/customer (all)
+        /// GET: api/customer?pageNumber=1&amp;pageSize=10 (paginated)
+        /// GET: api/customer?pageNumber=1&amp;pageSize=10&amp;searchTerm=abc&amp;isActive=true
         /// </summary>
         [HttpGet]
+        [ProducesResponseType(StatusCodes.Status200OK)]
+        [ProducesResponseType(StatusCodes.Status500InternalServerError)]
         public async Task<ActionResult> GetCustomers(
             [FromQuery] int? pageNumber = null,
             [FromQuery] int? pageSize = null,
@@ -40,300 +48,211 @@ namespace EmployeeManagement.Api.Controllers
         {
             try
             {
-                if (pageNumber.HasValue && pageSize.HasValue)
+                // A page number alone is enough to mean paginate; the size falls
+                // back to the default rather than silently returning every row.
+                if (pageNumber.HasValue || pageSize.HasValue)
                 {
-                    return await GetCustomersPaginated(pageNumber.Value, pageSize.Value, searchTerm, isActive);
+                    var page = Math.Max(1, pageNumber ?? 1);
+                    var size = Math.Clamp(pageSize ?? DefaultPageSize, 1, MaxPageSize);
+
+                    var (items, totalCount) = await _customerRepository.GetCustomersPaginated(
+                        page, size, searchTerm, isActive);
+
+                    var pagedResponse = new PagedResponse<CustomerResponse>(
+                        items.Select(CustomerResponse.From).ToList(), page, size, totalCount);
+
+                    return Ok(pagedResponse);
                 }
-                else
-                {
-                    return await GetAllCustomers();
-                }
-            }
-            catch (SqlException sqlEx)
-            {
-                _logger.LogError($"SQL Error: {sqlEx.Message}");
-                return StatusCode(StatusCodes.Status500InternalServerError,
-                    $"SQL Error: An error occurred while retrieving customers. {sqlEx.Message}");
+
+                var customers = await _customerRepository.GetCustomers();
+                return Ok(customers.Select(CustomerResponse.From).ToList());
             }
             catch (Exception ex)
             {
-                _logger.LogError($"General Error: {ex.Message}");
-                return StatusCode(StatusCodes.Status500InternalServerError,
-                    $"Error retrieving customers: {ex.Message}");
+                // Detail goes to the log, never to the caller: raw SqlException
+                // text exposes schema, server and connection internals.
+                _logger.LogError(ex, "Error retrieving customers.");
+                return Problem(
+                    detail: "An error occurred while retrieving customers.",
+                    statusCode: StatusCodes.Status500InternalServerError);
             }
         }
 
-        private async Task<ActionResult> GetAllCustomers()
-        {
-            var customers = await customerRepository.GetCustomers();
-
-            var customersWithType = customers.Select(c => new
-            {
-                c.Id,
-                c.CreatedBy,
-                c.CreatedAt,
-                c.ModifiedBy,
-                c.ModifiedAt,
-                c.CompanyName,
-                c.Address,
-                c.ContactName,
-                c.PhoneNumber,
-                c.Email,
-                c.CustomerTypeListId,
-                c.IsActive,
-                CustomerType = c.CustomerType?.Type
-            }).ToList();
-
-            Response.ContentType = "application/json";
-            return Ok(customersWithType);
-        }
-
-        private async Task<ActionResult> GetCustomersPaginated(
-            int pageNumber,
-            int pageSize,
-            string searchTerm = null,
-            bool? isActive = null)
-        {
-            if (pageNumber < 1)
-                pageNumber = 1;
-
-            if (pageSize < 1)
-                pageSize = 10;
-
-            if (pageSize > 100)
-                pageSize = 100;
-
-            var (items, totalCount) = await customerRepository.GetCustomersPaginated(
-                pageNumber,
-                pageSize,
-                searchTerm,
-                isActive);
-
-            var customersWithType = items.Select(c => new
-            {
-                c.Id,
-                c.CreatedBy,
-                c.CreatedAt,
-                c.ModifiedBy,
-                c.ModifiedAt,
-                c.CompanyName,
-                c.Address,
-                c.ContactName,
-                c.PhoneNumber,
-                c.Email,
-                c.CustomerTypeListId,
-                c.IsActive,
-                CustomerType = c.CustomerType?.Type
-            }).ToList();
-
-            var pagedResponse = new PagedResponse<object>(
-                customersWithType,
-                pageNumber,
-                pageSize,
-                totalCount);
-
-            Response.ContentType = "application/json";
-            return Ok(pagedResponse);
-        }
-
-        /// <summary>
-        /// Get customer by ID
-        /// GET: api/customer/{id}
-        /// </summary>
-        [HttpGet("{id}")]
-        public async Task<ActionResult<object>> GetCustomerById(Guid id)
+        /// <summary>GET: api/customer/{id}</summary>
+        [HttpGet("{id:guid}")]
+        [ProducesResponseType(StatusCodes.Status200OK)]
+        [ProducesResponseType(StatusCodes.Status404NotFound)]
+        [ProducesResponseType(StatusCodes.Status500InternalServerError)]
+        public async Task<ActionResult<CustomerResponse>> GetCustomerById(Guid id)
         {
             try
             {
-                var customer = await customerRepository.GetCustomerById(id);
+                var customer = await _customerRepository.GetCustomerById(id);
 
                 if (customer == null)
                 {
                     return NotFound($"Customer with ID = {id} not found.");
                 }
 
-                var customerWithType = new
-                {
-                    customer.Id,
-                    customer.CreatedBy,
-                    customer.CreatedAt,
-                    customer.ModifiedBy,
-                    customer.ModifiedAt,
-                    customer.CompanyName,
-                    customer.Address,
-                    customer.ContactName,
-                    customer.PhoneNumber,
-                    customer.Email,
-                    customer.CustomerTypeListId,
-                    customer.IsActive,
-                    CustomerType = customer.CustomerType?.Type
-                };
-
-                Response.ContentType = "application/json";
-                return Ok(customerWithType);
-            }
-            catch (SqlException sqlEx)
-            {
-                _logger.LogError($"SQL Error: {sqlEx.Message}");
-                return StatusCode(StatusCodes.Status500InternalServerError,
-                    $"SQL Error: An error occurred while retrieving the customer with ID = {id}. {sqlEx.Message}");
+                return Ok(CustomerResponse.From(customer));
             }
             catch (Exception ex)
             {
-                _logger.LogError($"General Error: {ex.Message}");
-                return StatusCode(StatusCodes.Status500InternalServerError,
-                    $"Error retrieving the customer with ID = {id}: {ex.Message}");
+                _logger.LogError(ex, "Error retrieving customer {CustomerId}.", id);
+                return Problem(
+                    detail: "An error occurred while retrieving the customer.",
+                    statusCode: StatusCodes.Status500InternalServerError);
             }
         }
 
-        /// <summary>
-        /// Create a new customer
-        /// POST: api/customer
-        /// </summary>
+        /// <summary>POST: api/customer</summary>
         [HttpPost]
-        public async Task<ActionResult<Customer>> CreateCustomer([FromBody] Customer customer)
+        [ProducesResponseType(StatusCodes.Status201Created)]
+        [ProducesResponseType(StatusCodes.Status400BadRequest)]
+        [ProducesResponseType(StatusCodes.Status500InternalServerError)]
+        public async Task<ActionResult<CustomerResponse>> CreateCustomer([FromBody] Customer customer)
         {
+            if (customer == null)
+            {
+                return BadRequest("Customer data is required.");
+            }
+
             try
             {
-                if (customer == null)
-                {
-                    return BadRequest("Customer data is required.");
-                }
-
-                // Set creation metadata
+                // The server owns the identity; whatever the caller sent is discarded.
+                // Audit timestamps are stamped by the repository.
                 customer.Id = Guid.NewGuid();
-                customer.CreatedAt = DateTime.UtcNow;
-                customer.ModifiedAt = DateTime.UtcNow;
 
-                var createdCustomer = await customerRepository.CreateCustomer(customer);
+                var createdCustomer = await _customerRepository.CreateCustomer(customer);
 
-                var customerWithType = new
-                {
-                    createdCustomer.Id,
-                    createdCustomer.CreatedBy,
-                    createdCustomer.CreatedAt,
-                    createdCustomer.ModifiedBy,
-                    createdCustomer.ModifiedAt,
-                    createdCustomer.CompanyName,
-                    createdCustomer.Address,
-                    createdCustomer.ContactName,
-                    createdCustomer.PhoneNumber,
-                    createdCustomer.Email,
-                    createdCustomer.CustomerTypeListId,
-                    createdCustomer.IsActive,
-                    CustomerType = createdCustomer.CustomerType?.Type
-                };
-
-                Response.ContentType = "application/json";
-                return CreatedAtAction(nameof(GetCustomerById),
+                return CreatedAtAction(
+                    nameof(GetCustomerById),
                     new { id = createdCustomer.Id },
-                    customerWithType);
-            }
-            catch (SqlException sqlEx)
-            {
-                _logger.LogError($"SQL Error: {sqlEx.Message}");
-                return StatusCode(StatusCodes.Status500InternalServerError,
-                    $"SQL Error: An error occurred while creating the customer. {sqlEx.Message}");
+                    CustomerResponse.From(createdCustomer));
             }
             catch (Exception ex)
             {
-                _logger.LogError($"General Error: {ex.Message}");
-                return StatusCode(StatusCodes.Status500InternalServerError,
-                    $"Error creating customer: {ex.Message}");
+                _logger.LogError(ex, "Error creating customer.");
+                return Problem(
+                    detail: "An error occurred while creating the customer.",
+                    statusCode: StatusCodes.Status500InternalServerError);
             }
         }
 
-        /// <summary>
-        /// Update an existing customer
-        /// PUT: api/customer/{id}
-        /// </summary>
-        [HttpPut("{id}")]
-        public async Task<ActionResult<Customer>> UpdateCustomer(Guid id, [FromBody] Customer customer)
+        /// <summary>PUT: api/customer/{id}</summary>
+        [HttpPut("{id:guid}")]
+        [ProducesResponseType(StatusCodes.Status200OK)]
+        [ProducesResponseType(StatusCodes.Status400BadRequest)]
+        [ProducesResponseType(StatusCodes.Status404NotFound)]
+        [ProducesResponseType(StatusCodes.Status500InternalServerError)]
+        public async Task<ActionResult<CustomerResponse>> UpdateCustomer(Guid id, [FromBody] Customer customer)
         {
+            if (customer == null)
+            {
+                return BadRequest("Customer data is required.");
+            }
+
+            if (id != customer.Id)
+            {
+                return BadRequest("Customer ID mismatch.");
+            }
+
             try
             {
-                if (customer == null)
-                {
-                    return BadRequest("Customer data is required.");
-                }
+                // The repository reports a missing row by returning null, so the
+                // previous existence pre-check was a wasted database round-trip.
+                var updatedCustomer = await _customerRepository.UpdateCustomer(customer);
 
-                if (id != customer.Id)
-                {
-                    return BadRequest("Customer ID mismatch.");
-                }
-
-                var existingCustomer = await customerRepository.GetCustomerById(id);
-                if (existingCustomer == null)
+                if (updatedCustomer == null)
                 {
                     return NotFound($"Customer with ID = {id} not found.");
                 }
 
-                var updatedCustomer = await customerRepository.UpdateCustomer(customer);
-
-                var customerWithType = new
-                {
-                    updatedCustomer.Id,
-                    updatedCustomer.CreatedBy,
-                    updatedCustomer.CreatedAt,
-                    updatedCustomer.ModifiedBy,
-                    updatedCustomer.ModifiedAt,
-                    updatedCustomer.CompanyName,
-                    updatedCustomer.Address,
-                    updatedCustomer.ContactName,
-                    updatedCustomer.PhoneNumber,
-                    updatedCustomer.Email,
-                    updatedCustomer.CustomerTypeListId,
-                    updatedCustomer.IsActive,
-                    CustomerType = updatedCustomer.CustomerType?.Type
-                };
-
-                Response.ContentType = "application/json";
-                return Ok(customerWithType);
-            }
-            catch (SqlException sqlEx)
-            {
-                _logger.LogError($"SQL Error: {sqlEx.Message}");
-                return StatusCode(StatusCodes.Status500InternalServerError,
-                    $"SQL Error: An error occurred while updating the customer. {sqlEx.Message}");
+                return Ok(CustomerResponse.From(updatedCustomer));
             }
             catch (Exception ex)
             {
-                _logger.LogError($"General Error: {ex.Message}");
-                return StatusCode(StatusCodes.Status500InternalServerError,
-                    $"Error updating customer: {ex.Message}");
+                _logger.LogError(ex, "Error updating customer {CustomerId}.", id);
+                return Problem(
+                    detail: "An error occurred while updating the customer.",
+                    statusCode: StatusCodes.Status500InternalServerError);
             }
         }
 
         /// <summary>
-        /// Delete a customer
-        /// DELETE: api/customer/{id}
+        /// Assigns one customer type to many customers in a single statement.
+        /// PUT: api/customer/bulk-assign-type
         /// </summary>
-        [HttpDelete("{id}")]
+        [HttpPut("bulk-assign-type")]
+        [ProducesResponseType(StatusCodes.Status200OK)]
+        [ProducesResponseType(StatusCodes.Status400BadRequest)]
+        [ProducesResponseType(StatusCodes.Status500InternalServerError)]
+        public async Task<ActionResult<BulkAssignResult>> BulkAssignCustomerType(
+            [FromBody] BulkAssignCustomerTypeRequest request)
+        {
+            if (request?.CustomerIds == null || request.CustomerIds.Count == 0)
+            {
+                return BadRequest("At least one customer id is required.");
+            }
+
+            try
+            {
+                var ids = request.CustomerIds
+                    .Where(id => id != Guid.Empty)
+                    .Distinct()
+                    .ToList();
+
+                if (ids.Count == 0)
+                {
+                    return BadRequest("At least one valid customer id is required.");
+                }
+
+                var updatedCount = await _customerRepository.BulkAssignCustomerType(
+                    ids, request.CustomerTypeListId, request.ModifiedBy);
+
+                _logger.LogInformation(
+                    "Bulk-assigned customer type {CustomerTypeId} to {UpdatedCount} of {RequestedCount} customer(s).",
+                    request.CustomerTypeListId, updatedCount, ids.Count);
+
+                return Ok(new BulkAssignResult
+                {
+                    RequestedCount = ids.Count,
+                    UpdatedCount = updatedCount
+                });
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error bulk-assigning customer type.");
+                return Problem(
+                    detail: "An error occurred while assigning the customer type.",
+                    statusCode: StatusCodes.Status500InternalServerError);
+            }
+        }
+
+        /// <summary>DELETE: api/customer/{id}</summary>
+        [HttpDelete("{id:guid}")]
+        [ProducesResponseType(StatusCodes.Status200OK)]
+        [ProducesResponseType(StatusCodes.Status404NotFound)]
+        [ProducesResponseType(StatusCodes.Status500InternalServerError)]
         public async Task<ActionResult> DeleteCustomer(Guid id)
         {
             try
             {
-                var customer = await customerRepository.GetCustomerById(id);
-                if (customer == null)
+                var deleted = await _customerRepository.DeleteCustomer(id);
+
+                if (!deleted)
                 {
                     return NotFound($"Customer with ID = {id} not found.");
                 }
 
-                await customerRepository.DeleteCustomer(id);
-
                 return Ok(new { message = $"Customer with ID = {id} deleted successfully." });
-            }
-            catch (SqlException sqlEx)
-            {
-                _logger.LogError($"SQL Error: {sqlEx.Message}");
-                return StatusCode(StatusCodes.Status500InternalServerError,
-                    $"SQL Error: An error occurred while deleting the customer. {sqlEx.Message}");
             }
             catch (Exception ex)
             {
-                _logger.LogError($"General Error: {ex.Message}");
-                return StatusCode(StatusCodes.Status500InternalServerError,
-                    $"Error deleting customer: {ex.Message}");
+                _logger.LogError(ex, "Error deleting customer {CustomerId}.", id);
+                return Problem(
+                    detail: "An error occurred while deleting the customer.",
+                    statusCode: StatusCodes.Status500InternalServerError);
             }
         }
     }

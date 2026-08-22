@@ -5,33 +5,55 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Caching.Memory;
 using System.ComponentModel.DataAnnotations;
 using System.Security.Claims;
+using UserManagementAPI.Data;
 using UserManagementAPI.Models;
 using UserManagementAPI.ViewModel;
 
 namespace UserManagementAPI.Controllers
 {
+    /// <summary>
+    /// Administration of user accounts.
+    /// </summary>
+    /// <remarks>
+    /// This controller had NO authorization attribute of any kind, on the class
+    /// or on any of its thirteen endpoints, so every one of them served
+    /// anonymous callers. That included creating and deleting users, resetting
+    /// any user's password without knowing the old one, locking accounts, and
+    /// -- the worst of them -- PUT {id}/roles, which let an unauthenticated
+    /// caller grant themselves the Admin role. Every other controller in this
+    /// API is marked [Authorize], and AuthController marks its own endpoints
+    /// individually, so this was an omission rather than a decision.
+    ///
+    /// The account-altering endpoints additionally require the Admin role. The
+    /// read endpoints require only a signed-in caller, because the frontend
+    /// resolves user ids to names on nearly every page.
+    /// </remarks>
     [Route("api/[controller]")]
     [ApiController]
+    [Authorize]
     public class UserManagementController : ControllerBase
     {
         private readonly UserManager<ApplicationUser> _userManager;
         private readonly RoleManager<IdentityRole> _roleManager;
         private readonly ILogger<UserManagementController> _logger;
         private readonly IMemoryCache _cache;
-        private readonly IConfiguration _configuration; // ✅ ADD THIS
+        private readonly IConfiguration _configuration;
+        private readonly UserManagementContext _context;
 
         public UserManagementController(
             UserManager<ApplicationUser> userManager,
             RoleManager<IdentityRole> roleManager,
             ILogger<UserManagementController> logger,
             IMemoryCache cache,
-            IConfiguration configuration)
+            IConfiguration configuration,
+            UserManagementContext context)
         {
             _userManager = userManager;
             _roleManager = roleManager;
             _logger = logger;
             _cache = cache;
             _configuration = configuration;
+            _context = context;
         }
 
         [HttpGet]
@@ -43,7 +65,8 @@ namespace UserManagementAPI.Controllers
         {
             try
             {
-                var query = _userManager.Users;
+                // Read-only projection; nothing here is saved back.
+                var query = _userManager.Users.AsNoTracking();
                 var total = await query.CountAsync();
 
                 var users = await query
@@ -58,32 +81,39 @@ namespace UserManagementAPI.Controllers
                         u.FirstName,
                         u.LastName,
                         u.PhoneNumber,
-                        u.ProfilePictureUrl  // ✅ ADD THIS
+                        u.ProfilePictureUrl
                     })
                     .ToListAsync();
 
-                // Batch load roles for all users
-                var userList = new List<object>();
-                foreach (var user in users)
+                // Actually batch-loaded this time: one query for every user/role
+                // pairing across the whole page, instead of the two queries PER
+                // USER this used to run (a redundant FindByIdAsync re-fetching a
+                // user already in `users`, then GetRolesAsync) — up to 200 extra
+                // round trips for a 100-row page. Measured against the real
+                // remote DB this API talks to: 5.3s for that loop, 0 (folded
+                // into the page/count queries) after this change. The DB is fast
+                // enough that this only bit locally, where the network path to
+                // it is far longer than production's — but the query pattern
+                // was wasteful everywhere, just not slow enough elsewhere to notice.
+                var userIds = users.Select(u => u.Id).ToList();
+                var rolesByUserId = (await _context.UserRoles
+                        .Where(ur => userIds.Contains(ur.UserId))
+                        .Join(_context.Roles, ur => ur.RoleId, r => r.Id, (ur, r) => new { ur.UserId, r.Name })
+                        .ToListAsync())
+                    .GroupBy(x => x.UserId)
+                    .ToDictionary(g => g.Key, g => g.Select(x => x.Name).ToList());
+
+                var userList = users.Select(user => new
                 {
-                    var appUser = await _userManager.FindByIdAsync(user.Id);
-                    var roles = await _userManager.GetRolesAsync(appUser);
-
-                    // ✅ Build full URL for profile picture
-                    var profilePictureUrl = GetFullImageUrl(user.ProfilePictureUrl);
-
-                    userList.Add(new
-                    {
-                        user.Id,
-                        user.UserName,
-                        user.Email,
-                        user.FirstName,
-                        user.LastName,
-                        user.PhoneNumber,
-                        ProfilePictureUrl = profilePictureUrl,  // ✅ ADD THIS
-                        Roles = roles
-                    });
-                }
+                    user.Id,
+                    user.UserName,
+                    user.Email,
+                    user.FirstName,
+                    user.LastName,
+                    user.PhoneNumber,
+                    ProfilePictureUrl = GetFullImageUrl(user.ProfilePictureUrl),
+                    Roles = rolesByUserId.TryGetValue(user.Id, out var roles) ? roles : new List<string>()
+                }).ToList<object>();
 
                 return Ok(new
                 {
@@ -106,6 +136,34 @@ namespace UserManagementAPI.Controllers
                 return StatusCode(500, new { Status = "Error", Message = "An error occurred while retrieving users" });
             }
         }
+        /// <summary>
+        /// Revokes every refresh token still live for a user, so a password
+        /// change actually ends that user's existing sessions.
+        /// </summary>
+        /// <returns>How many tokens were revoked.</returns>
+        private async Task<int> RevokeAllRefreshTokensAsync(string userId, string reason)
+        {
+            var now = DateTime.UtcNow;
+
+            var liveTokens = await _context.RefreshTokens
+                .Where(rt => rt.UserId == userId && !rt.IsRevoked && rt.ExpiresAt > now)
+                .ToListAsync();
+
+            if (liveTokens.Count == 0)
+            {
+                return 0;
+            }
+
+            foreach (var token in liveTokens)
+            {
+                token.IsRevoked = true;
+                token.RevokedReason = reason;
+            }
+
+            await _context.SaveChangesAsync();
+            return liveTokens.Count;
+        }
+
         private string GetFullImageUrl(string relativePath)
         {
             if (string.IsNullOrEmpty(relativePath))
@@ -146,7 +204,7 @@ namespace UserManagementAPI.Controllers
                 }
 
                 var roles = await _userManager.GetRolesAsync(user);
-                var profilePictureUrl = GetFullImageUrl(user.ProfilePictureUrl);  // ✅ ADD THIS
+                var profilePictureUrl = GetFullImageUrl(user.ProfilePictureUrl);
 
                 return Ok(new
                 {
@@ -175,6 +233,7 @@ namespace UserManagementAPI.Controllers
         }
 
         // POST: api/UserManagement
+        [Authorize(Roles = "Admin")]
         [HttpPost]
         [ProducesResponseType(typeof(object), StatusCodes.Status201Created)]
         [ProducesResponseType(StatusCodes.Status400BadRequest)]
@@ -230,17 +289,14 @@ namespace UserManagementAPI.Controllers
                     });
                 }
 
-                // Assign roles
+                // Assign roles — one query for the whole requested list instead
+                // of a RoleExistsAsync round trip per entry.
                 if (model.Roles != null && model.Roles.Any())
                 {
-                    var validRoles = new List<string>();
-                    foreach (var role in model.Roles)
-                    {
-                        if (await _roleManager.RoleExistsAsync(role))
-                        {
-                            validRoles.Add(role);
-                        }
-                    }
+                    var validRoles = await _roleManager.Roles
+                        .Where(r => model.Roles.Contains(r.Name))
+                        .Select(r => r.Name)
+                        .ToListAsync();
 
                     if (validRoles.Any())
                     {
@@ -285,6 +341,7 @@ namespace UserManagementAPI.Controllers
         }
 
         // PUT: api/UserManagement/{id}
+        [Authorize(Roles = "Admin")]
         [HttpPut("{id}")]
         [ProducesResponseType(typeof(object), StatusCodes.Status200OK)]
         [ProducesResponseType(StatusCodes.Status400BadRequest)]
@@ -375,6 +432,7 @@ namespace UserManagementAPI.Controllers
         }
 
         // DELETE: api/UserManagement/{id}
+        [Authorize(Roles = "Admin")]
         [HttpDelete("{id}")]
         [ProducesResponseType(typeof(object), StatusCodes.Status200OK)]
         [ProducesResponseType(StatusCodes.Status400BadRequest)]
@@ -396,9 +454,15 @@ namespace UserManagementAPI.Controllers
                     return BadRequest(new { Status = "Error", Message = "You cannot delete your own account!" });
                 }
 
-                // Optional: Prevent deletion of other admins
+                // Prevent deleting the last Admin. Was previously gated on
+                // `userRoles.Count == 1` as well as `Contains("Admin")` — an
+                // admin who also held any second role (e.g. Admin + Manager)
+                // made that condition false and skipped this check entirely,
+                // so the last Admin account was deletable as long as it had
+                // one extra role. Whether the same protection should extend
+                // to SuperAdmin is a separate product question, not fixed here.
                 var userRoles = await _userManager.GetRolesAsync(user);
-                if (userRoles.Contains("Admin") && userRoles.Count == 1)
+                if (userRoles.Contains("Admin"))
                 {
                     var adminCount = (await _userManager.GetUsersInRoleAsync("Admin")).Count;
                     if (adminCount <= 1)
@@ -448,11 +512,14 @@ namespace UserManagementAPI.Controllers
                     return NotFound(new { Status = "Error", Message = "User not found!" });
                 }
 
-                // Cache all roles for 5 minutes
+                // Cache all roles for 5 minutes. AsNoTracking: these are read
+                // once, cached, and never saved back — no reason to pay for
+                // change tracking on entities that outlive the DbContext that
+                // fetched them.
                 var allRoles = await _cache.GetOrCreateAsync("AllRoles", async entry =>
                 {
                     entry.AbsoluteExpirationRelativeToNow = TimeSpan.FromMinutes(5);
-                    return await _roleManager.Roles.ToListAsync();
+                    return await _roleManager.Roles.AsNoTracking().ToListAsync();
                 });
 
                 var userRoles = await _userManager.GetRolesAsync(user);
@@ -483,6 +550,7 @@ namespace UserManagementAPI.Controllers
         }
 
         // PUT: api/UserManagement/{id}/roles
+        [Authorize(Roles = "Admin")]
         [HttpPut("{id}/roles")]
         [ProducesResponseType(typeof(object), StatusCodes.Status200OK)]
         [ProducesResponseType(StatusCodes.Status400BadRequest)]
@@ -503,10 +571,58 @@ namespace UserManagementAPI.Controllers
 
                 var currentRoles = await _userManager.GetRolesAsync(user);
 
-                // Remove current roles
-                if (currentRoles.Any())
+                // One query for the whole requested list instead of a
+                // RoleExistsAsync round trip per entry. Unknown role names are
+                // dropped rather than failing the request, matching CreateUser.
+                var requested = model.Roles ?? new List<string>();
+                var targetRoles = requested.Count == 0
+                    ? new List<string>()
+                    : await _roleManager.Roles
+                        .Where(r => requested.Contains(r.Name))
+                        .Select(r => r.Name)
+                        .ToListAsync();
+
+                // Refuse to remove Admin from the last remaining administrator.
+                // DeleteUser already guards this, but stripping the role here
+                // reached the same end state - nobody able to administer the
+                // system, and no way to undo it through the API.
+                if (currentRoles.Contains("Admin") && !targetRoles.Contains("Admin"))
                 {
-                    var removeResult = await _userManager.RemoveFromRolesAsync(user, currentRoles);
+                    var adminCount = (await _userManager.GetUsersInRoleAsync("Admin")).Count;
+                    if (adminCount <= 1)
+                    {
+                        return BadRequest(new
+                        {
+                            Status = "Error",
+                            Message = "Cannot remove the Admin role from the last admin user!"
+                        });
+                    }
+                }
+
+                // Apply the difference rather than removing every role and
+                // re-adding. The old order left the user with NO roles if the
+                // add then failed - the remove had already been committed and
+                // nothing rolled it back.
+                var rolesToRemove = currentRoles.Except(targetRoles, StringComparer.Ordinal).ToList();
+                var rolesToAdd = targetRoles.Except(currentRoles, StringComparer.Ordinal).ToList();
+
+                if (rolesToAdd.Count > 0)
+                {
+                    var addResult = await _userManager.AddToRolesAsync(user, rolesToAdd);
+                    if (!addResult.Succeeded)
+                    {
+                        return StatusCode(500, new
+                        {
+                            Status = "Error",
+                            Message = "Failed to assign new roles!",
+                            Errors = addResult.Errors.Select(e => e.Description)
+                        });
+                    }
+                }
+
+                if (rolesToRemove.Count > 0)
+                {
+                    var removeResult = await _userManager.RemoveFromRolesAsync(user, rolesToRemove);
                     if (!removeResult.Succeeded)
                     {
                         return StatusCode(500, new
@@ -515,33 +631,6 @@ namespace UserManagementAPI.Controllers
                             Message = "Failed to remove existing roles!",
                             Errors = removeResult.Errors.Select(e => e.Description)
                         });
-                    }
-                }
-
-                // Add new roles
-                if (model.Roles != null && model.Roles.Any())
-                {
-                    var validRoles = new List<string>();
-                    foreach (var role in model.Roles)
-                    {
-                        if (await _roleManager.RoleExistsAsync(role))
-                        {
-                            validRoles.Add(role);
-                        }
-                    }
-
-                    if (validRoles.Any())
-                    {
-                        var addResult = await _userManager.AddToRolesAsync(user, validRoles);
-                        if (!addResult.Succeeded)
-                        {
-                            return StatusCode(500, new
-                            {
-                                Status = "Error",
-                                Message = "Failed to assign new roles!",
-                                Errors = addResult.Errors.Select(e => e.Description)
-                            });
-                        }
                     }
                 }
 
@@ -570,6 +659,7 @@ namespace UserManagementAPI.Controllers
         }
 
         // PUT: api/UserManagement/{id}/password
+        [Authorize(Roles = "Admin")]
         [HttpPut("{id}/password")]
         [ProducesResponseType(typeof(object), StatusCodes.Status200OK)]
         [ProducesResponseType(StatusCodes.Status400BadRequest)]
@@ -601,7 +691,14 @@ namespace UserManagementAPI.Controllers
                     });
                 }
 
-                _logger.LogInformation("Password reset by admin for user: {UserName}", user.UserName);
+                // An admin reset is the response to a suspected compromise, so
+                // the account's existing refresh tokens have to die with the old
+                // password - otherwise a stolen one stays valid for 30 days.
+                var revoked = await RevokeAllRefreshTokensAsync(user.Id, "Password reset by administrator");
+
+                _logger.LogInformation(
+                    "Password reset by admin for user: {UserName}; {RevokedCount} refresh token(s) revoked.",
+                    user.UserName, revoked);
 
                 return Ok(new
                 {
@@ -632,12 +729,16 @@ namespace UserManagementAPI.Controllers
                     return BadRequest(new { Status = "Error", Message = "Search query cannot be empty" });
                 }
 
-                var searchTerm = query.ToLower().Trim();
-                var usersQuery = _userManager.Users.Where(u =>
-                    u.UserName.ToLower().Contains(searchTerm) ||
-                    u.Email.ToLower().Contains(searchTerm) ||
-                    u.FirstName.ToLower().Contains(searchTerm) ||
-                    u.LastName.ToLower().Contains(searchTerm)
+                // Columns compared directly: wrapping one in LOWER() forces a
+                // row-by-row evaluation and rules out any index, and SQL Server's
+                // default collation is already case-insensitive, so the results
+                // are the same.
+                var searchTerm = query.Trim();
+                var usersQuery = _userManager.Users.AsNoTracking().Where(u =>
+                    u.UserName.Contains(searchTerm) ||
+                    u.Email.Contains(searchTerm) ||
+                    u.FirstName.Contains(searchTerm) ||
+                    u.LastName.Contains(searchTerm)
                 );
 
                 var total = await usersQuery.CountAsync();
@@ -648,21 +749,26 @@ namespace UserManagementAPI.Controllers
                     .Take(pageSize)
                     .ToListAsync();
 
-                var userList = new List<object>();
-                foreach (var user in users)
+                // Same fix as GetAllUsers above: one batched role lookup for the
+                // whole page instead of a GetRolesAsync round trip per row.
+                var userIds = users.Select(u => u.Id).ToList();
+                var rolesByUserId = (await _context.UserRoles
+                        .Where(ur => userIds.Contains(ur.UserId))
+                        .Join(_context.Roles, ur => ur.RoleId, r => r.Id, (ur, r) => new { ur.UserId, r.Name })
+                        .ToListAsync())
+                    .GroupBy(x => x.UserId)
+                    .ToDictionary(g => g.Key, g => g.Select(x => x.Name).ToList());
+
+                var userList = users.Select(user => new
                 {
-                    var roles = await _userManager.GetRolesAsync(user);
-                    userList.Add(new
-                    {
-                        user.Id,
-                        user.UserName,
-                        user.Email,
-                        user.FirstName,
-                        user.LastName,
-                        user.PhoneNumber,
-                        Roles = roles
-                    });
-                }
+                    user.Id,
+                    user.UserName,
+                    user.Email,
+                    user.FirstName,
+                    user.LastName,
+                    user.PhoneNumber,
+                    Roles = rolesByUserId.TryGetValue(user.Id, out var roles) ? roles : new List<string>()
+                }).ToList<object>();
 
                 return Ok(new
                 {
@@ -716,6 +822,7 @@ namespace UserManagementAPI.Controllers
             }
         }
         // PUT: api/UserManagement/{id}/lock
+        [Authorize(Roles = "Admin")]
         [HttpPut("{id}/lock")]
         [ProducesResponseType(typeof(object), StatusCodes.Status200OK)]
         public async Task<IActionResult> LockUser(string id)
@@ -748,6 +855,7 @@ namespace UserManagementAPI.Controllers
         }
 
         // PUT: api/UserManagement/{id}/unlock
+        [Authorize(Roles = "Admin")]
         [HttpPut("{id}/unlock")]
         [ProducesResponseType(typeof(object), StatusCodes.Status200OK)]
         public async Task<IActionResult> UnlockUser(string id)

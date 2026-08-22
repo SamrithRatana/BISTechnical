@@ -1,6 +1,5 @@
 ﻿using MediatR;
-using TechnicalService.API.Application.DTOs; // ✅ use shared DTO instead of static import
-
+using TechnicalService.API.Application.DTOs;
 namespace TechnicalService.API.Application.Commands;
 
 public record UpdateRepairServiceCommand(
@@ -21,5 +20,4 @@ public record UpdateRepairServiceCommand(
     int ServicePriorityId,
     int StatusId,
     bool HasContract,
-    IEnumerable<SparepartItemDTO> SparepartItems  // ✅ now comes from shared DTO
-) : IRequest<bool>;
+    IEnumerable<SparepartItemDTO> SparepartItems) : IRequest<bool>;

@@ -26,6 +26,7 @@ import PageWrapper from "@/components/PageWrapper";
 import HighlightText from "@/components/HighlightText";
 import { Download, Eye, Edit3, Trash2, Search, Plus, RefreshCw, AlertTriangle, X } from "lucide-react";
 import { fetchItemsInventory, type ItemModel, invalidateCachePrefix } from "@/services/api";
+import { ModalWrapper } from "@/components/av/ModalWrapper";
 
 function getAuthHeaders() {
   const headers: Record<string, string> = { 'Content-Type': 'application/json' };
@@ -423,156 +424,173 @@ export default function ReceivedInventoryPage() {
       </div>
 
       {/* ── VIEW MODAL ── */}
-      {activeModal === "view" && selectedItem && (
-        <div className="enter-fade fixed inset-0 z-50 bg-ink/60 backdrop-blur-xs flex items-center justify-center p-4">
-          <div className="bg-surface border border-subtle rounded-2xl shadow-xl max-w-md w-full p-6 enter-pop">
-            <div className="flex items-center justify-between border-b border-subtle pb-3 mb-4">
-              <h3 className="font-bold text-ink text-base">{t("items.detailsTitle")}</h3>
-              <button onClick={() => setActiveModal(null)} className="p-1 text-ink-muted hover:text-ink-secondary">
-                <X className="w-4 h-4" />
-              </button>
+      <ModalWrapper
+        open={activeModal === "view" && !!selectedItem}
+        onClose={() => setActiveModal(null)}
+        maxWidth="max-w-md"
+        zIndex={50}
+        placement="center"
+        backdropVariant="heavy"
+      >
+        <div className="bg-surface border border-subtle rounded-2xl p-6">
+          <div className="flex items-center justify-between border-b border-subtle pb-3 mb-4">
+            <h3 className="font-bold text-ink text-base">{t("items.detailsTitle")}</h3>
+            <button onClick={() => setActiveModal(null)} className="p-1 text-ink-muted hover:text-ink-secondary">
+              <X className="w-4 h-4" />
+            </button>
+          </div>
+          <div className="space-y-3 text-xs">
+            <div>
+              <span className="text-ink-muted font-semibold block mb-0.5">{t("field.itemName")}</span>
+              <span className="text-ink font-medium text-sm">{selectedItem?.itemName}</span>
             </div>
-            <div className="space-y-3 text-xs">
-              <div>
-                <span className="text-ink-muted font-semibold block mb-0.5">{t("field.itemName")}</span>
-                <span className="text-ink font-medium text-sm">{selectedItem.itemName}</span>
-              </div>
-              <div>
-                <span className="text-ink-muted font-semibold block mb-0.5">{t("field.serialNumber")}</span>
-                <code className="px-2 py-1 rounded bg-sunken text-ink font-mono">{selectedItem.serialNumber || "N/A"}</code>
-              </div>
-              <div>
-                <span className="text-ink-muted font-semibold block mb-0.5">{t("field.itemType")}</span>
-                <span className="text-ink font-medium">{selectedItem.itemType || "N/A"}</span>
-              </div>
+            <div>
+              <span className="text-ink-muted font-semibold block mb-0.5">{t("field.serialNumber")}</span>
+              <code className="px-2 py-1 rounded bg-sunken text-ink font-mono">{selectedItem?.serialNumber || "N/A"}</code>
             </div>
-            <div className="mt-6 text-right">
-              <button
-                onClick={() => setActiveModal(null)}
-                className="px-4 py-2 text-xs font-semibold bg-sunken text-ink rounded-xl hover:bg-sunken "
-              >
-                Close
-              </button>
+            <div>
+              <span className="text-ink-muted font-semibold block mb-0.5">{t("field.itemType")}</span>
+              <span className="text-ink font-medium">{selectedItem?.itemType || "N/A"}</span>
             </div>
           </div>
+          <div className="mt-6 text-right">
+            <button
+              onClick={() => setActiveModal(null)}
+              className="px-4 py-2 text-xs font-semibold bg-sunken text-ink rounded-xl hover:bg-sunken"
+            >
+              Close
+            </button>
+          </div>
         </div>
-      )}
+      </ModalWrapper>
 
       {/* ── EDIT / CREATE MODAL ── */}
-      {activeModal === "edit" && (
-        <div className="enter-fade fixed inset-0 z-50 bg-ink/60 backdrop-blur-xs flex items-center justify-center p-4">
-          <div className="bg-surface border border-subtle rounded-2xl shadow-xl max-w-md w-full p-6 enter-pop">
-            <div className="flex items-center justify-between border-b border-subtle pb-3 mb-4">
-              <h3 className="font-bold text-ink text-base">
-                {formState.id ? t("items.editModel") : t("items.addNewModel")}
-              </h3>
-              <button onClick={() => setActiveModal(null)} className="p-1 text-ink-muted hover:text-ink-secondary">
-                <X className="w-4 h-4" />
-              </button>
-            </div>
-
-            {modalError && (
-              <div className="mb-4 p-3 rounded-xl bg-danger-soft text-danger text-xs border border-danger ">
-                {modalError}
-              </div>
-            )}
-
-            <form onSubmit={handleCreateOrUpdate} className="space-y-4 text-xs">
-              <div>
-                <label className="block font-semibold text-ink mb-1">{t("field.itemName")} *</label>
-                <input
-                  type="text"
-                  required
-                  value={formState.itemName}
-                  onChange={(e) => setFormState({ ...formState, itemName: e.target.value })}
-                  placeholder={t("items.egItemName")}
-                  className="w-full px-3 py-2 border border-subtle rounded-xl bg-surface outline-none focus:ring-2 focus:ring-accent/20"
-                />
-              </div>
-
-              <div>
-                <label className="block font-semibold text-ink mb-1">{t("field.serialNumber")} *</label>
-                <input
-                  type="text"
-                  required
-                  value={formState.serialNumber || ""}
-                  onChange={(e) => setFormState({ ...formState, serialNumber: e.target.value })}
-                  placeholder={t("items.egSerial")}
-                  className="w-full px-3 py-2 border border-subtle rounded-xl bg-surface font-mono outline-none focus:ring-2 focus:ring-accent/20"
-                />
-              </div>
-
-              <div>
-                <label className="block font-semibold text-ink mb-1">{t("field.itemType")}</label>
-                <select
-                  value={formState.itemType || "Printer"}
-                  onChange={(e) => setFormState({ ...formState, itemType: e.target.value })}
-                  className="w-full px-3 py-2 border border-subtle rounded-xl bg-surface outline-none focus:ring-2 focus:ring-accent/20"
-                >
-                  <option value="Printer">{t("items.typePrinter")}</option>
-                  <option value="Bill Counter">{t("items.typeBillCounter")}</option>
-                  <option value="Generate">{t("items.typeGenerate")}</option>
-                  <option value="Scanner">{t("items.typeScanner")}</option>
-                </select>
-              </div>
-
-              <div className="flex items-center justify-end gap-2 pt-2 border-t border-subtle ">
-                <button
-                  type="button"
-                  onClick={() => setActiveModal(null)}
-                  className="px-4 py-2 font-semibold text-ink-secondary hover:bg-sunken rounded-xl"
-                >
-                  {t("action.cancel")}
-                </button>
-                <button
-                  type="submit"
-                  disabled={isSaving}
-                  className="px-4 py-2 font-semibold text-white bg-accent hover:bg-accent-hover rounded-xl shadow-sm disabled:opacity-50 flex items-center gap-2"
-                >
-                  {isSaving && <RefreshCw className="w-4 h-4 animate-spin" />}
-                  {isSaving ? t("action.saving") : t("items.saveModel")}
-                </button>
-              </div>
-            </form>
+      <ModalWrapper
+        open={activeModal === "edit"}
+        onClose={() => setActiveModal(null)}
+        maxWidth="max-w-md"
+        zIndex={50}
+        placement="center"
+        backdropVariant="heavy"
+      >
+        <div className="bg-surface border border-subtle rounded-2xl p-6">
+          <div className="flex items-center justify-between border-b border-subtle pb-3 mb-4">
+            <h3 className="font-bold text-ink text-base">
+              {formState.id ? t("items.editModel") : t("items.addNewModel")}
+            </h3>
+            <button onClick={() => setActiveModal(null)} className="p-1 text-ink-muted hover:text-ink-secondary">
+              <X className="w-4 h-4" />
+            </button>
           </div>
-        </div>
-      )}
 
-      {/* ── DELETE CONFIRMATION MODAL ── */}
-      {activeModal === "delete" && selectedItem && (
-        <div className="enter-fade fixed inset-0 z-50 bg-ink/60 backdrop-blur-xs flex items-center justify-center p-4">
-          <div className="bg-surface border border-subtle rounded-2xl shadow-xl max-w-md w-full p-6 enter-pop">
-            <div className="flex items-center gap-3 text-danger mb-3">
-              <AlertTriangle className="w-6 h-6 shrink-0" />
-              <h3 className="font-bold text-ink text-base">{t("dialog.confirmDelete")}</h3>
+          {modalError && (
+            <div className="mb-4 p-3 rounded-xl bg-danger-soft text-danger text-xs border border-danger">
+              {modalError}
             </div>
-            <p className="text-xs text-ink-secondary mb-4">
-              {t("items.deleteBody", { name: selectedItem.itemName ?? "" })}
-            </p>
-            {modalError && (
-              <div className="mb-4 p-3 rounded-xl bg-danger-soft text-danger text-xs border border-danger ">
-                {modalError}
-              </div>
-            )}
-            <div className="flex items-center justify-end gap-2">
+          )}
+
+          <form onSubmit={handleCreateOrUpdate} className="space-y-4 text-xs">
+            <div>
+              <label className="block font-semibold text-ink mb-1">{t("field.itemName")} *</label>
+              <input
+                type="text"
+                required
+                value={formState.itemName}
+                onChange={(e) => setFormState({ ...formState, itemName: e.target.value })}
+                placeholder={t("items.egItemName")}
+                className="w-full px-3 py-2 border border-subtle rounded-xl bg-surface outline-none focus:ring-2 focus:ring-accent/20"
+              />
+            </div>
+
+            <div>
+              <label className="block font-semibold text-ink mb-1">{t("field.serialNumber")} *</label>
+              <input
+                type="text"
+                required
+                value={formState.serialNumber || ""}
+                onChange={(e) => setFormState({ ...formState, serialNumber: e.target.value })}
+                placeholder={t("items.egSerial")}
+                className="w-full px-3 py-2 border border-subtle rounded-xl bg-surface font-mono outline-none focus:ring-2 focus:ring-accent/20"
+              />
+            </div>
+
+            <div>
+              <label className="block font-semibold text-ink mb-1">{t("field.itemType")}</label>
+              <select
+                value={formState.itemType || "Printer"}
+                onChange={(e) => setFormState({ ...formState, itemType: e.target.value })}
+                className="w-full px-3 py-2 border border-subtle rounded-xl bg-surface outline-none focus:ring-2 focus:ring-accent/20"
+              >
+                <option value="Printer">{t("items.typePrinter")}</option>
+                <option value="Bill Counter">{t("items.typeBillCounter")}</option>
+                <option value="Generate">{t("items.typeGenerate")}</option>
+                <option value="Scanner">{t("items.typeScanner")}</option>
+              </select>
+            </div>
+
+            <div className="flex items-center justify-end gap-2 pt-2 border-t border-subtle">
               <button
+                type="button"
                 onClick={() => setActiveModal(null)}
-                className="px-4 py-2 text-xs font-semibold text-ink-secondary hover:bg-sunken rounded-xl"
+                className="px-4 py-2 font-semibold text-ink-secondary hover:bg-sunken rounded-xl"
               >
                 {t("action.cancel")}
               </button>
               <button
-                onClick={handleDelete}
+                type="submit"
                 disabled={isSaving}
-                className="px-4 py-2 text-xs font-semibold text-white bg-danger hover:bg-danger rounded-xl shadow-sm disabled:opacity-50 flex items-center gap-2"
+                className="px-4 py-2 font-semibold text-white bg-accent hover:bg-accent-hover rounded-xl shadow-sm disabled:opacity-50 flex items-center gap-2"
               >
                 {isSaving && <RefreshCw className="w-4 h-4 animate-spin" />}
-                {isSaving ? t("table.deleting") : t("action.delete")}
+                {isSaving ? t("action.saving") : t("items.saveModel")}
               </button>
             </div>
+          </form>
+        </div>
+      </ModalWrapper>
+
+      {/* ── DELETE CONFIRMATION MODAL ── */}
+      <ModalWrapper
+        open={activeModal === "delete" && !!selectedItem}
+        onClose={() => setActiveModal(null)}
+        maxWidth="max-w-md"
+        zIndex={50}
+        placement="center"
+        backdropVariant="heavy"
+        isAlert
+      >
+        <div className="p-6">
+          <div className="flex items-center gap-3 text-danger mb-3">
+            <AlertTriangle className="w-6 h-6 shrink-0" />
+            <h3 className="font-bold text-ink text-base">{t("dialog.confirmDelete")}</h3>
+          </div>
+          <p className="text-xs text-ink-secondary mb-4">
+            {t("items.deleteBody", { name: selectedItem?.itemName ?? "" })}
+          </p>
+          {modalError && (
+            <div className="mb-4 p-3 rounded-xl bg-danger-soft text-danger text-xs border border-danger">
+              {modalError}
+            </div>
+          )}
+          <div className="flex items-center justify-end gap-2">
+            <button
+              onClick={() => setActiveModal(null)}
+              className="px-4 py-2 text-xs font-semibold text-ink-secondary hover:bg-sunken rounded-xl"
+            >
+              {t("action.cancel")}
+            </button>
+            <button
+              onClick={handleDelete}
+              disabled={isSaving}
+              className="px-4 py-2 text-xs font-semibold text-white bg-danger hover:bg-danger rounded-xl shadow-sm disabled:opacity-50 flex items-center gap-2"
+            >
+              {isSaving && <RefreshCw className="w-4 h-4 animate-spin" />}
+              {isSaving ? t("table.deleting") : t("action.delete")}
+            </button>
           </div>
         </div>
-      )}
+      </ModalWrapper>
     </PageWrapper>
   );
 }
+

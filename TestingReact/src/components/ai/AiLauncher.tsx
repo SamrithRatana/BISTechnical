@@ -140,6 +140,8 @@ export default function AiLauncher() {
     }, 500);
   };
 
+  if (pathname === "/login" || pathname?.startsWith("/scanner")) return null;
+
   return createPortal(
     <div
       onMouseEnter={() => setIsHovered(true)}
@@ -160,8 +162,13 @@ export default function AiLauncher() {
             <button
               type="button"
               onClick={handleManualRetract}
-              className="p-1 text-ink-muted hover:text-ink-secondary hover:bg-sunken rounded-full transition-colors"
-              title="Retract / Hide"
+              /* p-1.5, not p-1: 14px icon + 4px padding measured 22x22, under
+                 the 24x24 minimum activation target. This button has no <label>
+                 wrapper to borrow a bigger hit box from, so the button itself
+                 has to carry it. */
+              className="p-1.5 text-ink-muted hover:text-ink-secondary hover:bg-sunken rounded-full transition-colors"
+              title={t("action.close")}
+              aria-label={t("action.close")}
             >
               <X className="w-3.5 h-3.5" />
             </button>
@@ -201,52 +208,39 @@ export default function AiLauncher() {
 
       {/* ── 3. Robot Head Peeking Preview on Hover (ពេល Hover) ──────── */}
       {robotState === "hidden" && isHovered && (
-        <div className="relative z-10 mb-[-20px] animate-robot-head-peek pointer-events-none">
+        <div className="relative z-10 mb-[-18px] animate-robot-head-peek pointer-events-none self-center">
           <div className="w-[58px] h-[36px] overflow-hidden flex justify-center">
             <RobotMascot isWaving={false} className="scale-90 origin-top" />
           </div>
         </div>
       )}
 
-      {/* ── 4. Capsule Dock Base Launcher Button ─────────────────────────
-          This button is mounted on every page of the app, for the whole
-          session. Anything that animates here animates *forever*, so nothing
-          in it may run on its own: every effect below is driven by `:hover`,
-          which costs exactly nothing while the pointer is elsewhere.
-
-          It previously carried three `infinite` animations at once — a glow
-          pulse on the blurred aura, a wave on the icon, and a ping on the
-          status dot. Together they kept the compositor awake permanently, on
-          every screen, which is what made idle machines feel warm and slow.
-
-          `transition-transform` rather than `transition-all`: `all` makes the
-          browser watch every animatable property on the element for changes,
-          including layout-affecting ones. Here only the transform moves. */}
+      {/* ── 4. Capsule Dock Base Launcher Button ───────────────────────── */}
       <button
         type="button"
         onClick={handleOpenChat}
         title={t("ai.panelTitle")}
         aria-label={t("ai.panelTitle")}
-        className="group relative flex items-center gap-2.5 px-4 py-2.5 rounded-full bg-gradient-to-r from-accent via-accent to-accent text-white shadow-lg hover:scale-105 transition-transform duration-200 border border-white/20 active:scale-95 mt-[-16px]"
+        className="group relative flex items-center gap-2.5 px-4 py-2 rounded-full bg-gradient-to-r from-accent via-accent to-accent text-white shadow-lg hover:scale-105 transition-all duration-200 border border-white/25 active:scale-95 cursor-pointer"
+        style={{
+          boxShadow: "0 10px 25px -3px rgba(0, 0, 0, 0.18), inset 0 1px 1px rgba(255, 255, 255, 0.4)",
+        }}
       >
-        {/* Soft glowing aura — static, so it is blurred once and the raster is
-            cached. Only its opacity moves, and only on hover. */}
-        <span className="absolute inset-0 rounded-full bg-gradient-to-r from-accent to-accent blur-md opacity-60 group-hover:opacity-90 transition-opacity duration-200 -z-10" />
+        {/* Soft glowing aura in Theme branding color */}
+        <span className="absolute inset-0 rounded-full bg-accent blur-md opacity-60 group-hover:opacity-90 transition-opacity duration-200 -z-10" />
 
-        {/* Robot Icon Container */}
-        <span className="relative flex items-center justify-center w-8 h-8 rounded-full bg-white/20 border border-white/30 shadow-inner group-hover:bg-white/30 transition-colors duration-200">
-          {/* Waves on hover instead of on a loop — same character, no idle cost */}
-          <Bot className="w-5 h-5 text-white transition-transform duration-200 group-hover:scale-110 group-hover:-rotate-12" />
+        {/* Robot Icon Container with frosted glass ring */}
+        <span className="relative flex items-center justify-center w-7 h-7 rounded-full bg-white/20 border border-white/30 text-white shadow-inner group-hover:bg-white/30 transition-colors duration-200">
+          {/* Waves on hover */}
+          <Bot className="w-4 h-4 text-white transition-transform duration-200 group-hover:scale-110 group-hover:-rotate-12" />
 
-          {/* Online status indicator. A solid dot reads as "online" just as
-              clearly as a pulsing one; the ping ring it replaces was an
-              infinite scale+fade repainting behind a blurred parent. */}
-          <span className="absolute -top-0.5 -right-0.5 inline-flex rounded-full h-3 w-3 bg-success border-2 border-accent" />
+          {/* Green Online status dot */}
+          <span className="absolute -top-0.5 -right-0.5 inline-flex rounded-full h-2.5 w-2.5 bg-emerald-400 border border-white shadow-xs" />
         </span>
 
         {/* Label */}
-        <span className="text-xs font-bold tracking-wide whitespace-nowrap text-white drop-shadow-sm">
-          {isKhmer ? "ជំនួយការ AI" : t("ai.panelTitle")}
+        <span className="text-xs font-bold tracking-wide whitespace-nowrap text-white drop-shadow-xs font-sans">
+          {isKhmer ? "ជំនួយការ AI" : "AI Assistant"}
         </span>
       </button>
     </div>,

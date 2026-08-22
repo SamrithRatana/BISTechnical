@@ -30,19 +30,29 @@ const VARIANTS: Record<CardVariant, string> = {
    * A card resting on the app background — the default, and the one the
    * dashboard uses.
    *
-   * Note the near-white `border-glass` rather than the dark `border-subtle`
-   * hairline. Paired with the cushion shadow (which carries an inset white
-   * highlight along the top edge), this is what makes the card read as a
-   * raised, softly-lit object instead of a white rectangle with an outline.
-   * Swapping either half back to a dark border or a flat shadow collapses the
-   * effect — they only work together.
+   * Border, background, blur and shadow all read from the `--av-card-*`
+   * tokens rather than the fixed `border-glass`/`shadow-cushion` utilities
+   * this used to hardcode — Settings → Theme & Branding switches those
+   * tokens via `[data-surface-style]` (see `globals.css`). The shipped
+   * default (`cushion`) aliases them back to the exact values this had
+   * before, so nothing looks different until a user picks a different style.
+   *
+   * The border and shadow are still paired on purpose: a near-white border
+   * only reads as an edge WITH a soft shadow under it, which is why `flat`
+   * swaps `--av-card-border` to a real hairline rather than leaving the
+   * glass border in place over no shadow — see the `flat` rule in
+   * `globals.css` for why that pairing would otherwise collapse.
    */
-  surface: "bg-surface border border-glass shadow-cushion",
-  // The tinted well a stat row or sub-panel sits in. Deliberately keeps the
-  // dark hairline: a sunken panel should read as cut into the card, and a
-  // white edge would make it float instead.
+  surface:
+    "bg-[var(--av-card-bg)] border border-[var(--av-card-border)] shadow-[var(--av-card-shadow)] backdrop-blur-[var(--av-card-blur)]",
+  // The tinted well a stat row or sub-panel sits in. Deliberately fixed, not
+  // surface-style-aware: a sunken panel should always read as cut into the
+  // card, and a white edge or a blur would make it float instead.
   sunken: "bg-sunken border border-subtle",
-  // Popovers, dialogs, anything that floats above a card.
+  // Popovers, dialogs, anything that floats above a card. Also deliberately
+  // fixed rather than surface-style-aware: this is transient overlay chrome,
+  // not a resting branding surface, and a heavy blur here would sit on top
+  // of whatever the surface style already blurred underneath it.
   elevated: "bg-elevated border border-glass shadow-soft-xl",
 };
 

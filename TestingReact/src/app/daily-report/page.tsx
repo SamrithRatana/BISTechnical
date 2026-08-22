@@ -15,7 +15,7 @@ import TemplateReportView, { type ReportData } from "@/components/TemplateReport
 import type { ReportFilterValues } from "@/components/ReportFilterBar";
 import { useI18n } from "@/i18n/LanguageProvider";
 import { translateStatus } from "@/i18n/statusLabel";
-import { fetchServiceReport } from "@/services/reports";
+import { fetchDailyReport } from "@/services/reports";
 import { formatDay, formatDayTime, groupBy } from "@/services/reportShaping";
 
 export default function DailyReportPage() {
@@ -26,7 +26,7 @@ export default function DailyReportPage() {
 
   const load = useCallback(
     async (from: Date, to: Date, filters: ReportFilterValues): Promise<ReportData> => {
-      const rows = await fetchServiceReport({
+      const rows = await fetchDailyReport({
         fromDate: from,
         toDate: to,
         searchTerm: filters.search,

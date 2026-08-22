@@ -139,6 +139,22 @@ const POLLINATIONS_PREFIX = "pollinations:";
 /** The keyless entry — no model choice, because the old endpoint offers none. */
 export const POLLINATIONS_ANON_ID = "pollinations:anonymous";
 
+/** Cloudflare Workers AI Image Models (FLUX.1 Schnell & SDXL) */
+const CLOUDFLARE_MODELS: ReadonlyArray<{ id: string; label: string }> = [
+  { id: "@cf/black-forest-labs/flux-1-schnell", label: "FLUX.1 Schnell" },
+  { id: "@cf/stabilityai/stable-diffusion-xl-base-1.0", label: "Stable Diffusion XL" },
+];
+const CLOUDFLARE_PREFIX = "cloudflare:";
+
+function getCloudflareCredentials(): { accountId: string; apiToken: string } | null {
+  const accountId = process.env.CLOUDFLARE_ACCOUNT_ID?.trim() || process.env.R2_ACCOUNT_ID?.trim();
+  const apiToken = process.env.CLOUDFLARE_API_TOKEN?.trim();
+  if (accountId && apiToken) {
+    return { accountId, apiToken };
+  }
+  return null;
+}
+
 function getPollinationsKey(): string | undefined {
   return process.env.POLLINATIONS_API_KEY?.trim() || undefined;
 }
@@ -383,6 +399,7 @@ function readyKeysFor(model: string, keyCount: number): number[] {
  */
 export function imageModelsAvailable(keyCount: number): boolean {
   if (pollinationsEnabled()) return true;
+  if (getCloudflareCredentials() !== null) return true;
   if (keyCount <= 0) return false;
   return IMAGE_MODELS.some(({ id }) => readyKeysFor(id, keyCount).length > 0);
 }
@@ -410,6 +427,18 @@ export function imageModelStatus(keyCount: number): ImageModelStatus[] {
   const now = Date.now();
   const keys = Array.from({ length: keyCount }, (_, i) => i);
   const rows: ImageModelStatus[] = [];
+
+  const cfCreds = getCloudflareCredentials();
+  if (cfCreds) {
+    for (const { id, label } of CLOUDFLARE_MODELS) {
+      rows.push({
+        id: `${CLOUDFLARE_PREFIX}${id}`,
+        label: `Cloudflare · ${label}`,
+        available: true,
+        retryInSeconds: 0,
+      });
+    }
+  }
 
   for (const { id, label } of IMAGE_MODELS) {
     const live = keys.filter((i) => !imageRetired.has(slot(i, id)));
@@ -686,17 +715,83 @@ async function generateWithNanoBanana(
 }
 
 /**
+ * Draws one picture on Cloudflare Workers AI (e.g. FLUX.1 Schnell or SDXL).
+ */
+async function callCloudflareWorkersAi(
+  prompt: string,
+  model = "@cf/black-forest-labs/flux-1-schnell",
+  deadline: number,
+  signal?: AbortSignal
+): Promise<ImageOutcome> {
+  const creds = getCloudflareCredentials();
+  if (!creds) return { ok: false, reason: "unavailable" };
+
+  try {
+    const timeout = AbortSignal.timeout(Math.max(deadline - Date.now(), 1));
+    const res = await fetch(
+      `https://api.cloudflare.com/client/v4/accounts/${creds.accountId}/ai/run/${model}`,
+      {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${creds.apiToken}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ prompt, steps: 4 }),
+        signal: signal ? AbortSignal.any([signal, timeout]) : timeout,
+      }
+    );
+
+    if (!res.ok) {
+      const errText = await res.text().catch(() => "");
+      console.warn(`[ai-image] Cloudflare ${model} returned ${res.status}:`, errText);
+      return res.status === 429
+        ? { ok: false, reason: "quota" }
+        : { ok: false, reason: "unavailable" };
+    }
+
+    const contentType = res.headers.get("content-type") || "";
+    let base64Data = "";
+    let mimeType = "image/jpeg";
+
+    if (contentType.includes("application/json")) {
+      const json = (await res.json()) as { result?: { image?: string } };
+      if (json.result?.image) {
+        base64Data = json.result.image;
+      }
+    } else {
+      const buffer = Buffer.from(await res.arrayBuffer());
+      base64Data = buffer.toString("base64");
+      mimeType = contentType.split(";")[0]?.trim() || "image/jpeg";
+    }
+
+    if (!base64Data) {
+      return { ok: false, reason: "unavailable" };
+    }
+
+    return {
+      ok: true,
+      image: {
+        dataUrl: `data:${mimeType};base64,${base64Data}`,
+        mimeType,
+        model,
+        label: model.includes("flux") ? "Cloudflare · FLUX.1 Schnell" : "Cloudflare · SDXL",
+        prompt,
+      },
+    };
+  } catch (err) {
+    console.warn("[ai-image] Cloudflare Workers AI error:", err);
+    return { ok: false, reason: "unavailable" };
+  }
+}
+
+/**
  * Draws one picture, best provider first.
  *
- * Nano Banana gets the first attempt whenever a Gemini key exists, because it
- * produces the better picture and is the model the feature was asked for. The
- * keyless fallback then covers every way that can fail — no key, no billing,
- * spent quota, a retired model — which is what keeps a "draw me…" message from
- * ever being answered with an apology while a free option was sitting unused.
- *
- * Only when *both* are unavailable does this report a failure, and the Gemini
- * diagnosis is preserved in that case: a spent quota is still reported as a
- * wait, so the UI can say something more useful than "it didn't work".
+ * Rotation priority:
+ * 1. Explicit user selection (Cloudflare / Gemini / Pollinations).
+ * 2. Cloudflare Workers AI (Fast, FLUX.1 Schnell, dedicated daily quota).
+ * 3. Gemini Nano Banana / Imagen 3 (High fidelity).
+ * 4. Pollinations (Free unlimited fallback).
  */
 export async function generateImage(
   keys: string[],
@@ -707,23 +802,37 @@ export async function generateImage(
 ): Promise<ImageOutcome> {
   let primary: ImageOutcome | null = null;
 
-  // A Pollinations choice skips Gemini entirely rather than merely reordering
-  // it: picking one is a statement about which service should draw, and paying
-  // a round-trip to the other first would make the choice look ignored.
+  const wantsCloudflare = Boolean(preferred?.startsWith(CLOUDFLARE_PREFIX));
+  const cloudflareModel = wantsCloudflare
+    ? preferred!.slice(CLOUDFLARE_PREFIX.length)
+    : "@cf/black-forest-labs/flux-1-schnell";
+
   const wantsPollinations = Boolean(preferred?.startsWith(POLLINATIONS_PREFIX));
   const pollinationsModel =
     wantsPollinations && preferred !== POLLINATIONS_ANON_ID
       ? preferred!.slice(POLLINATIONS_PREFIX.length)
       : undefined;
 
-  if (keys.length > 0 && !wantsPollinations) {
+  // 1. Explicit Cloudflare choice
+  if (wantsCloudflare) {
+    const cfResult = await callCloudflareWorkersAi(prompt, cloudflareModel, deadline, signal);
+    if (cfResult.ok) return cfResult;
+  }
+
+  // 2. Explicit or default Cloudflare FLUX Schnell run
+  if (getCloudflareCredentials() && !wantsPollinations) {
+    const cfResult = await callCloudflareWorkersAi(prompt, cloudflareModel, deadline, signal);
+    if (cfResult.ok) return cfResult;
+  }
+
+  // 3. Gemini Nano Banana / Imagen 3
+  if (keys.length > 0 && !wantsPollinations && !wantsCloudflare) {
     primary = await generateWithNanoBanana(keys, prompt, deadline, signal, preferred);
     if (primary.ok) return primary;
   }
 
+  // 4. Pollinations Fallback
   if (pollinationsEnabled() && Date.now() < deadline) {
-    // The keyless entry means "don't use my key", so the keyed attempt is
-    // skipped for it — otherwise choosing it would still spend a 402 probe.
     const fallback =
       preferred === POLLINATIONS_ANON_ID
         ? (await callPollinations(prompt, false, deadline, signal)).outcome
@@ -731,8 +840,5 @@ export async function generateImage(
     if (fallback.ok) return fallback;
   }
 
-  // Nothing drew anything. Prefer the Gemini diagnosis when there is one — it
-  // is the specific answer ("quota spent, retry in 43s") next to the fallback's
-  // generic one.
   return primary ?? { ok: false, reason: "unavailable" };
 }

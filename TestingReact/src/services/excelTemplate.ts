@@ -279,7 +279,26 @@ export async function fillTemplate({
   return workbook;
 }
 
-/** Hands the finished workbook to the user as a download. */
+/**
+ * Hands the finished workbook to the user as a download.
+ *
+ * Two things here are deliberate and were both wrong before:
+ *
+ * 1. **The object URL is revoked on a later task, not on the next line.** A
+ *    click-initiated download is asynchronous — the browser reads the blob
+ *    after the handler returns — so revoking in the same tick races the read
+ *    it is meant to feed. It survives for a small workbook because the read
+ *    wins; a monthly report with a few hundred rows is exactly where it does
+ *    not, and the failure is silent: no error, no file, a button that looks
+ *    like it worked.
+ *
+ * 2. **The anchor is in the document when it is clicked.** A detached `<a>`
+ *    happens to work in Chromium; Firefox ignores the click entirely, so
+ *    export did nothing at all there.
+ *
+ * The blob is held until the revoke fires. That is the point — releasing it
+ * early is the bug — and one workbook for one task is not a leak.
+ */
 export async function downloadWorkbook(workbook: Workbook, fileName: string): Promise<void> {
   const buffer = await workbook.xlsx.writeBuffer();
   const blob = new Blob([buffer], {
@@ -289,6 +308,11 @@ export async function downloadWorkbook(workbook: Workbook, fileName: string): Pr
   const link = document.createElement("a");
   link.href = url;
   link.download = `${fileName}-${new Date().toISOString().slice(0, 10)}.xlsx`;
+  link.style.display = "none";
+  document.body.appendChild(link);
   link.click();
-  URL.revokeObjectURL(url);
+  link.remove();
+  // Long enough for the browser to have taken the blob, short enough that the
+  // memory is not held for the rest of the session.
+  setTimeout(() => URL.revokeObjectURL(url), 60_000);
 }

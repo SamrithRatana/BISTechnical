@@ -12,11 +12,30 @@ namespace UserManagementAPI.Controllers
     [Authorize]
     public class ArticleController : ControllerBase
     {
+        /// <summary>Ceiling on page size so one request cannot pull the table.</summary>
+        private const int MaxPageSize = 100;
+
+        private const int DefaultPageSize = 20;
+
         private readonly UserManagementContext _context;
 
         public ArticleController(UserManagementContext context)
         {
             _context = context;
+        }
+
+        /// <summary>
+        /// Clamps caller-supplied paging. Unclamped, page=0 produced Skip(-20),
+        /// which SQL Server rejects, so the request came back as a 500.
+        /// </summary>
+        private static (int Page, int PageSize) NormalisePaging(int page, int pageSize)
+        {
+            var safePage = page < 1 ? 1 : page;
+            var safeSize = pageSize < 1
+                ? DefaultPageSize
+                : (pageSize > MaxPageSize ? MaxPageSize : pageSize);
+
+            return (safePage, safeSize);
         }
 
         // GET: api/Article
@@ -26,7 +45,9 @@ namespace UserManagementAPI.Controllers
             [FromQuery] int pageSize = 20,
             [FromQuery] bool unreadOnly = false)
         {
-            var query = _context.Articles.AsQueryable();
+            (page, pageSize) = NormalisePaging(page, pageSize);
+
+            var query = _context.Articles.AsNoTracking();
 
             if (unreadOnly)
             {
@@ -58,6 +79,7 @@ namespace UserManagementAPI.Controllers
         public async Task<ActionResult<ArticleDto>> GetArticle(int id)
         {
             var article = await _context.Articles
+                .AsNoTracking()
                 .Where(a => a.Id == id)
                 .Select(a => new ArticleDto
                 {
@@ -85,7 +107,10 @@ namespace UserManagementAPI.Controllers
             [FromQuery] int page = 1,
             [FromQuery] int pageSize = 20)
         {
+            (page, pageSize) = NormalisePaging(page, pageSize);
+
             var articles = await _context.Articles
+                .AsNoTracking()
                 .Where(a => a.Username == username)
                 .OrderByDescending(a => a.Timestamp)
                 .Skip((page - 1) * pageSize)
@@ -110,7 +135,7 @@ namespace UserManagementAPI.Controllers
         [HttpGet("unread/count")]
         public async Task<ActionResult<int>> GetUnreadCount()
         {
-            var count = await _context.Articles.CountAsync(a => !a.IsRead);
+            var count = await _context.Articles.AsNoTracking().CountAsync(a => !a.IsRead);
             return Ok(new { Count = count });
         }
 
@@ -124,7 +149,10 @@ namespace UserManagementAPI.Controllers
             {
                 ArticleHeading = dto.ArticleHeading,
                 ArticleContent = dto.ArticleContent,
-                Username = string.IsNullOrEmpty(dto.Username) ? username : dto.Username,
+                // Author is the authenticated caller. dto.Username used to win
+                // when supplied, so any signed-in user could post under another
+                // person's name.
+                Username = username,
                 ProfilePicture = dto.ProfilePicture,
                 Timestamp = DateTime.UtcNow,
                 IsRead = false,

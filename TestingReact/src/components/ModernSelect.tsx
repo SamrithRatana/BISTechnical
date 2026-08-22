@@ -71,7 +71,7 @@ export default function ModernSelect({
         }}
         aria-haspopup="listbox"
         aria-expanded={open}
-        className={`w-full flex items-center justify-between gap-1.5 ${triggerCls} border rounded-xl bg-elevated   outline-none transition-all hover:border-prominent  ${
+        className={`w-full flex items-center justify-between gap-1.5 ${triggerCls} border rounded-xl bg-elevated   outline-none transition-[color,background-color,border-color,box-shadow,opacity,transform,filter] hover:border-prominent  ${
           open
             ? "ring-2 ring-accent/20 border-info"
             : "border-subtle "
@@ -98,7 +98,7 @@ export default function ModernSelect({
               width: coords.width,
               transform: coords.placement === "top" ? "translateY(-100%)" : undefined,
             }}
-            className={`z-[100] bg-elevated  border border-subtle  rounded-xl shadow-xl  overflow-hidden py-1 max-h-60 overflow-y-auto ${
+            className={`z-[100] av-glass-panel rounded-xl overflow-hidden py-1 max-h-60 overflow-y-auto ${
               coords.placement === "top" ? "dropdown-panel-in-top" : "dropdown-panel-in"
             }`}
           >

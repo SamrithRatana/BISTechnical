@@ -1,6 +1,6 @@
 ﻿using System.Runtime.Serialization;
 using MediatR;
-using TechnicalService.API.Application.DTOs;  // ✅ use shared DTO
+using TechnicalService.API.Application.DTOs;
 using TechnicalService.API.Application.Queries;
 using TechnicalService.API.Extensions;
 
@@ -57,5 +57,4 @@ public class InspectItemCommand : IRequest<bool>
         ServiceTypeId = serviceTypeId;
     }
 
-    // ✅ REMOVED nested SparepartItemDTO record
 }

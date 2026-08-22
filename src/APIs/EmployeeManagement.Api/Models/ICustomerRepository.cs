@@ -1,16 +1,16 @@
-﻿using EmployeeManagement.Models;
+using EmployeeManagement.Models;
 using System;
 using System.Collections.Generic;
 using System.Threading.Tasks;
 
 namespace EmployeeManagement.Api.Models
 {
-    public interface ICustomerRespository
+    public interface ICustomerRepository
     {
-        // Create operation
+        // Create
         Task<Customer> CreateCustomer(Customer customer);
 
-        // Read operations
+        // Read
         Task<IEnumerable<Customer>> GetCustomers();
         Task<Customer> GetCustomerById(Guid id);
         Task<(IEnumerable<Customer> Items, int TotalCount)> GetCustomersPaginated(
@@ -19,10 +19,14 @@ namespace EmployeeManagement.Api.Models
             string searchTerm = null,
             bool? isActive = null);
 
-        // Update operation
+        // Update
         Task<Customer> UpdateCustomer(Customer customer);
+        Task<int> BulkAssignCustomerType(
+            IReadOnlyCollection<Guid> customerIds,
+            int? customerTypeListId,
+            string modifiedBy);
 
-        // Delete operation
-        Task DeleteCustomer(Guid id);
+        // Delete
+        Task<bool> DeleteCustomer(Guid id);
     }
 }

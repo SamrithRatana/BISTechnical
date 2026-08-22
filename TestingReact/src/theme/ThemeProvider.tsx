@@ -33,6 +33,8 @@ import {
   themeAttributes,
   type ThemePrefs,
 } from "./themeConfig";
+import { accentTokensToCssVars, deriveAccentPalette } from "./accentPalette";
+import { fetchGlobalBranding, updateGlobalBranding } from "@/services/appSettings";
 
 interface ThemeContextValue {
   prefs: ThemePrefs;
@@ -102,6 +104,23 @@ function systemPrefersDark(): boolean {
  * class on <html>, and re-adding a class the element already has would restart
  * the transition on every unrelated preference change.
  */
+/** Every `--av-accent-*` custom property `deriveAccentPalette` can set, for clearing. */
+const ACCENT_CSS_VARS = [
+  "--av-accent-base",
+  "--av-accent-bright",
+  "--av-accent-hover",
+  "--av-accent-fg",
+  "--av-accent-soft",
+  "--av-accent-soft-fg",
+  "--av-accent-glow",
+  "--av-accent-ring",
+  "--accent",
+  "--accent-hover",
+  "--accent-fg",
+  "--accent-soft",
+  "--accent-soft-fg",
+];
+
 function applyToDocument(prefs: ThemePrefs) {
   const root = document.documentElement;
   for (const [name, value] of Object.entries(themeAttributes(prefs))) {
@@ -111,6 +130,29 @@ function applyToDocument(prefs: ThemePrefs) {
   const shouldBeDark = resolveIsDark(prefs.mode, systemPrefersDark());
   if (shouldBeDark !== root.classList.contains("dark")) {
     root.classList.toggle("dark", shouldBeDark);
+  }
+
+  /**
+   * A custom accent overrides the design system's own `--av-accent-*` tokens
+   * via inline style, which wins over the class-scoped `:root`/`.dark` rules
+   * regardless of which palette is active — one code path for both themes.
+   * `null` means "use Aura Velvet's own accent," so every property is
+   * cleared back to whatever the token block defines.
+   */
+  if (prefs.accentColor) {
+    const vars = accentTokensToCssVars(deriveAccentPalette(prefs.accentColor, shouldBeDark));
+    for (const [name, value] of Object.entries(vars)) {
+      root.style.setProperty(name, value);
+    }
+    root.style.setProperty("--accent", vars["--av-accent-base"]);
+    root.style.setProperty("--accent-hover", vars["--av-accent-hover"]);
+    root.style.setProperty("--accent-fg", vars["--av-accent-fg"]);
+    root.style.setProperty("--accent-soft", vars["--av-accent-soft"]);
+    root.style.setProperty("--accent-soft-fg", vars["--av-accent-soft-fg"]);
+  } else {
+    for (const name of ACCENT_CSS_VARS) {
+      root.style.removeProperty(name);
+    }
   }
 }
 
@@ -128,6 +170,30 @@ function applyToDocument(prefs: ThemePrefs) {
  * thread.
  */
 let themeFadeTimer: number | undefined;
+let typeFadeTimer: number | undefined;
+
+/**
+ * The typography tween — `letter-spacing` and `line-height` — on the same
+ * opt-in terms as the colour cross-fade above, and for a sharper reason.
+ *
+ * `globals.css` used to declare it unconditionally on
+ * `h1..h6, p, span, label, button, a, td, th`, which measured **185 elements
+ * carrying a live transition** on a single page. Both properties trigger
+ * LAYOUT, so that is a standing invitation to animate reflow on any recalc
+ * that touches them — precisely what the project's "animate transform and
+ * opacity only" rule exists to prevent.
+ *
+ * It is only ever wanted when the user changes font scale or density, so it is
+ * added for that and taken straight back off.
+ */
+function withTypeFade() {
+  const root = document.documentElement;
+  root.classList.add("av-type-transition");
+  window.clearTimeout(typeFadeTimer);
+  typeFadeTimer = window.setTimeout(() => {
+    root.classList.remove("av-type-transition");
+  }, 230);
+}
 
 function withThemeFade(apply: () => void) {
   const root = document.documentElement;
@@ -219,11 +285,19 @@ function getSystemDarkServerSnapshot(): boolean {
 }
 
 function writePrefs(next: ThemePrefs) {
+  // Read before writing: this is the only place both the old and the new
+  // preferences are in hand, and the typography tween is worth running for
+  // exactly the two that change type metrics.
+  const prev = parsePrefs(readRaw());
+  const typographyChanged =
+    prev.fontScale !== next.fontScale || prev.density !== next.density;
+
   try {
     localStorage.setItem(THEME_PREFS_KEY, JSON.stringify(next));
   } catch {
     // Preference still applies for this session; it just won't persist.
   }
+  if (typographyChanged) withTypeFade();
   withThemeFade(() => applyToDocument(next));
   emit();
 }
@@ -237,9 +311,24 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
 
   const update = useCallback((patch: Partial<ThemePrefs>) => {
     writePrefs({ ...parsePrefs(readRaw()), ...patch });
+    // Sync branding properties to SQL Server database for global user propagation
+    if (patch.accentColor !== undefined || patch.logoScale !== undefined || patch.surfaceStyle !== undefined) {
+      updateGlobalBranding({
+        accentColor: patch.accentColor,
+        logoScale: patch.logoScale,
+        surfaceStyle: patch.surfaceStyle,
+      }).catch(() => {});
+    }
   }, []);
 
-  const reset = useCallback(() => writePrefs(DEFAULT_PREFS), []);
+  const reset = useCallback(() => {
+    writePrefs(DEFAULT_PREFS);
+    updateGlobalBranding({
+      accentColor: null,
+      logoScale: 130,
+      surfaceStyle: "cushion",
+    }).catch(() => {});
+  }, []);
 
   const sysDark = useSyncExternalStore(
     subscribeSystemDark,
@@ -252,6 +341,45 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
     () => ({ prefs, update, reset, isDark }),
     [prefs, update, reset, isDark]
   );
+
+  // Apply theme tokens to document immediately upon initial mount and on every prefs change
+  React.useEffect(() => {
+    applyToDocument(prefs);
+  }, [prefs]);
+
+  // Sync with global server-wide branding on initial mount
+  React.useEffect(() => {
+    fetchGlobalBranding().then((globalBranding) => {
+      if (!globalBranding) return;
+      const current = parsePrefs(readRaw());
+      let changed = false;
+      const next = { ...current };
+
+      if (globalBranding.accentColor !== undefined && globalBranding.accentColor !== current.accentColor) {
+        next.accentColor = globalBranding.accentColor;
+        changed = true;
+      }
+      if (globalBranding.logoScale && globalBranding.logoScale !== current.logoScale) {
+        next.logoScale = globalBranding.logoScale;
+        changed = true;
+      }
+      if (globalBranding.surfaceStyle && globalBranding.surfaceStyle !== current.surfaceStyle) {
+        next.surfaceStyle = globalBranding.surfaceStyle as any;
+        changed = true;
+      }
+      if (changed) {
+        writePrefs(next);
+      }
+
+      if (globalBranding.logoUrl) {
+        const storedLogo = localStorage.getItem("system_brand_logo");
+        if (storedLogo !== globalBranding.logoUrl) {
+          localStorage.setItem("system_brand_logo", globalBranding.logoUrl);
+          window.dispatchEvent(new Event("system_brand_logo_updated"));
+        }
+      }
+    }).catch(() => {});
+  }, []);
 
   return <ThemeContext.Provider value={value}>{children}</ThemeContext.Provider>;
 }

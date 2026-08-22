@@ -1,7 +1,9 @@
-﻿using EmployeeManagement.Api.Models;
+using EmployeeManagement.Api.Dtos;
+using EmployeeManagement.Api.Models;
+using EmployeeManagement.Models;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
-using EmployeeManagement.Models;
+using Microsoft.Extensions.Logging;
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -11,138 +13,212 @@ namespace EmployeeManagement.Api.Controllers
 {
     [Route("api/[controller]")]
     [ApiController]
+    [Produces("application/json")]
     public class UsersController : ControllerBase
     {
-        private readonly IUserRepository userRepository;
+        private readonly IUserRepository _userRepository;
+        private readonly ILogger<UsersController> _logger;
 
-        public UsersController(IUserRepository userRepository)
+        public UsersController(IUserRepository userRepository, ILogger<UsersController> logger)
         {
-            this.userRepository = userRepository;
+            _userRepository = userRepository;
+            _logger = logger;
         }
 
-        // Get all users
+        /// <summary>GET: api/users</summary>
         [HttpGet]
-        public async Task<ActionResult<IEnumerable<User>>> GetUsers()
+        [ProducesResponseType(StatusCodes.Status200OK)]
+        [ProducesResponseType(StatusCodes.Status500InternalServerError)]
+        public async Task<ActionResult<IEnumerable<UserResponse>>> GetUsers()
         {
             try
             {
-                return (await userRepository.GetUsers()).ToList();
+                var users = await _userRepository.GetUsers();
+                return Ok(users.Select(UserResponse.From).ToList());
             }
-            catch (Exception)
+            catch (Exception ex)
             {
-                return StatusCode(StatusCodes.Status500InternalServerError,
-                    "Error retrieving data from the database");
+                _logger.LogError(ex, "Error retrieving users.");
+                return Problem(
+                    detail: "An error occurred while retrieving users.",
+                    statusCode: StatusCodes.Status500InternalServerError);
             }
         }
 
-        // Get user by ID
+        /// <summary>GET: api/users/{id}</summary>
         [HttpGet("{id}")]
-        public async Task<ActionResult<User>> GetUser(string id)
+        [ProducesResponseType(StatusCodes.Status200OK)]
+        [ProducesResponseType(StatusCodes.Status404NotFound)]
+        [ProducesResponseType(StatusCodes.Status500InternalServerError)]
+        public async Task<ActionResult<UserResponse>> GetUser(string id)
         {
+            if (string.IsNullOrWhiteSpace(id))
+            {
+                return BadRequest("User id is required.");
+            }
+
             try
             {
-                var result = await userRepository.GetUser(id);
+                var result = await _userRepository.GetUser(id);
 
                 if (result == null)
-                    return NotFound();
+                {
+                    return NotFound($"User with Id = {id} not found.");
+                }
 
-                return result;
+                return Ok(UserResponse.From(result));
             }
-            catch (Exception)
+            catch (Exception ex)
             {
-                return StatusCode(StatusCodes.Status500InternalServerError,
-                    "Error retrieving data from the database");
+                _logger.LogError(ex, "Error retrieving user {UserId}.", id);
+                return Problem(
+                    detail: "An error occurred while retrieving the user.",
+                    statusCode: StatusCodes.Status500InternalServerError);
             }
         }
 
-        // Create new user
+        /// <summary>POST: api/users</summary>
         [HttpPost]
-        public async Task<ActionResult<User>> CreateUser(User user)
+        [ProducesResponseType(StatusCodes.Status201Created)]
+        [ProducesResponseType(StatusCodes.Status400BadRequest)]
+        [ProducesResponseType(StatusCodes.Status500InternalServerError)]
+        public async Task<ActionResult<UserResponse>> CreateUser([FromBody] User user)
         {
+            if (user == null)
+            {
+                return BadRequest("User data is required.");
+            }
+
+            if (string.IsNullOrWhiteSpace(user.Email))
+            {
+                return BadRequest("Email is required.");
+            }
+
             try
             {
-                if (user == null)
-                    return BadRequest();
-
-                // Optionally, check if email is already in use
-                var existingUser = await userRepository.ValidateUserByEmail(user.Email);
+                var existingUser = await _userRepository.ValidateUserByEmail(user.Email);
                 if (existingUser != null)
                 {
                     ModelState.AddModelError("email", "User email already in use");
                     return BadRequest(ModelState);
                 }
 
-                var createdUser = await userRepository.AddUser(user);
+                if (string.IsNullOrWhiteSpace(user.Id))
+                {
+                    user.Id = Guid.NewGuid().ToString();
+                }
 
-                return CreatedAtAction(nameof(GetUser),
-                    new { id = createdUser.Id }, createdUser);
-            }
-            catch (Exception)
-            {
-                return StatusCode(StatusCodes.Status500InternalServerError,
-                    "Error creating new user record");
-            }
-        }
+                user.NormalizedUserName = user.UserName?.ToUpperInvariant();
+                user.NormalizedEmail = user.Email.ToUpperInvariant();
 
-        // Update user
-        [HttpPut]
-        public async Task<ActionResult<User>> UpdateUser(User user)
-        {
-            try
-            {
-                var userToUpdate = await userRepository.GetUser(user.Id);
+                var createdUser = await _userRepository.AddUser(user);
 
-                if (userToUpdate == null)
-                    return NotFound($"User with Id = {user.Id} not found");
-
-                return await userRepository.UpdateUser(user);
+                return CreatedAtAction(
+                    nameof(GetUser),
+                    new { id = createdUser.Id },
+                    UserResponse.From(createdUser));
             }
             catch (Exception ex)
             {
-                return StatusCode(StatusCodes.Status500InternalServerError,
-                    $"Error updating data: {ex.Message}");
+                _logger.LogError(ex, "Error creating user.");
+                return Problem(
+                    detail: "An error occurred while creating the user.",
+                    statusCode: StatusCodes.Status500InternalServerError);
             }
         }
 
-        // Delete user
-        [HttpDelete("{id}")]
-        public async Task<ActionResult<User>> DeleteUser(string id)
+        /// <summary>PUT: api/users</summary>
+        [HttpPut]
+        [ProducesResponseType(StatusCodes.Status200OK)]
+        [ProducesResponseType(StatusCodes.Status400BadRequest)]
+        [ProducesResponseType(StatusCodes.Status404NotFound)]
+        [ProducesResponseType(StatusCodes.Status500InternalServerError)]
+        public async Task<ActionResult<UserResponse>> UpdateUser([FromBody] User user)
         {
+            if (user == null || string.IsNullOrWhiteSpace(user.Id))
+            {
+                return BadRequest("User data with an Id is required.");
+            }
+
             try
             {
-                var userToDelete = await userRepository.GetUser(id);
+                // The repository copies only editable profile fields; password
+                // hash and security stamps are never taken from the request.
+                var updated = await _userRepository.UpdateUser(user);
 
-                if (userToDelete == null)
-                    return NotFound($"User with Id = {id} not found");
-
-                return await userRepository.DeleteUser(id);
-            }
-            catch (Exception)
-            {
-                return StatusCode(StatusCodes.Status500InternalServerError,
-                    "Error deleting data");
-            }
-        }
-
-        // Search users by name or email
-        [HttpGet("search")]
-        public async Task<ActionResult<IEnumerable<User>>> Search(string name, string email)
-        {
-            try
-            {
-                var result = await userRepository.Search(name, email);
-
-                if (result.Any())
+                if (updated == null)
                 {
-                    return Ok(result);
+                    return NotFound($"User with Id = {user.Id} not found.");
                 }
 
-                return NotFound();
+                return Ok(UserResponse.From(updated));
             }
-            catch (Exception)
+            catch (Exception ex)
             {
-                return StatusCode(StatusCodes.Status500InternalServerError,
-                    "Error retrieving data from the database");
+                _logger.LogError(ex, "Error updating user {UserId}.", user.Id);
+                return Problem(
+                    detail: "An error occurred while updating the user.",
+                    statusCode: StatusCodes.Status500InternalServerError);
+            }
+        }
+
+        /// <summary>DELETE: api/users/{id}</summary>
+        [HttpDelete("{id}")]
+        [ProducesResponseType(StatusCodes.Status200OK)]
+        [ProducesResponseType(StatusCodes.Status404NotFound)]
+        [ProducesResponseType(StatusCodes.Status500InternalServerError)]
+        public async Task<ActionResult<UserResponse>> DeleteUser(string id)
+        {
+            if (string.IsNullOrWhiteSpace(id))
+            {
+                return BadRequest("User id is required.");
+            }
+
+            try
+            {
+                var deleted = await _userRepository.DeleteUser(id);
+
+                if (deleted == null)
+                {
+                    return NotFound($"User with Id = {id} not found.");
+                }
+
+                return Ok(UserResponse.From(deleted));
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error deleting user {UserId}.", id);
+                return Problem(
+                    detail: "An error occurred while deleting the user.",
+                    statusCode: StatusCodes.Status500InternalServerError);
+            }
+        }
+
+        /// <summary>
+        /// Searches users by name and/or email.
+        /// GET: api/users/search?name=abc&amp;email=def
+        /// </summary>
+        [HttpGet("search")]
+        [ProducesResponseType(StatusCodes.Status200OK)]
+        [ProducesResponseType(StatusCodes.Status500InternalServerError)]
+        public async Task<ActionResult<IEnumerable<UserResponse>>> Search(
+            [FromQuery] string name,
+            [FromQuery] string email)
+        {
+            try
+            {
+                var result = await _userRepository.Search(name, email);
+
+                // An empty result set is a successful search that matched
+                // nothing - not a missing resource, so this is 200 with [].
+                return Ok(result.Select(UserResponse.From).ToList());
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error searching users.");
+                return Problem(
+                    detail: "An error occurred while searching users.",
+                    statusCode: StatusCodes.Status500InternalServerError);
             }
         }
     }

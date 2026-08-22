@@ -1,4 +1,4 @@
-﻿using Microsoft.AspNetCore.Identity;
+using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Identity.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore;
 using UserManagementAPI.Models;
@@ -20,6 +20,7 @@ namespace UserManagementAPI.Data
         public DbSet<LeaveRequest> LeaveRequests { get; set; }
         public DbSet<LeaveApproval> LeaveApprovals { get; set; }
         public DbSet<LeaveBalance> LeaveBalances { get; set; }
+        public DbSet<AppSetting> AppSettings { get; set; }
         protected override void OnModelCreating(ModelBuilder builder)
         {
             base.OnModelCreating(builder);
@@ -134,7 +135,7 @@ namespace UserManagementAPI.Data
                 entity.HasIndex(e => e.ArticleHeading)
                     .HasDatabaseName("IX_Articles_ArticleHeading");
             });
-            // ✅ ADD HERE — Leave Management Configuration
+            // Leave Management Configuration
             builder.Entity<LeaveBalance>()
                 .HasIndex(b => new { b.UserId, b.LeaveTypeId, b.Year })
                 .IsUnique();
@@ -148,29 +149,83 @@ namespace UserManagementAPI.Data
       new LeaveType { Id = 3, Name = "Sick Leave", HoursPerMonth = null, TotalHoursYear = null, IsOnTime = true, CreatedAt = new DateTime(2025, 1, 1, 0, 0, 0, DateTimeKind.Utc) },
       new LeaveType { Id = 4, Name = "Maternity Leave", HoursPerMonth = null, TotalHoursYear = 56, IsOnTime = false, CreatedAt = new DateTime(2025, 1, 1, 0, 0, 0, DateTimeKind.Utc) }
   );
+
+            // App-wide settings — a single fixed row so GET never has to handle
+            // "no row yet" and PUT never has to decide between insert/update.
+            builder.Entity<AppSetting>(entity =>
+            {
+                entity.ToTable("AppSettings", "dbo");
+                entity.HasKey(e => e.Id);
+                entity.Property(e => e.LogoUrl).HasMaxLength(2048);
+                entity.Property(e => e.AccentColor).HasMaxLength(50);
+                entity.Property(e => e.SurfaceStyle).HasMaxLength(50);
+                entity.Property(e => e.UpdatedAt).HasColumnType("datetime2");
+                entity.HasData(new AppSetting
+                {
+                    Id = 1,
+                    LogoUrl = null,
+                    AccentColor = null,
+                    LogoScale = 130,
+                    SurfaceStyle = "cushion",
+                    UpdatedAt = new DateTime(2026, 1, 1, 0, 0, 0, DateTimeKind.Utc)
+                });
+            });
         }  // ← end of OnModelCreating
 
-        // ✅ ADD HERE — Static helper, inside the class but outside OnModelCreating
+        // Static helper, inside the class but outside OnModelCreating.
         public static async Task SeedAnnualBalances(UserManagementContext db, UserManager<ApplicationUser> userManager, int year)
         {
-            var users = userManager.Users.ToList();
-            var types = await db.LeaveTypes.Where(t => t.IsActive && !t.IsOnTime && t.TotalHoursYear.HasValue).ToListAsync();
+            // ToListAsync, not ToList: this blocked a thread on the database
+            // inside an async method.
+            var userIds = await userManager.Users.Select(u => u.Id).ToListAsync();
+            var types = await db.LeaveTypes
+                .Where(t => t.IsActive && !t.IsOnTime && t.TotalHoursYear.HasValue)
+                .ToListAsync();
 
-            foreach (var user in users)
+            if (userIds.Count == 0 || types.Count == 0)
+            {
+                return;
+            }
+
+            // One query for everything already seeded for this year, instead of
+            // an AnyAsync per user PER leave type - 50 users and 3 types meant
+            // 150 round trips to decide 150 booleans.
+            var existing = (await db.LeaveBalances
+                    .AsNoTracking()
+                    .Where(b => b.Year == year)
+                    .Select(b => new { b.UserId, b.LeaveTypeId })
+                    .ToListAsync())
+                .Select(b => (b.UserId, b.LeaveTypeId))
+                .ToHashSet();
+
+            var toAdd = new List<LeaveBalance>();
+
+            foreach (var userId in userIds)
+            {
                 foreach (var lt in types)
                 {
-                    bool exists = await db.LeaveBalances.AnyAsync(b =>
-                        b.UserId == user.Id && b.LeaveTypeId == lt.Id && b.Year == year);
-                    if (!exists)
-                        db.LeaveBalances.Add(new LeaveBalance
-                        {
-                            UserId = user.Id,
-                            LeaveTypeId = lt.Id,
-                            Year = year,
-                            TotalHours = lt.TotalHoursYear!.Value,
-                            UsedHours = 0
-                        });
+                    if (existing.Contains((userId, lt.Id)))
+                    {
+                        continue;
+                    }
+
+                    toAdd.Add(new LeaveBalance
+                    {
+                        UserId = userId,
+                        LeaveTypeId = lt.Id,
+                        Year = year,
+                        TotalHours = lt.TotalHoursYear!.Value,
+                        UsedHours = 0
+                    });
                 }
+            }
+
+            if (toAdd.Count == 0)
+            {
+                return;
+            }
+
+            db.LeaveBalances.AddRange(toAdd);
             await db.SaveChangesAsync();
         }
     }

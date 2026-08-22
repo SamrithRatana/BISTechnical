@@ -46,3 +46,6 @@ export type { ErrorStateProps } from "./ErrorState";
 
 export { ConfirmDialog } from "./ConfirmDialog";
 export type { ConfirmDialogProps } from "./ConfirmDialog";
+
+export { ModalWrapper } from "./ModalWrapper";
+export type { ModalWrapperProps } from "./ModalWrapper";

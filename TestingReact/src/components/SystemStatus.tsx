@@ -39,6 +39,7 @@ import { ADMIN_ROLES } from "@/services/authSession";
 import { installBackendMonitor, subscribeToBackendFailure } from "@/services/backendSignal";
 import { pingInternet, type InternetPing } from "@/services/internetPing";
 import { useHasRole } from "./RequireRole";
+import { publishHealth } from "@/services/healthSnapshot";
 
 type HealthStatus = "healthy" | "slow" | "down";
 type ComponentStatus = "up" | "slow" | "down" | "unknown";
@@ -330,6 +331,14 @@ export default function SystemStatus() {
       });
       const data = (await res.json()) as HealthReport;
       const roundTripMs = Math.round(performance.now() - startedAt);
+
+      /*
+        Publish before the sequence check: even a superseded report is a fresh
+        observation of the backend, and the sidebar strip has no opinion about
+        which of two in-flight checks won. This is what keeps that component
+        from issuing a `/api/health` request of its own on every navigation.
+      */
+      publishHealth(data);
 
       if (seq === checkSeq.current) {
         setReport(data);
@@ -683,7 +692,7 @@ export default function SystemStatus() {
               // own height is the caller's to apply.
               transform: coords.placement === "top" ? "translateY(-100%)" : undefined,
             }}
-            className="z-[100] rounded-xl border border-subtle bg-surface p-3 shadow-xl "
+            className="z-[250] rounded-xl border border-subtle bg-surface p-3 shadow-xl "
           >
             {/* Headline verdict */}
             <div className="flex items-start justify-between gap-2 border-b border-subtle pb-2.5 ">

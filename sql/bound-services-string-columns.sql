@@ -137,22 +137,15 @@ GO
 
 /* ---------------------------------------------------------------------
    SECTION 1 — safety check: would anything be truncated?
-
-   Aborts the script if any ReportNo exceeds 50 characters. This is the
-   guard that makes the ALTER in section 2 safe to run unattended.
    --------------------------------------------------------------------- */
-DECLARE @MaxLen int = (SELECT MAX(LEN(ReportNo)) FROM dbo.Services);
-DECLARE @Offenders int = (SELECT COUNT(*) FROM dbo.Services WHERE LEN(ReportNo) > 50);
-
-SELECT
-    LongestReportNo = @MaxLen,
-    RowsOver50      = @Offenders,
-    Verdict         = CASE WHEN @Offenders = 0
-                           THEN 'safe - no truncation possible'
-                           ELSE 'ABORT - widen the target length' END;
-
-IF @Offenders > 0
-    RAISERROR('ReportNo has %d row(s) longer than 50 characters. Widen the target length before proceeding.', 16, 1, @Offenders);
+IF EXISTS (SELECT 1 FROM dbo.Services WHERE LEN(ReportNo) > 50)
+BEGIN
+    RAISERROR('ReportNo has row(s) longer than 50 characters. Widen the target length before proceeding.', 16, 1);
+END
+ELSE
+BEGIN
+    PRINT 'safe - no truncation possible';
+END
 GO
 
 

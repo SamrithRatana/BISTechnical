@@ -1,4 +1,5 @@
 ﻿// TechnicalService.API/Application/Commands/ManualStockOutCommandHandler.cs
+using TechnicalService.API.Extensions;
 using TechnicalService.Domain.AggregatesModel.TechnicalAggregate;
 
 namespace TechnicalService.API.Application.Commands;
@@ -28,8 +29,11 @@ public class ManualStockOutCommandHandler(
             sparepartId: request.SparepartId,
             quantity: request.Quantity,
             reason: request.Reason ?? string.Empty,
-            performedBy: request.PerformedBy,   // Guid? — null is fine
-            createdAt: DateTime.UtcNow);
+            performedBy: request.PerformedBy,   // Guid? - null is fine
+            // Business-local, like every other timestamp the workflow writes.
+            // As UTC this landed a stock-out done before 07:00 local on the
+            // previous day, and the usage report buckets by these values.
+            createdAt: BusinessClock.Now);
 
         context.SparepartManualStockOuts.Add(manualStockOut);
 

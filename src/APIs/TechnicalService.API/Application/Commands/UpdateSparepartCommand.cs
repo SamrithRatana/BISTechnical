@@ -9,4 +9,4 @@ public record UpdateSparepartCommand(
     string PictureUrl,
     Guid LinkItemId,
     int Quantity,
-    decimal DefaultPrice = 0) : IRequest<bool>; // ✅ ADD DefaultPrice
+    decimal DefaultPrice = 0) : IRequest<bool>;

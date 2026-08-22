@@ -6,7 +6,8 @@ public class UpdateItemCommandHandler : IRequestHandler<UpdateItemCommand, bool>
 {
     private readonly ITechnicalServiceRepository _repairServiceRepository;
 
-    public UpdateItemCommandHandler(ITechnicalServiceRepository repairServiceRepository)
+    public UpdateItemCommandHandler(
+        ITechnicalServiceRepository repairServiceRepository)
     {
         _repairServiceRepository = repairServiceRepository;
     }

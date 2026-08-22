@@ -25,6 +25,8 @@ import {
   searchItems,
   searchSpareParts,
   searchTickets,
+  querySparepartTransactions,
+  querySparepartUsage,
   type TicketQuery,
   type UserRecord,
 } from "./backend";
@@ -143,7 +145,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
   {
     name: "search_spare_parts",
     description:
-      "Search the spare-parts catalogue: part name, part number, what it is used for, quantity currently in stock and price. Use this for stock questions.",
+      "Search the spare-parts catalogue: part name, part number, what it is used for, quantity currently in stock and price. Use this for current stock balance questions.",
     parameters: {
       type: "object",
       properties: {
@@ -151,6 +153,50 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
           type: "string",
           description: "Part name, part number, or what it is used for. Omit to list the catalogue.",
         },
+        limit: { type: "integer", description: `Rows to read back, 1-${MAX_ROWS}.` },
+      },
+    },
+  },
+  {
+    name: "query_stock_transactions",
+    description:
+      "Query the stock transaction ledger (audit log) for spare parts movements: stock-out (deductions from system / parts issued), stock-in (restocking), manual stock-outs, or adjustments over any date range (e.g. today, this week, specific fromDate/toDate). Use this whenever asked what spare parts were deducted/issued/stocked out from the system, who used parts, or why stock changed.",
+    parameters: {
+      type: "object",
+      properties: {
+        searchTerm: {
+          type: "string",
+          description: "Part name, serial number, report number, or company name.",
+        },
+        direction: {
+          type: "string",
+          enum: ["In", "Out", "All"],
+          description: "'Out' for stock deductions / parts issued, 'In' for restocking, 'All' for all movements.",
+        },
+        source: {
+          type: "string",
+          enum: ["Service", "Manual", "Adjustment", "All"],
+          description: "'Service' for parts used in repair tickets, 'Manual' for manual stockouts, 'Adjustment' for inventory edits.",
+        },
+        fromDate: { type: "string", description: "Inclusive start date, YYYY-MM-DD." },
+        toDate: { type: "string", description: "Inclusive end date, YYYY-MM-DD." },
+        limit: { type: "integer", description: `Rows to read back, 1-${MAX_ROWS}.` },
+      },
+    },
+  },
+  {
+    name: "query_sparepart_usage",
+    description:
+      "Query aggregated spare part consumption and usage report across repair jobs and manual stock-outs for any date range. Gives total quantity used per part, total cost, and machine breakdown.",
+    parameters: {
+      type: "object",
+      properties: {
+        searchTerm: { type: "string", description: "Spare part name or number." },
+        fromDate: { type: "string", description: "Inclusive start date, YYYY-MM-DD." },
+        toDate: { type: "string", description: "Inclusive end date, YYYY-MM-DD." },
+        condition: { type: "string", description: "'Replace', 'Clean', 'Repair', etc." },
+        serviceType: { type: "string", enum: ["Free", "Charge"], description: "'Free' or 'Charge'." },
+        sourceFilter: { type: "string", enum: ["Service", "Manual", "All"], description: "'Service', 'Manual', or 'All'." },
         limit: { type: "integer", description: `Rows to read back, 1-${MAX_ROWS}.` },
       },
     },
@@ -438,6 +484,35 @@ export async function runTool(
 
       case "search_spare_parts":
         return await searchSpareParts(term, limit, ctx.authorization, ctx.signal);
+
+      case "query_stock_transactions":
+        return await querySparepartTransactions(
+          {
+            searchTerm: term,
+            direction: typeof input.direction === "string" ? (input.direction as "In" | "Out" | "All") : undefined,
+            source: typeof input.source === "string" ? (input.source as "Service" | "Manual" | "Adjustment" | "All") : undefined,
+            fromDate: typeof input.fromDate === "string" ? input.fromDate : undefined,
+            toDate: typeof input.toDate === "string" ? input.toDate : undefined,
+            pageSize: limit,
+          },
+          ctx.authorization,
+          ctx.signal
+        );
+
+      case "query_sparepart_usage":
+        return await querySparepartUsage(
+          {
+            searchTerm: term,
+            fromDate: typeof input.fromDate === "string" ? input.fromDate : undefined,
+            toDate: typeof input.toDate === "string" ? input.toDate : undefined,
+            condition: typeof input.condition === "string" ? input.condition : undefined,
+            serviceType: typeof input.serviceType === "string" ? input.serviceType : undefined,
+            sourceFilter: typeof input.sourceFilter === "string" ? (input.sourceFilter as "Service" | "Manual" | "All") : undefined,
+            pageSize: limit,
+          },
+          ctx.authorization,
+          ctx.signal
+        );
 
       case "search_customers":
         return await searchCustomers(term, limit, ctx.authorization, ctx.signal);

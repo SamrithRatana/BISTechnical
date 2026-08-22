@@ -8,7 +8,8 @@ public class UpdateSparepartItemRemarksCommandHandler
 {
     private readonly TechnicalServiceContext _context;
 
-    public UpdateSparepartItemRemarksCommandHandler(TechnicalServiceContext context)
+    public UpdateSparepartItemRemarksCommandHandler(
+        TechnicalServiceContext context)
     {
         _context = context;
     }
@@ -24,12 +25,14 @@ public class UpdateSparepartItemRemarksCommandHandler
             throw new KeyNotFoundException(
                 $"SparepartItem {request.SparepartItemId} not found.");
 
-        // ✅ Only Remarks is touched — Quantity/SparepartId/Condition/IsHoldStatus
+        // Only Remarks is touched - Quantity/SparepartId/Condition/IsHoldStatus
         // stay untouched, so the stock-adjust trigger's UPDATE(...) checks
         // all evaluate false and the trigger body no-ops.
         item.UpdateRemarks(request.Remarks);
 
-        await _context.SaveChangesAsync(cancellationToken);
-        return true;
+        // SaveEntitiesAsync, not SaveChangesAsync: it is the IUnitOfWork save
+        // every other handler uses, and it dispatches domain events. This was
+        // the only write path that bypassed it.
+        return await _context.SaveEntitiesAsync(cancellationToken);
     }
 }

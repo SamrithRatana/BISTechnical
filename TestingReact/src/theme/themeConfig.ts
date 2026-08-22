@@ -7,18 +7,33 @@
  *
  * It used to carry seven theme presets, six accents, and four colour modes
  * (`light` / `dark` / `system` / `auto`, the last two resolved against the OS
- * setting and the clock). Aura Velvet replaced all of it: there is one design
- * system, defined once in `app/globals.css`, and colour is no longer a user
- * preference.
+ * setting and the clock). Aura Velvet replaced all of it with one design
+ * system, defined once in `app/globals.css`.
  *
  * Removing the *palette* but leaving the machinery would have been worse than
  * either extreme. `resolveIsDark` stamped `.dark` on <html> at 18:00, and 31
  * component files still contain `dark:` utilities — with no dark palette left
  * to back them, the app would have quietly gone half-dark every evening and
  * rendered slate backgrounds against light-system tokens. The switch had to go
- * with the palette.
+ * with the palette. That is still true, and the `auto`/clock mode is still
+ * gone for the same reason — see `ModeName` below.
  *
- * ── What survives ─────────────────────────────────────────────────────────
+ * ── Accent colour is back, deliberately ──────────────────────────────────
+ *
+ * This file used to say "colour is no longer a user preference" — one
+ * component library, one accent, no picker. That held until branding
+ * customization (Settings → Theme & Branding) was requested explicitly and in
+ * detail: curated swatches, a custom hex picker, a colour suggested from the
+ * user's profile photo, all applying live. `accentColor` and `surfaceStyle`
+ * below are that preference, re-added on purpose. What's unchanged from the
+ * paragraph above: there is still exactly ONE design system, and this is one
+ * more override token pair on top of it (`--av-accent-*`, applied by
+ * `ThemeProvider`'s `applyToDocument` — see `theme/accentPalette.ts`), not a
+ * second palette to keep in sync. `null` (the default) means "use Aura
+ * Velvet's own accent," so a user who never opens Settings sees no change at
+ * all.
+ *
+ * ── What else survives ───────────────────────────────────────────────────
  *
  * Radius, density, font scale and motion. These are ergonomics, not theming:
  * they exist so a technician on a 1366x768 panel can fit more rows on screen,
@@ -36,6 +51,44 @@ export type RadiusName = "sharp" | "soft" | "round";
 export type DensityName = "comfortable" | "compact";
 export type FontScaleName = "sm" | "md" | "lg";
 export type MotionName = "full" | "reduced";
+/**
+ * Card/panel elevation treatment. `cushion` is Aura Velvet's current default
+ * (soft multi-layer shadow + inset highlight); `glass` and `flat` are the
+ * other two ends of the same spectrum — see the `[data-surface-style]` block
+ * in `globals.css` for what each actually sets.
+ */
+export type SurfaceStyleName = "cushion" | "glass" | "flat";
+export type CommandPaletteStyle = "glass" | "solid" | "tinted" | "acrylic";
+export type SidebarStyleName =
+  | "classic"
+  | "compact-rail"
+  | "enterprise-erp"
+  | "floating"
+  | "dual-column"
+  | "carbon"
+  | "radiant"
+  | "motion-expansion";
+
+/**
+ * Lite Mode: strip the expensive *visual* effects, keep every feature.
+ *
+ * A preference here rather than its own context+storage key, and that is the
+ * whole design. Lite Mode has to be on the very first frame — a low-end machine
+ * painting one blurred, shadowed frame and then dropping it is the exact
+ * stutter it exists to avoid — and `ThemeScript` already stamps this object
+ * pre-paint. It also has to survive a reload and sync across tabs, which
+ * `ui-prefs` already does. A parallel system would have re-solved all three
+ * badly.
+ *
+ * Distinct from `motion` on purpose. `motion: "reduced"` collapses animation;
+ * this drops `backdrop-filter`, layered shadows and 3D transforms, which cost
+ * on every *paint* whether or not anything is moving. A weak GPU with a fast
+ * CPU wants this and not necessarily that; someone who finds animation
+ * distracting wants that and not this. `PerformanceProvider` turns both on
+ * together when it detects a low-tier device, because that device wants both —
+ * but they stay separately controllable in Settings.
+ */
+export type LiteName = "off" | "on";
 
 /**
  * Light, dark, or whatever the operating system says.
@@ -64,6 +117,26 @@ export interface ThemePrefs {
    * decision; this lets someone quiet down just this app.
    */
   motion: MotionName;
+  /**
+   * A user-chosen accent, as a 6-digit hex string (`#rrggbb`). `null` (the
+   * default) means "use Aura Velvet's own accent" — see the file header.
+   */
+  accentColor: string | null;
+  surfaceStyle: SurfaceStyleName;
+  /** Command Palette / Spotlight visual theme style */
+  commandPaletteStyle: CommandPaletteStyle;
+  /** Sidebar visual layout & UX style */
+  sidebarStyle: SidebarStyleName;
+  /**
+   * Logo zoom/scale percentage (e.g. 100 to 250, default 130).
+   * Allows scaling wide or margin-heavy logos to fit the frame nicely.
+   */
+  logoScale: number;
+  /**
+   * Drop blur, layered shadows and 3D transforms. See `LiteName` for why this
+   * is separate from `motion`, and why it lives in this object.
+   */
+  lite: LiteName;
 }
 
 export const MODES: ModeName[] = ["light", "dark", "system"];
@@ -71,6 +144,22 @@ export const RADII: RadiusName[] = ["sharp", "soft", "round"];
 export const DENSITIES: DensityName[] = ["comfortable", "compact"];
 export const FONT_SCALES: FontScaleName[] = ["sm", "md", "lg"];
 export const MOTIONS: MotionName[] = ["full", "reduced"];
+export const SURFACE_STYLES: SurfaceStyleName[] = ["cushion", "glass", "flat"];
+export const COMMAND_PALETTE_STYLES: CommandPaletteStyle[] = ["glass", "solid", "tinted", "acrylic"];
+export const SIDEBAR_STYLES: SidebarStyleName[] = [
+  "classic",
+  "compact-rail",
+  "enterprise-erp",
+  "floating",
+  "dual-column",
+  "carbon",
+  "radiant",
+  "motion-expansion",
+];
+export const LITE_MODES: LiteName[] = ["off", "on"];
+
+/** 6-digit hex only (`#rrggbb`) — what `deriveAccentPalette` expects. */
+export const HEX_COLOR_PATTERN = /^#[0-9a-fA-F]{6}$/;
 
 export const DEFAULT_PREFS: ThemePrefs = {
   /**
@@ -84,6 +173,18 @@ export const DEFAULT_PREFS: ThemePrefs = {
   density: "comfortable",
   fontScale: "md",
   motion: "full",
+  accentColor: null,
+  surfaceStyle: "cushion",
+  commandPaletteStyle: "glass",
+  sidebarStyle: "classic",
+  logoScale: 130,
+  /**
+   * Off by default, and never turned on without asking. Detection decides
+   * whether to *offer* Lite Mode; the person decides whether to take it. A
+   * capable machine misread as slow would otherwise silently lose the design
+   * with nothing on screen to explain it.
+   */
+  lite: "off",
 };
 
 /** Where the whole preference object lives. */
@@ -101,12 +202,20 @@ export function themeAttributes(prefs: {
   density: string;
   fontScale: string;
   motion: string;
+  surfaceStyle: string;
+  commandPaletteStyle?: string;
+  sidebarStyle?: string;
+  lite: string;
 }): Record<string, string> {
   return {
     "data-radius": prefs.radius,
     "data-density": prefs.density,
     "data-font-scale": prefs.fontScale,
     "data-motion": prefs.motion,
+    "data-surface-style": prefs.surfaceStyle,
+    "data-cmd-palette-style": prefs.commandPaletteStyle || "glass",
+    "data-sidebar-style": prefs.sidebarStyle || "classic",
+    "data-lite": prefs.lite,
   };
 }
 
@@ -164,6 +273,26 @@ export function normalisePrefs(raw: unknown): ThemePrefs {
   }
   if (typeof r.mode === "string" && (MODES as string[]).includes(r.mode)) {
     out.mode = r.mode as ModeName;
+  }
+  if (typeof r.surfaceStyle === "string" && (SURFACE_STYLES as string[]).includes(r.surfaceStyle)) {
+    out.surfaceStyle = r.surfaceStyle as SurfaceStyleName;
+  }
+  if (typeof r.commandPaletteStyle === "string" && (COMMAND_PALETTE_STYLES as string[]).includes(r.commandPaletteStyle)) {
+    out.commandPaletteStyle = r.commandPaletteStyle as CommandPaletteStyle;
+  }
+  if (typeof r.sidebarStyle === "string" && (SIDEBAR_STYLES as string[]).includes(r.sidebarStyle)) {
+    out.sidebarStyle = r.sidebarStyle as SidebarStyleName;
+  }
+  if (r.lite === "off" || r.lite === "on") {
+    out.lite = r.lite;
+  }
+  if (typeof r.logoScale === "number" && r.logoScale >= 60 && r.logoScale <= 300) {
+    out.logoScale = Math.round(r.logoScale);
+  }
+  if (r.accentColor === null) {
+    out.accentColor = null;
+  } else if (typeof r.accentColor === "string" && HEX_COLOR_PATTERN.test(r.accentColor)) {
+    out.accentColor = r.accentColor;
   }
 
   return out;

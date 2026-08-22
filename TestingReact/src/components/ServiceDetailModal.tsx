@@ -29,6 +29,7 @@ import { fetchUserMap, resolveUserNameSync, getCurrentUserGuid } from "@/service
 import { useInfiniteList } from "@/hooks/useInfiniteList";
 import type { ActionValues } from "./ActionBus";
 import InfiniteScrollStatus from "./InfiniteScrollStatus";
+import { ModalWrapper } from "@/components/av/ModalWrapper";
 import { useI18n } from "@/i18n/LanguageProvider";
 import type { TranslationKey } from "@/i18n/translations";
 import {
@@ -51,6 +52,7 @@ import {
   Trash2
 } from "lucide-react";
 import ModernSelect from "./ModernSelect";
+import MediaLightbox from "./MediaLightbox";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Types
@@ -272,229 +274,368 @@ function InfoRow({ label, value }: { label: string; value?: string | number | nu
   );
 }
 
+function getPriorityBadgeClass(priority?: string | null): string {
+  const p = (priority || "").toUpperCase();
+  if (p === "HIGH" || p === "URGENT") return "bg-danger-soft text-danger border-danger/30";
+  if (p === "LOW") return "bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 border-subtle";
+  return "bg-info-soft text-info border-info/30";
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
-// VIEW MODE — matches RepairServiceViewDialog.razor exactly
+// VIEW MODE — Modern Aura Velvet Card & Grid Layout
 // ─────────────────────────────────────────────────────────────────────────────
 function ViewContent({ item }: { item: RepairServiceItem }) {
   const { t } = useI18n();
-  // The API serialises the backend's `SparepartItems` property as camelCase
-  // `sparepartItems` (lowercase p), not `sparePartItems` — every other spare
-  // -part reader in this app (ServiceTable, ApproveRepairDialog,
-  // InspectItemDialog, PrintPreviewSidebar) already checks both casings.
-  // This view previously checked only `sparePartItems`, which never exists,
-  // so the spare-parts table silently never rendered.
+  const [previewPart, setPreviewPart] = useState<SparePartItemDetail | null>(null);
   const spareParts = item.sparePartItems ?? item.sparepartItems ?? [];
   const totalQty = spareParts.reduce((s, p) => s + p.quantity, 0);
   const grandTotal = spareParts.reduce(
     (s, p) => s + (p.defaultPrice ?? 0) * p.quantity,
     0
   );
+  const days = item.daysTaken ?? calculateDaysTaken(item);
+
+  const timelineMilestones = [
+    { label: t("detail.tlReceived"), date: item.serviceDate, byName: item.createdByName, byGuid: item.createBy || item.userId },
+    { label: t("detail.tlInspection"), date: item.inspectDate, byName: item.inspectByName, byGuid: item.inspectBy || item.inspectingBy },
+    { label: t("detail.tlAwaitingSpare"), date: item.awaitingSparepartDate, byName: item.setAwaitingSparepartByName, byGuid: item.setAwaitingSparepartBy },
+    { label: t("detail.tlAwaitCustomer"), date: item.awaitingCustomerConfirmDate, byName: item.setAwaitingCustomerConfirmByName, byGuid: item.setAwaitingCustomerConfirmBy },
+    { label: t("detail.tlSaleConfirmed"), date: item.saleConfirmedDate, byName: item.setSaleConfirmedByName, byGuid: item.setSaleConfirmedBy },
+    { label: t("detail.tlSentSpareparts"), date: item.sentSparepartsDate, byName: item.setSentSparepartsByName, byGuid: item.setSentSparepartsBy },
+    { label: t("detail.tlApproveRepair"), date: item.repairDate, byName: item.repairByName, byGuid: item.repairBy },
+    { label: t("detail.tlThirdParty"), date: item.thirdPartyRepairDate, byName: item.thirdPartyRepairByName, byGuid: item.thirdPartyRepairBy },
+    { label: t("detail.tlFinished"), date: item.finishedDate, byName: item.verifiedByName || item.repairByName, byGuid: item.verifiedBy || item.repairBy },
+    { label: t("detail.tlRejected"), date: item.customerRejectedDate, byName: item.setCustomerRejectedByName, byGuid: item.setCustomerRejectedBy },
+    { label: t("detail.tlUnrepairable"), date: item.unrepairableDate, byName: item.setUnrepairableByName, byGuid: item.setUnrepairableBy },
+  ].filter(m => !!m.date);
 
   return (
-    <div className="overflow-y-auto flex-1 p-6">
-      {/* ── Audit Timeline table ── */}
-      <table className="w-full mb-4 rounded-xl overflow-hidden border border-subtle ">
-        <tbody>
-          <InfoRow label={t("field.refNo")} value={item.reportNo} />
-          <TimelineRow label={t("detail.tlReceived")} date={item.serviceDate} byName={item.createdByName} byGuid={item.createBy || item.userId} />
-          <TimelineRow label={t("detail.tlInspection")} date={item.inspectDate} byName={item.inspectByName} byGuid={item.inspectBy || item.inspectingBy} />
-          <TimelineRow label={t("detail.tlAwaitingSpare")} date={item.awaitingSparepartDate} byName={item.setAwaitingSparepartByName} byGuid={item.setAwaitingSparepartBy} />
-          <TimelineRow label={t("detail.tlAwaitCustomer")} date={item.awaitingCustomerConfirmDate} byName={item.setAwaitingCustomerConfirmByName} byGuid={item.setAwaitingCustomerConfirmBy} />
-          <TimelineRow label={t("detail.tlSaleConfirmed")} date={item.saleConfirmedDate} byName={item.setSaleConfirmedByName} byGuid={item.setSaleConfirmedBy} />
-          <TimelineRow label={t("detail.tlSentSpareparts")} date={item.sentSparepartsDate} byName={item.setSentSparepartsByName} byGuid={item.setSentSparepartsBy} />
-          <TimelineRow label={t("detail.tlApproveRepair")} date={item.repairDate} byName={item.repairByName} byGuid={item.repairBy} />
-          <TimelineRow label={t("detail.tlThirdParty")} date={item.thirdPartyRepairDate} byName={item.thirdPartyRepairByName} byGuid={item.thirdPartyRepairBy} />
-          <TimelineRow label={t("detail.tlFinished")} date={item.finishedDate} byName={item.verifiedByName || item.repairByName} byGuid={item.verifiedBy || item.repairBy} />
-          <TimelineRow label={t("detail.tlRejected")} date={item.customerRejectedDate} byName={item.setCustomerRejectedByName} byGuid={item.setCustomerRejectedBy} />
-          <TimelineRow label={t("detail.tlUnrepairable")} date={item.unrepairableDate} byName={item.setUnrepairableByName} byGuid={item.setUnrepairableBy} />
-          {(() => {
-            const days = item.daysTaken ?? calculateDaysTaken(item);
-            if (days == null) return null;
-            return (
-              <tr className="border-b border-subtle ">
-                <td className="py-2 px-3 text-xs font-semibold text-ink-secondary w-48">
-                  {t("detail.duration")}
-                </td>
-                <td className="py-2 px-3 text-xs text-ink ">
-                  {days === 1 ? t("detail.day", { count: days }) : t("detail.days", { count: days })}
-                </td>
-              </tr>
-            );
-          })()}
-
-          {/* Customer Info Section */}
-          <SectionHeader
-            icon={<Building2 className="w-3.5 h-3.5 text-info" />}
-            label={t("detail.customerInfo")}
-          />
-          <InfoRow label={t("field.companyName")} value={item.companyName} />
-          <InfoRow label={t("field.address")} value={item.address} />
-          <InfoRow label={t("field.contactName")} value={item.contactName} />
-          <InfoRow label={t("field.phoneNumber")} value={item.phoneNumber} />
-
-          {/* Machine Info Section */}
-          <SectionHeader
-            icon={<Package className="w-3.5 h-3.5 text-info" />}
-            label={t("detail.machineInfo")}
-          />
-          <InfoRow label={t("field.itemName")} value={item.itemName} />
-          <InfoRow label={t("field.serialNumber")} value={item.serialNumber} />
-          <InfoRow label={t("field.customerRequest")} value={item.customerRequest} />
-          <InfoRow label={t("field.inspection")} value={item.inspection} />
-          <InfoRow label={t("field.solution")} value={item.solution} />
-
-          {/* Repair Status Section */}
-          <SectionHeader
-            icon={<Wrench className="w-3.5 h-3.5 text-info" />}
-            label={t("detail.repairStatus")}
-          />
-          <InfoRow label={t("field.serviceLocation")} value={translateServiceLocation(item.serviceLocation, t)} />
-          <InfoRow label={t("field.serviceType")} value={translateServiceType(item.serviceType, t)} />
-          <InfoRow label={t("field.priority")} value={translatePriority(item.servicePriority, t)} />
+    <div className="overflow-y-auto flex-1 p-4 sm:p-5 lg:p-5 xl:p-6 space-y-4">
+      {/* ── Top Summary Header Strip ── */}
+      <div className="flex flex-wrap items-center justify-between gap-3 p-3.5 rounded-2xl bg-cushion border border-subtle">
+        <div className="flex items-center gap-2.5 flex-wrap text-sm">
+          <span className="font-mono font-bold text-ink bg-surface border border-subtle px-3 py-1 rounded-xl shadow-2xs text-sm">
+            {item.reportNo || "TICKET"}
+          </span>
+          {days != null && (
+            <span className="px-3 py-1 rounded-xl bg-surface border border-subtle text-ink font-bold text-xs sm:text-sm shadow-2xs">
+              {days === 1 ? t("detail.day", { count: days }) : t("detail.days", { count: days })}
+            </span>
+          )}
+        </div>
+        <div className="flex items-center gap-2.5 flex-wrap">
+          {item.servicePriority && (
+            <div className="flex items-center gap-2 px-3 py-1 rounded-xl bg-surface border border-subtle shadow-2xs">
+              <span className="text-xs font-bold text-ink-secondary">
+                {t("detail.customerPriorityLabel")}
+              </span>
+              <span className={`px-2.5 py-0.5 rounded-lg text-xs font-bold border ${getPriorityBadgeClass(item.servicePriority)}`}>
+                {translatePriority(item.servicePriority, t)}
+              </span>
+            </div>
+          )}
           {item.status && (
-            <tr className="border-b border-subtle ">
-              <td className="py-2 px-3 text-xs font-semibold text-ink-secondary w-48">
-                {t("field.status")}
-              </td>
-              <td className="py-2 px-3">
-                <span
-                  className={`inline-block text-[11px] font-semibold px-2 py-0.5 rounded-full ${getStatusBadgeClass(item.status)}`}
-                >
-                  {translateStatus(item.status, t)}
-                </span>
-              </td>
-            </tr>
+            <div className="flex items-center gap-2 px-3 py-1 rounded-xl bg-surface border border-subtle shadow-2xs">
+              <span className="text-xs font-bold text-ink-secondary">
+                {t("detail.repairStatusLabel")}
+              </span>
+              <span className={`px-2.5 py-0.5 rounded-lg text-xs font-bold ${getStatusBadgeClass(item.status)}`}>
+                {translateStatus(item.status, t)}
+              </span>
+            </div>
           )}
-          <tr className="border-b border-subtle ">
-            <td className="py-2 px-3 text-xs font-semibold text-ink-secondary w-48">
-              {t("detail.contract")}
-            </td>
-            <td className="py-2 px-3 text-xs text-ink ">
-              {item.hasContract ? t("value.yes") : t("value.no")}
-            </td>
-          </tr>
-          {item.isThirdPartyRepair && (
-            <tr className="border-b border-subtle ">
-              <td className="py-2 px-3 text-xs font-semibold text-ink-secondary w-48">
-                {t("detail.thirdPartyRepair")}
-              </td>
-              <td className="py-2 px-3 text-xs text-ink ">{t("value.yes")}</td>
-            </tr>
-          )}
-        </tbody>
-      </table>
+        </div>
+      </div>
 
-      {/* ── Spare Parts Table ── */}
-      {spareParts.length > 0 && (
-        <div className="mt-4">
-          <h3 className="text-xs font-bold text-ink mb-2 flex items-center gap-1.5">
-            <Wrench className="w-3.5 h-3.5 text-info" />
-            {t("detail.sparePartDetails")}
-          </h3>
-          <div className="overflow-x-auto rounded-xl border border-subtle ">
-            <table className="w-full text-xs">
-              <thead>
-                <tr className="bg-accent text-white">
-                  <th className="px-2 py-2 text-center w-10">{t("inspect.colImage")}</th>
-                  <th className="px-3 py-2 text-left">{t("field.itemName")}</th>
-                  <th className="px-3 py-2 text-left">{t("field.useFor")}</th>
-                  <th className="px-2 py-2 text-center w-10">{t("inspect.colQty")}</th>
-                  <th className="px-2 py-2 text-center w-20">{t("field.condition")}</th>
-                  <th className="px-2 py-2 text-right w-20">{t("field.price")}</th>
-                  <th className="px-2 py-2 text-center w-28">{t("field.stock")}</th>
-                </tr>
-              </thead>
-              <tbody>
-                {spareParts.map((sp) => {
-                  const badge = resolveStockBadge(
-                    item.status,
-                    sp.condition,
-                    sp.stockQuantity
-                  );
-                  return (
-                    <tr key={sp.id} className="border-b border-subtle hover:bg-cushion ">
-                      <td className="px-2 py-1.5 text-center">
-                        {sp.pictureUrl ? (
-                          <img
-                            src={sp.pictureUrl}
-                            alt="part"
-                            width={36}
-                            height={36}
-                            loading="lazy"
-                            decoding="async"
-                            className="w-9 h-9 object-cover rounded border border-subtle mx-auto"
-                          />
-                        ) : (
-                          <div className="w-9 h-9 bg-sunken rounded border border-subtle flex items-center justify-center mx-auto">
-                            <Package className="w-4 h-4 text-ink-muted" />
-                          </div>
-                        )}
-                      </td>
-                      <td
-                        className="px-3 py-1.5 font-medium text-ink max-w-[130px] truncate"
-                        title={sp.itemName}
-                      >
-                        {sp.itemName || "—"}
-                      </td>
-                      <td
-                        className="px-3 py-1.5 text-ink-secondary max-w-[130px] truncate"
-                        title={sp.useFor}
-                      >
-                        {sp.useFor || "—"}
-                      </td>
-                      <td className="px-2 py-1.5 text-center font-bold text-ink ">
-                        {sp.quantity}
-                      </td>
-                      <td className="px-2 py-1.5 text-center">
-                        {sp.condition ? (
-                          <span className="bg-sunken text-ink-secondary px-2 py-0.5 rounded-full text-[11px]">
-                            {sp.condition}
-                          </span>
-                        ) : (
-                          <span className="text-ink-muted">—</span>
-                        )}
-                      </td>
-                      <td className="px-2 py-1.5 text-right font-semibold text-success whitespace-nowrap">
-                        {sp.defaultPrice != null
-                          ? `$${sp.defaultPrice.toFixed(2)}`
-                          : <span className="text-ink-muted">—</span>}
-                      </td>
-                      <td className="px-2 py-1.5 text-center">
-                        {/* Stock badge with hover tooltip matching old Blazor stock-qty-tooltip */}
-                        <span
-                          className="group relative inline-block text-[11px] font-bold px-2 py-0.5 rounded-full cursor-default whitespace-nowrap"
-                          style={{ background: badge.bg, color: badge.fg }}
-                        >
-                          {t(badge.labelKey)}
-                          {sp.stockQuantity != null && (
-                            <span className="pointer-events-none absolute bottom-full left-1/2 -translate-x-1/2 mb-1 z-50 hidden group-hover:block bg-black/75 text-white text-[10px] rounded px-2 py-0.5 whitespace-nowrap">
-                              {t("spec.inStock", { qty: sp.stockQuantity })}
-                            </span>
-                          )}
-                        </span>
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-              <tfoot>
-                <tr className="bg-cushion font-bold border-t-2 border-subtle ">
-                  <td colSpan={3} className="px-3 py-2 text-right text-ink-secondary text-xs">
-                    {t("detail.total")}
-                  </td>
-                  <td className="px-2 py-2 text-center text-ink text-xs">
-                    {totalQty}
-                  </td>
-                  <td />
-                  <td className="px-2 py-2 text-right text-success text-xs whitespace-nowrap">
-                    ${grandTotal.toFixed(2)}
-                  </td>
-                  <td />
-                </tr>
-              </tfoot>
-            </table>
+      {/* ── Workflow Audit Timeline ── */}
+      {timelineMilestones.length > 0 && (
+        <div className="p-4 rounded-2xl bg-surface border border-subtle space-y-2.5 shadow-2xs">
+          <div className="flex items-center gap-2 font-bold text-ink text-sm pb-2 border-b border-subtle">
+            <CheckCircle2 className="w-4 h-4 text-success" />
+            <span>Workflow Timeline &amp; Activity</span>
+          </div>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 pt-1">
+            {timelineMilestones.map((m, idx) => {
+              const formattedDate = fmtDate(m.date);
+              const resolvedName = (m.byName && isRealName(m.byName))
+                ? m.byName.trim()
+                : resolveUserNameSync(m.byGuid || "");
+              return (
+                <div key={idx} className="p-3 rounded-xl bg-cushion/70 border border-subtle flex items-start justify-between gap-2.5">
+                  <div>
+                    <span className="font-bold text-ink block text-xs sm:text-[13px]">{m.label}</span>
+                    <span className="text-xs font-bold text-ink-secondary mt-0.5 block">{formattedDate}</span>
+                  </div>
+                  {isRealName(resolvedName) && (
+                    <span className="text-xs font-bold text-ink bg-surface px-2.5 py-1 rounded-lg border border-subtle shadow-2xs shrink-0 flex items-center gap-1">
+                      <User className="w-3.5 h-3.5 text-accent inline shrink-0" />
+                      {resolvedName}
+                    </span>
+                  )}
+                </div>
+              );
+            })}
           </div>
         </div>
+      )}
+
+      {/* ── 2-Column Main Info Grid ── */}
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        {/* Customer Information Card */}
+        <div className="p-4 rounded-2xl bg-surface border border-subtle shadow-2xs space-y-3">
+          <div className="flex items-center gap-2 pb-2.5 border-b border-subtle text-sm font-bold text-ink">
+            <Building2 className="w-4 h-4 text-accent" />
+            <span>{t("detail.customerInfo")}</span>
+          </div>
+          <div className="space-y-2.5 text-xs sm:text-sm">
+            <div>
+              <span className="text-xs font-bold uppercase tracking-wider text-ink-muted block">{t("field.companyName")}</span>
+              <p className="font-bold text-ink mt-0.5 text-sm sm:text-[14.5px]">{item.companyName || "—"}</p>
+            </div>
+            {item.address && (
+              <div>
+                <span className="text-xs font-bold uppercase tracking-wider text-ink-muted block">{t("field.address")}</span>
+                <p className="text-ink-secondary mt-0.5 leading-relaxed text-xs sm:text-[13px]">{item.address}</p>
+              </div>
+            )}
+            <div className="grid grid-cols-2 gap-3 pt-2 border-t border-subtle/60">
+              <div>
+                <span className="text-xs font-bold uppercase tracking-wider text-ink-muted block">{t("field.contactName")}</span>
+                <p className="font-semibold text-ink mt-0.5 truncate text-xs sm:text-sm">{item.contactName || "—"}</p>
+              </div>
+              <div>
+                <span className="text-xs font-bold uppercase tracking-wider text-ink-muted block">{t("field.phoneNumber")}</span>
+                <p className="font-mono font-bold text-ink mt-0.5 text-xs sm:text-sm">{item.phoneNumber || "—"}</p>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* Machine & Service Info Card */}
+        <div className="p-4 rounded-2xl bg-surface border border-subtle shadow-2xs space-y-3">
+          <div className="flex items-center gap-2 pb-2.5 border-b border-subtle text-sm font-bold text-ink">
+            <Package className="w-4 h-4 text-accent" />
+            <span>{t("detail.machineInfo")}</span>
+          </div>
+          <div className="space-y-2.5 text-xs sm:text-sm">
+            <div>
+              <span className="text-xs font-bold uppercase tracking-wider text-ink-muted block">{t("field.itemName")}</span>
+              <p className="font-bold text-ink mt-0.5 text-sm sm:text-[14.5px]">{item.itemName || "—"}</p>
+            </div>
+            <div>
+              <span className="text-xs font-bold uppercase tracking-wider text-ink-muted block">{t("field.serialNumber")}</span>
+              <p className="font-mono text-ink mt-0.5 font-bold bg-sunken px-2.5 py-1 rounded-lg border border-subtle inline-block text-xs sm:text-[13px]">{item.serialNumber || "—"}</p>
+            </div>
+            <div className="grid grid-cols-2 gap-3 pt-2 border-t border-subtle/60">
+              <div>
+                <span className="text-xs font-bold uppercase tracking-wider text-ink-muted block">{t("field.serviceLocation")}</span>
+                <p className="font-semibold text-ink mt-0.5 text-xs sm:text-sm">{translateServiceLocation(item.serviceLocation, t)}</p>
+              </div>
+              <div>
+                <span className="text-xs font-bold uppercase tracking-wider text-ink-muted block">{t("field.serviceType")}</span>
+                <p className="font-semibold text-ink mt-0.5 text-xs sm:text-sm">{translateServiceType(item.serviceType, t)}</p>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* ── Problem & Diagnostic Notes ── */}
+      {(item.customerRequest || item.inspection || item.solution) && (
+        <div className="p-4 rounded-2xl bg-cushion/90 border border-subtle space-y-2.5 text-xs sm:text-sm shadow-2xs">
+          <div className="flex items-center gap-2 font-bold text-ink text-sm pb-2 border-b border-subtle">
+            <Wrench className="w-4 h-4 text-accent" />
+            <span>{t("field.customerRequest")} &amp; {t("field.solution")}</span>
+          </div>
+          {item.customerRequest && (
+            <div>
+              <span className="text-xs font-bold uppercase text-ink-muted block">{t("field.customerRequest")}:</span>
+              <p className="text-ink mt-0.5 text-xs sm:text-sm leading-relaxed">{item.customerRequest}</p>
+            </div>
+          )}
+          {item.inspection && (
+            <div>
+              <span className="text-xs font-bold uppercase text-ink-muted block">{t("field.inspection")}:</span>
+              <p className="text-ink mt-0.5 text-xs sm:text-sm leading-relaxed">{item.inspection}</p>
+            </div>
+          )}
+          {item.solution && (
+            <div>
+              <span className="text-xs font-bold uppercase text-ink-muted block">{t("field.solution")}:</span>
+              <p className="text-success font-bold mt-0.5 text-xs sm:text-sm leading-relaxed">{item.solution}</p>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ── Spare Parts Table (Modern Smart Table Layout) ── */}
+      {spareParts.length > 0 && (
+        <div className="mt-3 space-y-3">
+          <div className="flex items-center justify-between">
+            <h3 className="text-sm font-bold text-ink flex items-center gap-2">
+              <Wrench className="w-4 h-4 text-accent" />
+              <span>{t("detail.sparePartDetails")}</span>
+            </h3>
+            <span className="text-xs font-bold text-accent bg-accent-soft px-3 py-1 rounded-full border border-accent/20">
+              {t("detail.totalPartsSummary", { items: spareParts.length, units: totalQty })}
+            </span>
+          </div>
+
+          <div className="overflow-hidden rounded-2xl border border-subtle bg-surface shadow-2xs">
+            <div className="overflow-x-auto">
+              <table className="w-full text-xs sm:text-sm text-left border-collapse">
+                <thead>
+                  <tr className="bg-cushion/90 text-ink-secondary text-xs font-bold uppercase tracking-wider border-b border-subtle">
+                    <th className="px-3.5 py-3 text-center w-16">{t("inspect.colImage")}</th>
+                    <th className="px-4 py-3 text-left">{t("detail.colPartAndModel")}</th>
+                    <th className="px-3.5 py-3 text-center w-20">{t("inspect.colQty")}</th>
+                    <th className="px-3.5 py-3 text-center w-32">{t("field.condition")}</th>
+                    <th className="px-3.5 py-3 text-right w-28">{t("field.price")}</th>
+                    <th className="px-3.5 py-3 text-center w-40">{t("detail.colStockStatus")}</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-subtle/60">
+                  {spareParts.map((sp) => {
+                    const badge = resolveStockBadge(
+                      item.status,
+                      sp.condition,
+                      sp.stockQuantity
+                    );
+                    const cond = sp.condition?.toLowerCase();
+
+                    return (
+                      <tr key={sp.id} className="hover:bg-cushion/40 transition-colors">
+                        {/* 1. Image Thumbnail with preview */}
+                        <td className="px-3.5 py-2.5 text-center align-middle">
+                          {sp.pictureUrl ? (
+                            <button
+                              type="button"
+                              onClick={() => setPreviewPart(sp)}
+                              className="group relative w-11 h-11 rounded-xl overflow-hidden border border-subtle bg-sunken mx-auto block cursor-pointer transition-transform hover:scale-105 shadow-2xs"
+                              title="Click to view full image & stock details"
+                            >
+                              <img
+                                src={sp.pictureUrl}
+                                alt={sp.itemName || "part"}
+                                width={44}
+                                height={44}
+                                loading="lazy"
+                                decoding="async"
+                                className="w-full h-full object-cover group-hover:opacity-90"
+                              />
+                              <div className="absolute inset-0 bg-black/20 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
+                                <Eye className="w-4 h-4 text-white drop-shadow" />
+                              </div>
+                            </button>
+                          ) : (
+                            <div className="w-11 h-11 rounded-xl bg-sunken border border-subtle flex items-center justify-center mx-auto text-ink-muted">
+                              <Package className="w-4 h-4" />
+                            </div>
+                          )}
+                        </td>
+
+                        {/* 2. Part Name & Model (grouped together) */}
+                        <td className="px-4 py-2.5 align-middle">
+                          <div className="font-bold text-ink text-sm leading-snug">
+                            {sp.itemName || "—"}
+                          </div>
+                          {sp.useFor && (
+                            <div className="text-xs text-ink-muted leading-tight mt-0.5">
+                              {sp.useFor}
+                            </div>
+                          )}
+                        </td>
+
+                        {/* 3. Quantity */}
+                        <td className="px-3.5 py-2.5 text-center align-middle">
+                          <span className="inline-flex items-center justify-center min-w-[32px] px-2.5 py-1 rounded-lg bg-cushion border border-subtle font-bold text-ink text-xs sm:text-sm shadow-2xs">
+                            × {sp.quantity}
+                          </span>
+                        </td>
+
+                        {/* 4. Condition Badge */}
+                        <td className="px-3.5 py-2.5 text-center align-middle">
+                          {cond === "replace" ? (
+                            <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold bg-amber-500/15 text-amber-600 dark:text-amber-400 border border-amber-500/25 shadow-2xs">
+                              <span className="w-1.5 h-1.5 rounded-full bg-amber-500 shrink-0" />
+                              {sp.condition}
+                            </span>
+                          ) : cond === "fix" ? (
+                            <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold bg-blue-500/15 text-blue-600 dark:text-blue-400 border border-blue-500/25 shadow-2xs">
+                              <span className="w-1.5 h-1.5 rounded-full bg-blue-500 shrink-0" />
+                              {sp.condition}
+                            </span>
+                          ) : (
+                            <span className="inline-flex items-center px-3 py-1 rounded-full text-xs font-medium bg-sunken text-ink-secondary">
+                              {sp.condition || "—"}
+                            </span>
+                          )}
+                        </td>
+
+                        {/* 5. Price */}
+                        <td className="px-3.5 py-2.5 text-right align-middle font-mono font-bold text-sm text-success whitespace-nowrap">
+                          {sp.defaultPrice != null ? `$${sp.defaultPrice.toFixed(2)}` : <span className="text-ink-muted font-normal">—</span>}
+                        </td>
+
+                        {/* 6. Stock Status (with Mouse Hover Tooltip showing Stock Qty) */}
+                        <td className="px-3.5 py-2.5 text-center align-middle">
+                          <div className="relative group/stock inline-block">
+                            <span
+                              className="inline-flex items-center gap-1.5 text-xs font-bold px-3 py-1 rounded-full shadow-2xs cursor-pointer select-none transition-transform hover:scale-105"
+                              style={{ background: badge.bg, color: badge.fg }}
+                              title={`ចំនួនស្តុកដែលនៅសល់៖ ${sp.stockQuantity ?? 0} គ្រឿង`}
+                            >
+                              {badge.labelKey === "stockBadge.allDispatched" && <CheckCircle2 className="w-3.5 h-3.5 shrink-0" />}
+                              {badge.labelKey === "stockBadge.noStockDeduction" && <Wrench className="w-3.5 h-3.5 shrink-0" />}
+                              {t(badge.labelKey)}
+                            </span>
+
+                            {/* Tooltip on Mouse Hover */}
+                            <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 px-3 py-1.5 rounded-xl bg-slate-900/95 text-white text-xs font-medium whitespace-nowrap shadow-xl opacity-0 pointer-events-none group-hover/stock:opacity-100 transition-opacity z-50 flex items-center gap-1.5 border border-white/10">
+                              <Package className="w-3.5 h-3.5 text-accent" />
+                              <span>ស្តុកនៅសល់៖ <strong className="font-mono text-amber-300 font-bold">{sp.stockQuantity ?? 0}</strong> គ្រឿង</span>
+                            </div>
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+
+            {/* Total Summary Footer Strip */}
+            <div className="bg-cushion/90 px-4 py-3 border-t border-subtle flex items-center justify-between flex-wrap gap-3 text-xs sm:text-sm">
+              <div className="flex items-center gap-2 font-semibold text-ink-secondary">
+                <Package className="w-4 h-4 text-accent" />
+                <span>{t("detail.totalPartsSummary", { items: spareParts.length, units: totalQty })}</span>
+              </div>
+              <div className="flex items-center gap-2.5">
+                <span className="text-xs font-bold text-ink-muted uppercase tracking-wider">{t("detail.total")}</span>
+                <span className="font-mono font-bold text-sm text-success bg-surface px-3.5 py-1.5 rounded-xl border border-subtle shadow-2xs">
+                  ${grandTotal.toFixed(2)}
+                </span>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Image Lightbox Modal with Full Stock & Status Details ── */}
+      {previewPart && (
+        <MediaLightbox
+          open={Boolean(previewPart)}
+          onClose={() => setPreviewPart(null)}
+          title={previewPart.itemName || t("detail.sparePartDetails")}
+          subtitle={previewPart.useFor || undefined}
+          part={previewPart}
+        >
+          <img
+            src={previewPart.pictureUrl || ""}
+            alt={previewPart.itemName || "part"}
+            className="max-h-[70vh] max-w-full object-contain rounded-2xl mx-auto shadow-2xl"
+          />
+        </MediaLightbox>
       )}
     </div>
   );
@@ -511,7 +652,7 @@ function HighlightMatchText({ text, query }: { text: string; query: string }) {
         regex.test(part) ? (
           <mark
             key={i}
-            className="bg-warning text-ink font-bold px-0.5 rounded"
+            className="bg-highlight text-highlight-fg font-bold px-0.5 rounded"
           >
             {part}
           </mark>
@@ -1280,12 +1421,14 @@ export default function ServiceDetailModal({ item, onClose, mode = "view", onSav
 
 
   return (
-    <div
-      className="enter-fade fixed inset-0 z-50 flex items-center justify-center p-2 sm:p-4 bg-ink/70 backdrop-blur-md overflow-hidden"
-      onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
+    <ModalWrapper
+      open={!!item}
+      onClose={onClose}
+      maxWidth="max-w-3xl xl:max-w-4xl"
+      zIndex={50}
+      labelledBy="service-detail-title"
     >
-
-      <div className={`enter-pop w-full max-w-4xl rounded-2xl overflow-hidden flex flex-col max-h-[92vh] sm:max-h-[85vh] my-auto relative z-10 ${modalWrapperClass}`}>
+      <div className={`w-full overflow-hidden flex flex-col max-h-[var(--av-modal-inner-maxh)] ${modalWrapperClass}`}>
 
         {/* ── Header ── */}
         <div className={`px-5 py-3 flex items-center justify-between shrink-0 ${headerBgClass}`}>
@@ -1294,9 +1437,9 @@ export default function ServiceDetailModal({ item, onClose, mode = "view", onSav
               <Wrench className="w-4 h-4" />
             </div>
             <div>
-              <h2 className="text-sm font-bold text-ink flex items-center gap-2">
+              <h2 id="service-detail-title" className="text-sm font-bold text-ink flex items-center gap-2">
                 {isView ? t("detail.viewTitle") : t("detail.editTitle")}
-                <span className="font-mono text-xs px-2 py-0.5 rounded bg-info-soft text-info-fg ">
+                <span className="font-mono text-xs px-2 py-0.5 rounded bg-info-soft text-info-fg">
                   {item.reportNo || "TICKET"}
                 </span>
               </h2>
@@ -1356,53 +1499,54 @@ export default function ServiceDetailModal({ item, onClose, mode = "view", onSav
         )}
 
         {/* Delete Ticket Confirmation Dialog */}
-        {showConfirmDelete && (
-          <div
-            className="enter-fade fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-ink/60 backdrop-blur-sm"
-            onClick={(e) => { if (e.target === e.currentTarget) setShowConfirmDelete(false); }}
-          >
-            <div className="enter-pop bg-surface border border-subtle w-full max-w-md rounded-2xl shadow-2xl p-6 space-y-4 my-auto">
-              <div className="w-12 h-12 rounded-2xl bg-danger-soft text-danger flex items-center justify-center mx-auto">
-                <Trash2 className="w-6 h-6" />
-              </div>
-              <div className="text-center space-y-1">
-                <h3 className="text-sm font-bold text-ink ">{t("table.deleteTicketTitle")}</h3>
-                <p className="text-xs text-ink-secondary ">
-                  {t("table.deleteTicketBody", {
-                    ref: item.reportNo ?? "",
-                    company: item.companyName ?? ""
-                  })}
-                </p>
-              </div>
-              <div className="flex items-center justify-end gap-3 pt-2 border-t border-subtle ">
-                <button
-                  type="button"
-                  onClick={() => setShowConfirmDelete(false)}
-                  className="px-4 py-2 text-xs font-semibold text-ink bg-sunken rounded-xl hover:bg-sunken transition-colors"
-                >
-                  {t("action.cancel")}
-                </button>
-                <button
-                  type="button"
-                  onClick={async () => {
-                    if (!item?.id) return;
-                    setIsDeleting(true);
-                    const ok = await deleteTechnicalService(item.id);
-                    setIsDeleting(false);
-                    setShowConfirmDelete(false);
-                    if (onSave) onSave({ ...item, id: "" } as any);
-                    onClose();
-                  }}
-                  disabled={isDeleting}
-                  className="px-5 py-2 text-xs font-semibold text-white bg-danger rounded-xl hover:bg-danger shadow-md transition-all disabled:opacity-60"
-                >
-                  {isDeleting ? t("table.deleting") : t("table.confirmDelete")}
-                </button>
-              </div>
+        <ModalWrapper
+          open={showConfirmDelete}
+          onClose={() => setShowConfirmDelete(false)}
+          maxWidth="max-w-md"
+          zIndex={60}
+          isAlert
+        >
+          <div className="p-6 space-y-4">
+            <div className="w-12 h-12 rounded-2xl bg-danger-soft text-danger flex items-center justify-center mx-auto">
+              <Trash2 className="w-6 h-6" />
+            </div>
+            <div className="text-center space-y-1">
+              <h3 className="text-sm font-bold text-ink">{t("table.deleteTicketTitle")}</h3>
+              <p className="text-xs text-ink-secondary">
+                {t("table.deleteTicketBody", {
+                  ref: item.reportNo ?? "",
+                  company: item.companyName ?? ""
+                })}
+              </p>
+            </div>
+            <div className="flex items-center justify-end gap-3 pt-2 border-t border-subtle">
+              <button
+                type="button"
+                onClick={() => setShowConfirmDelete(false)}
+                className="px-4 py-2 text-xs font-semibold text-ink bg-sunken rounded-xl hover:bg-sunken transition-colors"
+              >
+                {t("action.cancel")}
+              </button>
+              <button
+                type="button"
+                onClick={async () => {
+                  if (!item?.id) return;
+                  setIsDeleting(true);
+                  const ok = await deleteTechnicalService(item.id);
+                  setIsDeleting(false);
+                  setShowConfirmDelete(false);
+                  if (onSave) onSave({ ...item, id: "" } as any);
+                  onClose();
+                }}
+                disabled={isDeleting}
+                className="px-5 py-2 text-xs font-semibold text-white bg-danger rounded-xl hover:bg-danger shadow-md transition-[color,background-color,border-color,box-shadow,opacity,transform,filter] disabled:opacity-60"
+              >
+                {isDeleting ? t("table.deleting") : t("table.confirmDelete")}
+              </button>
             </div>
           </div>
-        )}
+        </ModalWrapper>
       </div>
-    </div>
+    </ModalWrapper>
   );
 }

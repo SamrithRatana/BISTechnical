@@ -1,6 +1,7 @@
 ﻿using MediatR;
 using TechnicalService.Domain.AggregatesModel.TechnicalAggregate;
 
+using TechnicalService.API.Extensions;
 namespace TechnicalService.API.Application.Commands;
 
 public class UpdateReceiveItemCommandHandler : IRequestHandler<UpdateReceiveItemCommand, bool>
@@ -36,13 +37,13 @@ public class UpdateReceiveItemCommandHandler : IRequestHandler<UpdateReceiveItem
             command.HasContract,
             command.ServiceDate,
             command.ReportNo,
-            Enum.Parse<ServiceLocation>(command.ServiceLocation),
+            EnumParsing.Parse<ServiceLocation>(command.ServiceLocation, "ServiceLocation"),
             command.ServicePriorityId,
             command.ItemId,
             command.CustomerRequest
         );
 
-        _logger.LogInformation("Updating Service - ReceiveItem: {@Service}", serviceToUpdate);
+        _logger.LogInformation("Updating Service - ReceiveItem: {ServiceId}", serviceToUpdate.Id);
 
         return await _technicalServiceRepository.UnitOfWork.SaveEntitiesAsync(cancellationToken);
     }

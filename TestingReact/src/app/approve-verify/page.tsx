@@ -370,7 +370,7 @@ export default function ApproveVerifyPage() {
                               onClick={() => void handleVerify(row)}
                               disabled={busy || !verifiable}
                               aria-disabled={busy || !verifiable}
-                              className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] font-semibold shadow-sm transition-colors disabled:cursor-not-allowed ${
+                              className={`inline-flex min-h-6 items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] font-semibold shadow-sm transition-colors disabled:cursor-not-allowed ${
                                 verifiable
                                   ? "text-white bg-success hover:bg-success disabled:opacity-60"
                                   : "text-ink-secondary bg-sunken border border-subtle "

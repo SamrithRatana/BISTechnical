@@ -1,18 +1,17 @@
 ﻿using TechnicalService.Domain.AggregatesModel.TechnicalAggregate;
+using TechnicalService.API.Extensions;
 namespace TechnicalService.API.Application.Commands;
 
 public class InspectItemCommandHandler : IRequestHandler<InspectItemCommand, bool>
 {
     private readonly ITechnicalServiceRepository _technicalServiceRepository;
-    private readonly IMediator _mediator;
     private readonly ILogger<InspectItemCommandHandler> _logger;
 
-    public InspectItemCommandHandler(IMediator mediator,
+    public InspectItemCommandHandler(
         ITechnicalServiceRepository technicalServiceRepository,
         ILogger<InspectItemCommandHandler> logger)
     {
         _technicalServiceRepository = technicalServiceRepository ?? throw new ArgumentNullException(nameof(technicalServiceRepository));
-        _mediator = mediator ?? throw new ArgumentNullException(nameof(mediator));
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
     }
 
@@ -32,11 +31,11 @@ public class InspectItemCommandHandler : IRequestHandler<InspectItemCommand, boo
                 part.SparepartId,
                 part.Description,
                 part.Quantity,
-                Enum.Parse<SparepartCondition>(part.Condition),
+                EnumParsing.Parse<SparepartCondition>(part.Condition, "Condition"),
                 part.IsHoldStatus);
         }
 
-        _logger.LogInformation("Updating Service - InspectItem: {@Service}", serviceToUpdate);
+        _logger.LogInformation("Updating Service - InspectItem: {ServiceId}", serviceToUpdate.Id);
 
         var saved = await _technicalServiceRepository.UnitOfWork.SaveEntitiesAsync(cancellationToken);
         return saved;

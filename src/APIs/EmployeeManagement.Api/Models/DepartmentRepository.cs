@@ -1,4 +1,4 @@
-﻿using EmployeeManagement.Models;
+using EmployeeManagement.Models;
 using Microsoft.EntityFrameworkCore;
 using System.Collections.Generic;
 using System.Linq;
@@ -14,15 +14,20 @@ namespace EmployeeManagement.Api.Models
         {
             this.appDbContext = appDbContext;
         }
+
         public async Task<Department> GetDepartment(int departmentId)
         {
             return await appDbContext.Departments
-               .FirstOrDefaultAsync(d => d.DepartmentId == departmentId);
+                .AsNoTracking()
+                .FirstOrDefaultAsync(d => d.DepartmentId == departmentId);
         }
 
         public async Task<IEnumerable<Department>> GetDepartments()
         {
-            return await appDbContext.Departments.ToListAsync();
+            return await appDbContext.Departments
+                .AsNoTracking()
+                .OrderBy(d => d.DepartmentName)
+                .ToListAsync();
         }
     }
 }

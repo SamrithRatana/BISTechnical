@@ -11,6 +11,13 @@ using TechnicalService.API.Apis;
 using TechnicalService.API.Application.Commands;
 using TechnicalService.API.Application.Queries;
 
+// Imported as aliases rather than `using TechnicalService.API.Extensions;`
+// because this file also references the global `Extensions` class by name
+// (Extensions.LookupCachePolicy), and importing a namespace whose last segment
+// is "Extensions" makes that identifier ambiguous.
+using BusinessClock = TechnicalService.API.Extensions.BusinessClock;
+using Pagination = TechnicalService.API.Extensions.Pagination;
+
 public static class TechnicalServiceApi
 {
     public static RouteGroupBuilder MapRepairsApiV1(this IEndpointRouteBuilder app)
@@ -58,35 +65,16 @@ public static class TechnicalServiceApi
         api.MapGet("/technicalservices/{serviceId:Guid}", GetServiceAsync);
         api.MapPut("/technicalservices", UpdateRepairServiceAsync);
         api.MapDelete("/technicalservices/{serviceId:Guid}", DeleteTechnicalServiceAsync);
-        api.MapPut("/technicalservices/{serviceId:Guid}/status", async (
-      Guid serviceId,
-      [FromBody] UpdateServiceStatusRequest request,
-      TechnicalServiceContext context) =>
-        {
-            var service = await context.Services
-                .FirstOrDefaultAsync(s => s.Id == serviceId);
-
-            if (service == null) return Results.NotFound();
-
-            switch (request.StatusId)
-            {
-                case 10: // Inspecting
-                    service.SetInspecting(Guid.Empty, DateTime.UtcNow.AddHours(7));
-                    break;
-                case 2: // Inspection
-                    service.SetInspection(Guid.Empty, DateTime.UtcNow.AddHours(7), service.Inspection, service.Solution);
-                    break;
-                default:
-                    return Results.BadRequest($"StatusId {request.StatusId} is not supported.");
-            }
-
-            await context.SaveChangesAsync();
-            return Results.Ok();
-        });
+        api.MapPut("/technicalservices/{serviceId:Guid}/status", UpdateServiceStatusAsync);
 
         api.MapGet("/spareparts/usage", GetSparepartUsageAsync);
         api.MapPost("/spareparts/manual-stockout", ManualStockOutAsync);
         api.MapGet("/spareparts/hold", GetSparepartHoldAsync);
+        api.MapGet("/spareparts/transactions", GetSparepartTransactionsAsync);
+        api.MapGet("/spareparts/movement-summary", GetSparepartMovementSummaryAsync);
+        api.MapGet("/spareparts/dead-stock", GetSparepartDeadStockAsync);
+        api.MapGet("/spareparts/health", GetStockHealthAsync);
+        api.MapGet("/spareparts/reconciliation", GetStockReconciliationAsync);
         api.MapPost("/spareparts/items/{sparepartItemId:Guid}/remarks", UpdateSparepartItemRemarksAsync);
 
 
@@ -109,6 +97,7 @@ public static class TechnicalServiceApi
         api.MapPost("/finishedrepair", SetFinishedStatusAsync);
         api.MapPost("/unrepairable", SetUnrepairableAsync);
         api.MapGet("/technicalservices/monthly-report-summary", GetMonthlyReportSummaryAsync);
+        api.MapGet("/technicalservices/annual-matrix", GetAnnualTechnicalMatrixAsync);
 
         // Rental Items - Basic and Search
         api.MapPost("/rentalitem", CreateRentalItemAsync);
@@ -161,6 +150,70 @@ public static class TechnicalServiceApi
         var result = await queries.GetSparepartUsageByDateRangeAsync(query);
         return TypedResults.Ok(result);
     }
+    /// <summary>
+    /// GET /api/spareparts/transactions — the stock movement ledger, one row
+    /// per movement. Filterable by direction (In/Out) and source
+    /// (Service/Manual/Adjustment), which is what lets a single endpoint serve
+    /// the stock-in, stock-out and inventory-adjustment reports.
+    /// </summary>
+    public static async Task<Ok<PagedResult<SparepartTransactionRow>>> GetSparepartTransactionsAsync(
+        [AsParameters] SparepartTransactionQuery query,
+        ITechnicalServiceQueries queries)
+    {
+        var result = await queries.GetSparepartTransactionsAsync(query);
+        return TypedResults.Ok(result);
+    }
+
+    /// <summary>
+    /// GET /api/spareparts/movement-summary — per-part reconciliation over a
+    /// period: opening balance, in, out, closing balance.
+    /// </summary>
+    public static async Task<Ok<PagedResult<SparepartMovementSummary>>> GetSparepartMovementSummaryAsync(
+        [AsParameters] SparepartTransactionQuery query,
+        ITechnicalServiceQueries queries)
+    {
+        var result = await queries.GetSparepartMovementSummaryAsync(query);
+        return TypedResults.Ok(result);
+    }
+
+    /// <summary>
+    /// GET /api/spareparts/dead-stock — parts holding stock that nothing has
+    /// touched for `idleDays` (default 90).
+    /// </summary>
+    public static async Task<Ok<PagedResult<SparepartDeadStockRow>>> GetSparepartDeadStockAsync(
+        [AsParameters] SparepartTransactionQuery query,
+        ITechnicalServiceQueries queries)
+    {
+        var result = await queries.GetSparepartDeadStockAsync(query);
+        return TypedResults.Ok(result);
+    }
+
+    /// <summary>
+    /// GET /api/spareparts/health — stock-data inconsistencies: notifications
+    /// with no ledger row, impossible opening balances, duplicate catalogue
+    /// names, negative stock, and returns with no matching issue. Reports only.
+    /// </summary>
+    public static async Task<Ok<PagedResult<StockHealthIssue>>> GetStockHealthAsync(
+        [AsParameters] SparepartTransactionQuery query,
+        ITechnicalServiceQueries queries)
+    {
+        var result = await queries.GetStockHealthAsync(query);
+        return TypedResults.Ok(result);
+    }
+
+    /// <summary>
+    /// GET /api/spareparts/reconciliation — for a date range, every deduction
+    /// that was returned, plus the headline counts that explain why the
+    /// notification feed and the usage report disagree.
+    /// </summary>
+    public static async Task<Ok<StockReconciliationResult>> GetStockReconciliationAsync(
+        [AsParameters] SparepartTransactionQuery query,
+        ITechnicalServiceQueries queries)
+    {
+        var result = await queries.GetStockReconciliationAsync(query);
+        return TypedResults.Ok(result);
+    }
+
     public static async Task<Ok<PagedResult<SparepartHoldSummary>>> GetSparepartHoldAsync(
     [AsParameters] SparepartHoldQuery query,
     ITechnicalServiceQueries queries)
@@ -294,7 +347,8 @@ public static class TechnicalServiceApi
         [FromQuery] int pageSize = 10,
         ITechnicalServiceQueries queries = null)
     {
-        var items = await queries.GetItemsAsync(pageNumber, pageSize);
+        var (page, size) = Pagination.Normalize(pageNumber, pageSize);
+        var items = await queries.GetItemsAsync(page, size);
         return TypedResults.Ok(items);
     }
 
@@ -314,13 +368,11 @@ public static class TechnicalServiceApi
         if (result)
         {
             services.Logger.LogInformation("CreateItemCommand succeeded");
-        }
-        else
-        {
-            services.Logger.LogWarning("CreateItemCommand failed");
+            return TypedResults.Ok();
         }
 
-        return TypedResults.Ok();
+        services.Logger.LogWarning("CreateItemCommand failed");
+        return TypedResults.BadRequest("CreateItemCommand failed.");
     }
 
     public static async Task<Results<Ok, BadRequest<string>>> UpdateItemAsync(
@@ -336,10 +388,17 @@ public static class TechnicalServiceApi
 
         var commandResult = await services.Mediator.Send(command);
 
-        return TypedResults.Ok();
+        if (commandResult)
+        {
+            services.Logger.LogInformation("{CommandName} succeeded", command.GetType().Name);
+            return TypedResults.Ok();
+        }
+
+        services.Logger.LogWarning("{CommandName} failed", command.GetType().Name);
+        return TypedResults.BadRequest($"{command.GetType().Name} failed.");
     }
 
-    public static async Task<Results<Ok, NotFound>> DeleteItemAsync(
+    public static async Task<Results<Ok, NotFound, BadRequest<string>>> DeleteItemAsync(
         Guid itemId,
         [AsParameters] TechnicalServices services)
     {
@@ -357,10 +416,21 @@ public static class TechnicalServiceApi
 
             var commandResult = await services.Mediator.Send(command);
 
-            return TypedResults.Ok();
+            if (commandResult)
+            {
+                services.Logger.LogInformation("DeleteItemCommand succeeded");
+                return TypedResults.Ok();
+            }
+
+            services.Logger.LogWarning("DeleteItemCommand failed");
+            return TypedResults.BadRequest("Failed to delete item.");
         }
-        catch
+        catch (KeyNotFoundException)
         {
+            // Previously a bare `catch`, which reported *every* failure -
+            // including a dropped database connection - as "item not found",
+            // and swallowed the exception without logging it.
+            services.Logger.LogWarning("Item with ID {ItemId} not found", itemId);
             return TypedResults.NotFound();
         }
     }
@@ -370,7 +440,8 @@ public static class TechnicalServiceApi
         [FromQuery] int pageSize = 10,
         ITechnicalServiceQueries queries = null)
     {
-        var parts = await queries.GetSparepartsAsync(pageNumber, pageSize);
+        var (page, size) = Pagination.Normalize(pageNumber, pageSize);
+        var parts = await queries.GetSparepartsAsync(page, size);
         return TypedResults.Ok(parts);
     }
 
@@ -386,8 +457,7 @@ public static class TechnicalServiceApi
             request.PictureUrl,
             request.LinkItemId,
             request.Quantity,
-                    request.DefaultPrice); // ✅ ADD THIS
-
+                    request.DefaultPrice);
 
         services.Logger.LogInformation(
             "Sending command: {CommandName}: {@Command}",
@@ -399,13 +469,11 @@ public static class TechnicalServiceApi
         if (result)
         {
             services.Logger.LogInformation("CreateSparepartCommand succeeded");
-        }
-        else
-        {
-            services.Logger.LogWarning("CreateSparepartCommand failed");
+            return TypedResults.Ok();
         }
 
-        return TypedResults.Ok();
+        services.Logger.LogWarning("CreateSparepartCommand failed");
+        return TypedResults.BadRequest("CreateSparepartCommand failed.");
     }
     public static async Task<Results<Ok, BadRequest<string>>> UpdateSparepartAsync(
         UpdateSparepartCommand command,
@@ -420,7 +488,14 @@ public static class TechnicalServiceApi
 
         var commandResult = await services.Mediator.Send(command);
 
-        return TypedResults.Ok();
+        if (commandResult)
+        {
+            services.Logger.LogInformation("{CommandName} succeeded", command.GetType().Name);
+            return TypedResults.Ok();
+        }
+
+        services.Logger.LogWarning("{CommandName} failed", command.GetType().Name);
+        return TypedResults.BadRequest($"{command.GetType().Name} failed.");
     }
     // បន្ថែម handler method ថ្មី
     public static async Task<Ok<List<SparepartWithUsage>>> GetSparePartsUsedInServicesAsync(
@@ -464,7 +539,8 @@ public static class TechnicalServiceApi
             return TypedResults.Ok(allServices);
         }
 
-        var repairServices = await queries.GetServicesAsync(pageNumber.Value, pageSize.Value);
+        var (page, size) = Pagination.Normalize(pageNumber.Value, pageSize.Value);
+        var repairServices = await queries.GetServicesAsync(page, size);
         return TypedResults.Ok(repairServices);
     }
 
@@ -493,35 +569,37 @@ public static class TechnicalServiceApi
             request.CustomerRequest,
             request.CreateBy);
 
+        // Deliberately not "{@Command}": ReceiveItemCommand carries the
+        // customer's name, address and phone number, and Program.cs sets
+        // SendDefaultPii = false precisely so those do not reach Sentry.
         services.Logger.LogInformation(
-            "Sending command: {CommandName}: {@Command}",
+            "Sending command: {CommandName} for report {ReportNo}",
             createRepairServiceCommand.GetType().Name,
-            createRepairServiceCommand);
+            request.ReportNo);
 
         var result = await services.Mediator.Send(createRepairServiceCommand);
 
         if (result)
         {
             services.Logger.LogInformation("ReceiveItemCommand succeeded");
-        }
-        else
-        {
-            services.Logger.LogWarning("ReceiveItemCommand failed");
+            return TypedResults.Ok();
         }
 
-        return TypedResults.Ok();
+        services.Logger.LogWarning("ReceiveItemCommand failed");
+        return TypedResults.BadRequest("ReceiveItemCommand failed.");
     }
 
     public static async Task<Results<Ok, BadRequest<string>>> UpdateReceiveItemAsync(
     UpdateReceiveItemCommand command,
     [AsParameters] TechnicalServices services)
     {
+        // Id only, not "{@Command}": this command carries customer contact
+        // details - see the note on CreateReceiveItemAsync.
         services.Logger.LogInformation(
-            "Sending command: {CommandName} - {IdProperty}: {CommandId} ({@Command})",
+            "Sending command: {CommandName} - {IdProperty}: {CommandId}",
             command.GetType().Name,
             nameof(command.Id),
-            command.Id,
-            command);
+            command.Id);
 
         var commandResult = await services.Mediator.Send(command);
 
@@ -578,8 +656,7 @@ public static class TechnicalServiceApi
         var command = new SetInspectingCommand(
     request.Id,
     request.InspectingBy,
-    DateTime.UtcNow.AddHours(7));  // ✅ FIXED
-
+    BusinessClock.Now);
 
         services.Logger.LogInformation(
             "Sending command: {CommandName}: {@Command}",
@@ -609,16 +686,24 @@ public static class TechnicalServiceApi
         UpdateRepairServiceCommand command,
         [AsParameters] TechnicalServices services)
     {
+        // Id only, not "{@Command}": this command carries customer contact
+        // details - see the note on CreateReceiveItemAsync.
         services.Logger.LogInformation(
-            "Sending command: {CommandName} - {IdProperty}: {CommandId} ({@Command})",
+            "Sending command: {CommandName} - {IdProperty}: {CommandId}",
             command.GetType().Name,
             nameof(command.Id),
-            command.Id,
-            command);
+            command.Id);
 
         var commandResult = await services.Mediator.Send(command);
 
-        return TypedResults.Ok();
+        if (commandResult)
+        {
+            services.Logger.LogInformation("{CommandName} succeeded", command.GetType().Name);
+            return TypedResults.Ok();
+        }
+
+        services.Logger.LogWarning("{CommandName} failed", command.GetType().Name);
+        return TypedResults.BadRequest($"{command.GetType().Name} failed.");
     }
 
     public static async Task<Results<Ok, NotFound, BadRequest<string>>> DeleteTechnicalServiceAsync(
@@ -664,14 +749,75 @@ public static class TechnicalServiceApi
     }
    
 
-    public record UpdateServiceStatusRequest(int StatusId);
+    /// <summary>
+    /// Body of <c>PUT /api/technicalservices/{serviceId}/status</c>.
+    /// </summary>
+    /// <param name="StatusId">Target status. Only the transitions listed in
+    /// <see cref="UpdateServiceStatusAsync"/> are supported.</param>
+    /// <param name="UpdatedBy">
+    /// Who performed the transition. Optional so existing callers that send
+    /// only <c>statusId</c> keep working unchanged; when omitted the audit
+    /// columns record <see cref="Guid.Empty"/>, which is what every call
+    /// recorded before this parameter existed.
+    /// </param>
+    public record UpdateServiceStatusRequest(int StatusId, Guid? UpdatedBy = null);
+
+    /// <summary>Status ids accepted by <see cref="UpdateServiceStatusAsync"/>.</summary>
+    private static class ServiceStatusIds
+    {
+        public const int Inspecting = 10;
+        public const int Inspection = 2;
+    }
+
+    /// <summary>
+    /// Moves a service to one of the two statuses this endpoint supports.
+    /// </summary>
+    /// <remarks>
+    /// Previously an inline lambda in the route table. Pulled out so it matches
+    /// every other handler in this file, and so the magic status ids have names.
+    /// It still writes through the DbContext rather than a MediatR command,
+    /// unlike the other write paths - see the note in the review report.
+    /// </remarks>
+    public static async Task<Results<Ok, NotFound, BadRequest<string>>> UpdateServiceStatusAsync(
+        Guid serviceId,
+        [FromBody] UpdateServiceStatusRequest request,
+        TechnicalServiceContext context,
+        CancellationToken cancellationToken)
+    {
+        var service = await context.Services
+            .FirstOrDefaultAsync(s => s.Id == serviceId, cancellationToken);
+
+        if (service is null)
+        {
+            return TypedResults.NotFound();
+        }
+
+        var updatedBy = request.UpdatedBy ?? Guid.Empty;
+        var occurredAt = BusinessClock.Now;
+
+        switch (request.StatusId)
+        {
+            case ServiceStatusIds.Inspecting:
+                service.SetInspecting(updatedBy, occurredAt);
+                break;
+
+            case ServiceStatusIds.Inspection:
+                service.SetInspection(updatedBy, occurredAt, service.Inspection, service.Solution);
+                break;
+
+            default:
+                return TypedResults.BadRequest($"StatusId {request.StatusId} is not supported.");
+        }
+
+        await context.SaveChangesAsync(cancellationToken);
+        return TypedResults.Ok();
+    }
     public static async Task<Ok<IEnumerable<Service>>> GetInspectItemsAsync(ITechnicalServiceQueries queries)
     {
         var inspectItems = await queries.GetInpsectItemsAsync();
         return TypedResults.Ok(inspectItems);
     }
 
-    // ✅ FIXED: Changed DateTime.Now to DateTime.UtcNow
     public static async Task<Results<Ok, BadRequest<string>>> CreateInspectItemAsync(
      InspectItemRequest request,
      [AsParameters] TechnicalServices services)
@@ -679,8 +825,7 @@ public static class TechnicalServiceApi
         var inspectItemCommand = new InspectItemCommand(
      request.Id,
      request.InspectBy,
-     DateTime.UtcNow.AddHours(7),  // ✅ FIXED
-     request.Inspection,
+     BusinessClock.Now,     request.Inspection,
      request.Solution,
      request.ServiceTypeId,
      request.Spareparts);
@@ -695,13 +840,11 @@ public static class TechnicalServiceApi
         if (result)
         {
             services.Logger.LogInformation("InspectItemCommand succeeded");
-        }
-        else
-        {
-            services.Logger.LogWarning("InspectItemCommand failed");
+            return TypedResults.Ok();
         }
 
-        return TypedResults.Ok();
+        services.Logger.LogWarning("InspectItemCommand failed");
+        return TypedResults.BadRequest("InspectItemCommand failed.");
     }
 
     public static async Task<Results<Ok, BadRequest<string>>> UpdateInspectItemAsync(
@@ -735,11 +878,11 @@ public static class TechnicalServiceApi
     {
         try
         {
-            var service = await services.Queries.GetServiceAsync(serviceId);
-            if (service == null)
-            {
-                return TypedResults.NotFound();
-            }
+            // GetServiceAsync signals "no such service" by throwing, never by
+            // returning null, so the null check that used to be here was dead
+            // code: a missing service fell through to the catch-all below and
+            // came back as a 400 carrying the exception text.
+            await services.Queries.GetServiceAsync(serviceId);
 
             var command = new DeleteSparepartItemCommand(serviceId, sparepartItemId);
 
@@ -754,14 +897,26 @@ public static class TechnicalServiceApi
             {
                 return TypedResults.Ok();
             }
-            else
-            {
-                return TypedResults.BadRequest("Failed to delete spare part item");
-            }
+
+            services.Logger.LogWarning(
+                "Failed to delete spare part item {SparepartItemId} from service {ServiceId}",
+                sparepartItemId,
+                serviceId);
+            return TypedResults.BadRequest("Failed to delete spare part item.");
         }
-        catch (Exception ex)
+        catch (KeyNotFoundException)
         {
-            services.Logger.LogError(ex, "Error deleting spare part item");
+            services.Logger.LogWarning(
+                "Service {ServiceId} or spare part item {SparepartItemId} not found",
+                serviceId,
+                sparepartItemId);
+            return TypedResults.NotFound();
+        }
+        catch (InvalidOperationException ex)
+        {
+            // A domain rule refused the deletion; that message is written for
+            // the user, so it is safe to return.
+            services.Logger.LogWarning(ex, "Cannot delete spare part item {SparepartItemId}", sparepartItemId);
             return TypedResults.BadRequest(ex.Message);
         }
     }
@@ -772,7 +927,6 @@ public static class TechnicalServiceApi
         return TypedResults.Ok(results);
     }
 
-    // ✅ FIXED: Changed DateTime.Now to DateTime.UtcNow
     public static async Task<Results<Ok, BadRequest<string>>> SetAwaitingCustomerConfirmAsync(
         SetAwaitingCustomerConfirmRequest request,
         [AsParameters] TechnicalServices services)
@@ -780,8 +934,7 @@ public static class TechnicalServiceApi
         var command = new SetAwaitingCustomerConfirmCommand(
     request.Id,
     request.SetAwaitingCustomerConfirmBy,
-    DateTime.UtcNow.AddHours(7));  // ✅ fixed
-
+    BusinessClock.Now);
 
 
         services.Logger.LogInformation(
@@ -794,16 +947,13 @@ public static class TechnicalServiceApi
         if (result)
         {
             services.Logger.LogInformation("SetAwaitingCustomerConfirmCommand succeeded");
-        }
-        else
-        {
-            services.Logger.LogWarning("SetAwaitingCustomerConfirmCommand failed");
+            return TypedResults.Ok();
         }
 
-        return TypedResults.Ok();
+        services.Logger.LogWarning("SetAwaitingCustomerConfirmCommand failed");
+        return TypedResults.BadRequest("SetAwaitingCustomerConfirmCommand failed.");
     }
 
-    // ✅ FIXED: Changed DateTime.Now to DateTime.UtcNow
     public static async Task<Results<Ok, BadRequest<string>>> SetCustomerRejectedAsync(
     SetCustomerRejectedRequest request,
     [AsParameters] TechnicalServices services)
@@ -811,8 +961,7 @@ public static class TechnicalServiceApi
         var command = new SetCustomerRejectedCommand(
       request.Id,
       request.SetCustomerRejectedBy,
-      DateTime.UtcNow.AddHours(7));  // ✅ FIXED
-
+      BusinessClock.Now);
         services.Logger.LogInformation(
             "Sending command: {CommandName}: {@Command}",
             command.GetType().Name,
@@ -823,16 +972,13 @@ public static class TechnicalServiceApi
         if (result)
         {
             services.Logger.LogInformation("SetCustomerRejectedCommand succeeded");
-        }
-        else
-        {
-            services.Logger.LogWarning("SetCustomerRejectedCommand failed");
+            return TypedResults.Ok();
         }
 
-        return TypedResults.Ok();
+        services.Logger.LogWarning("SetCustomerRejectedCommand failed");
+        return TypedResults.BadRequest("SetCustomerRejectedCommand failed.");
     }
 
-    // ✅ FIXED: Changed DateTime.Now to DateTime.UtcNow
     public static async Task<Results<Ok, BadRequest<string>>> SetAwaitingSparepartAsync(
         SetAwaitingSparepartRequest request,
         [AsParameters] TechnicalServices services)
@@ -841,7 +987,7 @@ public static class TechnicalServiceApi
         var command = new SetAwaitingSparepartCommand(
             request.Id,
             request.SetAwaitingSparepartBy,
-            DateTime.UtcNow.AddHours(7));
+            BusinessClock.Now);
 
         services.Logger.LogInformation(
             "Sending command: {CommandName}: {@Command}",
@@ -853,13 +999,11 @@ public static class TechnicalServiceApi
         if (result)
         {
             services.Logger.LogInformation("SetAwaitingSparepartCommand succeeded");
-        }
-        else
-        {
-            services.Logger.LogWarning("SetAwaitingSparepartCommand failed");
+            return TypedResults.Ok();
         }
 
-        return TypedResults.Ok();
+        services.Logger.LogWarning("SetAwaitingSparepartCommand failed");
+        return TypedResults.BadRequest("SetAwaitingSparepartCommand failed.");
     }
     public static async Task<Results<Ok, BadRequest<string>>> SetSaleConfirmedAsync(
      SetSaleConfirmedRequest request,
@@ -868,8 +1012,7 @@ public static class TechnicalServiceApi
         var command = new SetSaleConfirmedCommand(
             request.Id,
             request.SetSaleConfirmedBy,
-            DateTime.UtcNow.AddHours(7));  // ✅ FIXED: Cambodia time UTC+7
-
+            BusinessClock.Now);
         services.Logger.LogInformation(
             "Sending command: {CommandName}: {@Command}",
             command.GetType().Name,
@@ -900,8 +1043,7 @@ public static class TechnicalServiceApi
     {
         var command = new SetSentSparepartsCommand(
             request.Id,
-            DateTime.UtcNow.AddHours(7),  // ✅ Cambodia time (UTC+7)
-            request.SetSentSparepartsBy);
+            BusinessClock.Now,            request.SetSentSparepartsBy);
 
         services.Logger.LogInformation(
             "Sending command: {CommandName}: {@Command}",
@@ -912,16 +1054,13 @@ public static class TechnicalServiceApi
 
         if (result)
         {
-            services.Logger.LogInformation("{@Command} succeeded", command.GetType().Name);
-        }
-        else
-        {
-            services.Logger.LogWarning("{@Command} failed", command.GetType().Name);
+            services.Logger.LogInformation("{CommandName} succeeded", command.GetType().Name);
+            return TypedResults.Ok();
         }
 
-        return TypedResults.Ok();
+        services.Logger.LogWarning("{CommandName} failed", command.GetType().Name);
+        return TypedResults.BadRequest("The operation failed.");
     }
-    // ✅ FIXED: Changed DateTime.Now to DateTime.UtcNow
     public static async Task<Results<Ok, BadRequest<string>>> SetRepairAsync(
      SetRepairRequest request,
      [AsParameters] TechnicalServices services)
@@ -929,8 +1068,7 @@ public static class TechnicalServiceApi
         var command = new SetRepairCommand(
             request.Id,
             request.RepairBy,
-            DateTime.UtcNow.AddHours(7));  // ✅ Cambodia time (UTC+7)
-
+            BusinessClock.Now);
         services.Logger.LogInformation(
             "Sending command: {CommandName}: {@Command}",
             command.GetType().Name,
@@ -941,16 +1079,13 @@ public static class TechnicalServiceApi
         if (result)
         {
             services.Logger.LogInformation("SetRepairCommand succeeded");
-        }
-        else
-        {
-            services.Logger.LogWarning("SetRepairCommand failed");
+            return TypedResults.Ok();
         }
 
-        return TypedResults.Ok();
+        services.Logger.LogWarning("SetRepairCommand failed");
+        return TypedResults.BadRequest("SetRepairCommand failed.");
     }
 
-    // ✅ FIXED: Changed DateTime.Now to DateTime.UtcNow
     public static async Task<Results<Ok, BadRequest<string>>> SetThirdPartyRepairAsync(
        SetThirdPartyRepairRequest request,
        [AsParameters] TechnicalServices services)
@@ -958,8 +1093,7 @@ public static class TechnicalServiceApi
         var command = new SetThirdPartyRepairCommand(
        request.Id,
        request.ThirdPartyRepairBy,
-       DateTime.UtcNow.AddHours(7));  // ✅ FIXED
-
+       BusinessClock.Now);
 
         services.Logger.LogInformation(
             "Sending command: {CommandName}: {@Command}",
@@ -971,24 +1105,20 @@ public static class TechnicalServiceApi
         if (result)
         {
             services.Logger.LogInformation("SetThirdPartyRepairCommand succeeded");
-        }
-        else
-        {
-            services.Logger.LogWarning("SetThirdPartyRepairCommand failed");
+            return TypedResults.Ok();
         }
 
-        return TypedResults.Ok();
+        services.Logger.LogWarning("SetThirdPartyRepairCommand failed");
+        return TypedResults.BadRequest("SetThirdPartyRepairCommand failed.");
     }
 
-    // ✅ FIXED: Changed DateTime.Now to DateTime.UtcNow
     public static async Task<Results<Ok, BadRequest<string>>> SetFinishedStatusAsync(
      SetFinishedRequest request,
      [AsParameters] TechnicalServices services)
     {
         var command = new SetFinishedStatusCommand(
             request.Id,
-            DateTime.UtcNow.AddHours(7),  // ✅ Cambodia time (UTC+7)
-            request.VerifiedBy);
+            BusinessClock.Now,            request.VerifiedBy);
 
         services.Logger.LogInformation(
             "Sending command: {CommandName}: {@Command}",
@@ -999,17 +1129,14 @@ public static class TechnicalServiceApi
 
         if (result)
         {
-            services.Logger.LogInformation("{@Command} succeeded", command.GetType().Name);
-        }
-        else
-        {
-            services.Logger.LogWarning("{@Command} failed", command.GetType().Name);
+            services.Logger.LogInformation("{CommandName} succeeded", command.GetType().Name);
+            return TypedResults.Ok();
         }
 
-        return TypedResults.Ok();
+        services.Logger.LogWarning("{CommandName} failed", command.GetType().Name);
+        return TypedResults.BadRequest("The operation failed.");
     }
 
-    // ✅ FIXED: Changed DateTime.Now to DateTime.UtcNow
     public static async Task<Results<Ok, BadRequest<string>>> SetUnrepairableAsync(
         SetUnrepairableRequest request,
         [AsParameters] TechnicalServices services)
@@ -1017,8 +1144,7 @@ public static class TechnicalServiceApi
         var command = new SetUnrepairableCommand(
       request.Id,
       request.SetUnrepairableBy,
-      DateTime.UtcNow.AddHours(7));  // ✅ FIXED
-
+      BusinessClock.Now);
         services.Logger.LogInformation(
             "Sending command: {CommandName}: {@Command}",
             command.GetType().Name,
@@ -1029,13 +1155,11 @@ public static class TechnicalServiceApi
         if (result)
         {
             services.Logger.LogInformation("SetUnrepairableCommand succeeded");
-        }
-        else
-        {
-            services.Logger.LogWarning("SetUnrepairableCommand failed");
+            return TypedResults.Ok();
         }
 
-        return TypedResults.Ok();
+        services.Logger.LogWarning("SetUnrepairableCommand failed");
+        return TypedResults.BadRequest("SetUnrepairableCommand failed.");
     }
     public static async Task<Ok<List<CompanyStatusSummary>>> GetMonthlyReportSummaryAsync(
     [FromQuery] DateTime fromDate,
@@ -1044,6 +1168,15 @@ public static class TechnicalServiceApi
     ITechnicalServiceQueries queries)
     {
         var result = await queries.GetMonthlyReportCompanySummaryAsync(fromDate, toDate, serviceLocation);
+        return TypedResults.Ok(result);
+    }
+
+    public static async Task<Ok<AnnualTechnicalMatrixDto>> GetAnnualTechnicalMatrixAsync(
+        [FromQuery] int? year,
+        ITechnicalServiceQueries queries)
+    {
+        var targetYear = year ?? DateTime.UtcNow.Year;
+        var result = await queries.GetAnnualTechnicalMatrixAsync(targetYear);
         return TypedResults.Ok(result);
     }
 
@@ -1066,12 +1199,11 @@ public static class TechnicalServiceApi
         if (result)
         {
             services.Logger.LogInformation("CreateRentalItemCommand succeeded");
+            return TypedResults.Ok();
         }
-        else
-        {
-            services.Logger.LogWarning("CreateRentalItemCommand failed");
-        }
-        return TypedResults.Ok();
+
+        services.Logger.LogWarning("CreateRentalItemCommand failed");
+        return TypedResults.BadRequest("CreateRentalItemCommand failed.");
     }
 
     public static async Task<Ok<PagedResult<RentalItem>>> GetRentalItemsAsync(
@@ -1079,7 +1211,8 @@ public static class TechnicalServiceApi
         [FromQuery] int pageSize = 10,
         ITechnicalServiceQueries queries = null)
     {
-        var rentalItems = await queries.GetRentalItemsAsync(pageNumber, pageSize);
+        var (page, size) = Pagination.Normalize(pageNumber, pageSize);
+        var rentalItems = await queries.GetRentalItemsAsync(page, size);
         return TypedResults.Ok(rentalItems);
     }
 
@@ -1117,11 +1250,11 @@ public static class TechnicalServiceApi
         var result = await services.Mediator.Send(command);
         if (result)
         {
-            services.Logger.LogInformation("CreateRentalItemCommand succeeded");
+            services.Logger.LogInformation("CreateRentalServiceCommand succeeded");
         }
         else
         {
-            services.Logger.LogWarning("CreateRentalItemCommand failed");
+            services.Logger.LogWarning("CreateRentalServiceCommand failed");
         }
         
         return TypedResults.Ok();
@@ -1132,7 +1265,8 @@ public static class TechnicalServiceApi
         [FromQuery] int pageSize = 10,
         ITechnicalServiceQueries queries = null)
     {
-        var rentalItems = await queries.GetRentalServicesAsync(pageNumber, pageSize);
+        var (page, size) = Pagination.Normalize(pageNumber, pageSize);
+        var rentalItems = await queries.GetRentalServicesAsync(page, size);
         return TypedResults.Ok(rentalItems);
     }
 
@@ -1188,12 +1322,22 @@ public static class TechnicalServiceApi
         return TypedResults.Ok(spareparts);
     }
 
-    public static async Task<Ok<PagedResult<Service>>> SearchServicesAsync(
-        [AsParameters] ServiceSearchQuery query,
-        ITechnicalServiceQueries queries)
+    /// <summary>
+    /// Ticket search. <c>?projection=summary</c> returns the four-column
+    /// <see cref="ServiceSummary"/> shape instead of the full ticket; every
+    /// filter, sort and page parameter behaves identically either way.
+    /// </summary>
+    public static async Task<Results<Ok<PagedResult<Service>>, Ok<PagedResult<ServiceSummary>>>>
+        SearchServicesAsync(
+            [AsParameters] ServiceSearchQuery query,
+            ITechnicalServiceQueries queries)
     {
-        var services = await queries.SearchServicesAsync(query);
-        return TypedResults.Ok(services);
+        if (string.Equals(query.Projection, "summary", StringComparison.OrdinalIgnoreCase))
+        {
+            return TypedResults.Ok(await queries.SearchServiceSummariesAsync(query));
+        }
+
+        return TypedResults.Ok(await queries.SearchServicesAsync(query));
     }
 
     public static async Task<Ok<PagedResult<RentalItem>>> SearchRentalItemsAsync(
@@ -1226,8 +1370,7 @@ public record CreateSparepartRequest(
     string PictureUrl,
     Guid LinkItemId,
     int Quantity,
-    decimal DefaultPrice = 0); // ✅ ADD THIS
-
+    decimal DefaultPrice = 0);
 public record ReceiveItemRequest(
     Guid CustomerId,
     string CompanyName,

@@ -26,7 +26,29 @@ import { translateStatus } from "@/i18n/statusLabel";
 import { SERVICE_LOCATIONS, SERVICE_STATUSES_DB } from "@/services/types";
 
 /** Which controls a report wants. */
-export type ReportFilterKind = "search" | "status" | "serviceType" | "location";
+export type ReportFilterKind =
+  | "search"
+  | "status"
+  | "serviceType"
+  | "location"
+  | "dateMode";
+
+/**
+ * Which date a stock movement is attributed to. The backend has always
+ * supported both; only `standard` was ever reachable from the UI.
+ *
+ * - `standard` — the transaction ledger. Filters `SparepartStockAuditLog.
+ *   Timestamp`, the moment the trigger fired and stock actually moved. This is
+ *   the citable ledger: a report printed last week still reconciles today.
+ * - `alwayscreated` — intake attribution. Reads `SparepartItems` joined to the
+ *   ticket and filters on the ticket's own date, answering "what did the
+ *   machines that arrived in this period end up consuming", regardless of when
+ *   the movement posted.
+ *
+ * They answer different questions and neither is a fix for the other, which is
+ * why this is a visible control rather than a default someone has to guess at.
+ */
+export type ReportDateMode = "standard" | "alwayscreated";
 
 export interface ReportFilterValues {
   search: string;
@@ -36,6 +58,8 @@ export interface ReportFilterValues {
   serviceType: string;
   /** Empty means every location. */
   serviceLocation: string;
+  /** Stock-movement date attribution. Defaults to the transaction ledger. */
+  dateMode: ReportDateMode;
 }
 
 export const EMPTY_FILTERS: ReportFilterValues = {
@@ -43,6 +67,7 @@ export const EMPTY_FILTERS: ReportFilterValues = {
   statuses: [],
   serviceType: "",
   serviceLocation: "",
+  dateMode: "standard",
 };
 
 const controlClass =
@@ -167,7 +192,11 @@ export default function ReportFilterBar({ show, value, onChange }: ReportFilterB
     "rounded-lg border border-subtle bg-surface px-2 py-1.5 text-xs text-ink ";
 
   const hasAny =
-    value.search || value.statuses.length > 0 || value.serviceType || value.serviceLocation;
+    value.search ||
+    value.statuses.length > 0 ||
+    value.serviceType ||
+    value.serviceLocation ||
+    value.dateMode !== EMPTY_FILTERS.dateMode;
 
   return (
     <>
@@ -215,6 +244,20 @@ export default function ReportFilterBar({ show, value, onChange }: ReportFilterB
               {t(location === "OnSite" ? "value.onSite" : "value.companyService")}
             </option>
           ))}
+        </select>
+      )}
+
+      {show.includes("dateMode") && (
+        <select
+          value={value.dateMode}
+          onChange={(e) =>
+            onChange({ ...value, dateMode: e.target.value as ReportDateMode })
+          }
+          className={selectClass}
+          title={t("report.dateModeHint")}
+        >
+          <option value="standard">{t("report.dateModeLedger")}</option>
+          <option value="alwayscreated">{t("report.dateModeIntake")}</option>
         </select>
       )}
 

@@ -1,12 +1,14 @@
 ﻿using TechnicalService.Domain.AggregatesModel.TechnicalAggregate;
 
+using TechnicalService.API.Extensions;
 namespace TechnicalService.API.Application.Commands;
 
 public class UpdateRepairServiceCommandHandler : IRequestHandler<UpdateRepairServiceCommand, bool>
 {
     private readonly ITechnicalServiceRepository _repairServiceRepository;
 
-    public UpdateRepairServiceCommandHandler(ITechnicalServiceRepository repairServiceRepository)
+    public UpdateRepairServiceCommandHandler(
+        ITechnicalServiceRepository repairServiceRepository)
     {
         _repairServiceRepository = repairServiceRepository;
     }
@@ -24,7 +26,7 @@ public class UpdateRepairServiceCommandHandler : IRequestHandler<UpdateRepairSer
         foreach (var part in command.SparepartItems)
         {
             partList.Add(new SparepartItem(part.SparepartId, part.Description, part.Quantity,
-                Enum.Parse<SparepartCondition>(part.Condition)));
+                EnumParsing.Parse<SparepartCondition>(part.Condition, "Condition")));
         }
 
         serviceToUpdate.UpdateRepairService(
@@ -38,7 +40,7 @@ public class UpdateRepairServiceCommandHandler : IRequestHandler<UpdateRepairSer
             command.CustomerRequest,
             command.Inspection,
             command.Solution,
-            Enum.Parse<ServiceLocation>(command.ServiceLocation),
+            EnumParsing.Parse<ServiceLocation>(command.ServiceLocation, "ServiceLocation"),
             command.ServiceTypeId,
             command.ServicePriorityId,
             command.StatusId,

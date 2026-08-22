@@ -6,6 +6,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
 using System.IdentityModel.Tokens.Jwt;
 using System.Security.Claims;
+using System.Security.Cryptography;
 using System.Text;
 using UserManagementAPI.Data;
 using UserManagementAPI.Models;
@@ -22,21 +23,23 @@ namespace UserManagementAPI.Controllers
         private readonly RoleManager<IdentityRole> _roleManager;
         private readonly IConfiguration _configuration;
         private readonly ILogger<AuthController> _logger;
-        private readonly UserManagementContext _context; // ✅ ADD THIS
+        private readonly UserManagementContext _context;
+        private readonly IFileStorageService _fileStorage;
 
-        // ✅ FIXED: Add DbContext to constructor
         public AuthController(
             UserManager<ApplicationUser> userManager,
             RoleManager<IdentityRole> roleManager,
             IConfiguration configuration,
             ILogger<AuthController> logger,
-            UserManagementContext context) // ✅ ADD THIS PARAMETER
+            UserManagementContext context,
+            IFileStorageService fileStorage)
         {
             _userManager = userManager;
             _roleManager = roleManager;
             _configuration = configuration;
             _logger = logger;
-            _context = context; // ✅ ADD THIS
+            _context = context;
+            _fileStorage = fileStorage;
         }
 
         // POST: api/auth/register
@@ -128,36 +131,43 @@ namespace UserManagementAPI.Controllers
             // Get user's roles
             var userRoles = await _userManager.GetRolesAsync(user);
 
-            _logger.LogInformation($"🔐 Generating JWT for user '{user.UserName}' with {userRoles.Count} roles");
-
             foreach (var roleName in userRoles)
             {
-                // Add role claim
                 authClaims.Add(new Claim(ClaimTypes.Role, roleName));
-                _logger.LogInformation($"  ✅ Added role: {roleName}");
-
-                // ⭐ THIS IS THE KEY FIX: Get role entity and its claims (permissions)
-                var role = await _roleManager.FindByNameAsync(roleName);
-                if (role != null)
-                {
-                    var roleClaims = await _roleManager.GetClaimsAsync(role);
-
-                    _logger.LogInformation($"  📋 Found {roleClaims.Count} permissions for role '{roleName}':");
-
-                    foreach (var roleClaim in roleClaims)
-                    {
-                        // Add each permission claim to the JWT token
-                        authClaims.Add(new Claim(roleClaim.Type, roleClaim.Value));
-                        _logger.LogInformation($"    ✅ {roleClaim.Type} = {roleClaim.Value}");
-                    }
-                }
-                else
-                {
-                    _logger.LogWarning($"  ⚠️ Role '{roleName}' not found in database!");
-                }
             }
 
-            _logger.LogInformation($"🎫 Total claims in JWT: {authClaims.Count}");
+            // One query for every permission claim across ALL of this user's
+            // roles, instead of a FindByNameAsync + GetClaimsAsync round trip
+            // PER ROLE. This method runs on every login and every token
+            // refresh for every user — the highest-traffic N+1 in this API,
+            // even though the per-user N (a handful of roles) looks small.
+            var roleClaims = await _context.Roles
+                .Where(r => userRoles.Contains(r.Name))
+                .Join(_context.RoleClaims, r => r.Id, rc => rc.RoleId,
+                    (r, rc) => new { r.Name, rc.ClaimType, rc.ClaimValue })
+                .ToListAsync();
+
+            foreach (var roleClaim in roleClaims)
+            {
+                authClaims.Add(new Claim(roleClaim.ClaimType, roleClaim.ClaimValue));
+            }
+
+            var rolesWithClaims = roleClaims.Select(rc => rc.Name).ToHashSet();
+            foreach (var roleName in userRoles.Where(r => !rolesWithClaims.Contains(r)))
+            {
+                // Could mean the role has genuinely zero permission claims, or
+                // that the name doesn't exist in the Roles table at all — the
+                // batched query can't tell those apart the way the old
+                // per-role FindByNameAsync could, and it isn't worth an extra
+                // round trip on this hot a path just to keep that distinction
+                // in a log line.
+                _logger.LogDebug("Role {RoleName} has no permission claims (or does not exist)", roleName);
+            }
+
+            // One summary line per token instead of one per claim.
+            _logger.LogDebug(
+                "Generated JWT for {UserName}: {RoleCount} role(s), {ClaimCount} claim(s).",
+                user.UserName, userRoles.Count, authClaims.Count);
 
             var authSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(_configuration["JWT:Secret"]));
             var tokenValidityInHours = Convert.ToDouble(_configuration["JWT:TokenValidityInHours"] ?? "3");
@@ -190,35 +200,46 @@ namespace UserManagementAPI.Controllers
 
                 var user = await _userManager.FindByNameAsync(model.UserName);
 
-                if (user == null || !await _userManager.CheckPasswordAsync(user, model.Password))
-                {
-                    _logger.LogWarning("Failed login attempt for username: {UserName}", model.UserName);
-                    return Unauthorized(CreateLoginErrorResponse("Invalid username or password"));
-                }
-
-                if (await _userManager.IsLockedOutAsync(user))
+                // Checked BEFORE the password, not after: `CheckPasswordAsync`
+                // alone never increments Identity's failed-attempt counter (it
+                // only reads state) — this controller uses `UserManager`
+                // directly rather than `SignInManager`, which is what usually
+                // wires lockout tracking up automatically. Without that,
+                // `IsLockedOutAsync` below would never see a nonzero count and
+                // the configured "5 attempts -> 5 min lock" policy would never
+                // actually engage, no matter how many wrong passwords arrived —
+                // this app-code-level bookkeeping is what makes it real.
+                if (user != null && await _userManager.IsLockedOutAsync(user))
                 {
                     _logger.LogWarning("Login attempt for locked account: {UserName}", model.UserName);
                     return Unauthorized(CreateLoginErrorResponse("Account is locked. Please try again later."));
                 }
+
+                if (user == null || !await _userManager.CheckPasswordAsync(user, model.Password))
+                {
+                    if (user != null) await _userManager.AccessFailedAsync(user);
+                    _logger.LogWarning("Failed login attempt for username: {UserName}", model.UserName);
+                    return Unauthorized(CreateLoginErrorResponse("Invalid username or password"));
+                }
+
+                await _userManager.ResetAccessFailedCountAsync(user);
 
                 var userRoles = await _userManager.GetRolesAsync(user);
 
                 // Generate JWT token with permissions
                 var token = await GenerateJwtTokenWithPermissions(user);
 
-                // ✅ FIXED: Generate refresh token
                 var jwtId = token.Claims.First(c => c.Type == JwtRegisteredClaimNames.Jti).Value;
                 var refreshToken = await GenerateRefreshTokenAsync(user, jwtId);
 
-                _logger.LogInformation("✅ User logged in successfully: {UserName}", model.UserName);
+                _logger.LogInformation("User logged in successfully: {UserName}", model.UserName);
 
                 return Ok(new
                 {
                     IsSuccess = true,
                     Message = "Login successful",
                     Token = new JwtSecurityTokenHandler().WriteToken(token),
-                    RefreshToken = refreshToken, // ✅ FIXED: Now returns refresh token
+                    RefreshToken = refreshToken,
                     Expiration = token.ValidTo,
                     User = new
                     {
@@ -349,7 +370,11 @@ namespace UserManagementAPI.Controllers
                     });
                 }
 
-                _logger.LogInformation("Password changed for user: {UserName}", user.UserName);
+                var revoked = await RevokeAllRefreshTokensAsync(user.Id, "Password changed");
+
+                _logger.LogInformation(
+                    "Password changed for user: {UserName}; {RevokedCount} refresh token(s) revoked.",
+                    user.UserName, revoked);
 
                 return Ok(new { Status = "Success", Message = "Password changed successfully!" });
             }
@@ -460,7 +485,11 @@ namespace UserManagementAPI.Controllers
                     });
                 }
 
-                _logger.LogInformation("Password reset successfully for: {Email}", model.Email);
+                var revoked = await RevokeAllRefreshTokensAsync(user.Id, "Password reset");
+
+                _logger.LogInformation(
+                    "Password reset successfully for: {Email}; {RevokedCount} refresh token(s) revoked.",
+                    model.Email, revoked);
 
                 return Ok(new { Status = "Success", Message = "Password has been reset successfully!" });
             }
@@ -479,19 +508,13 @@ namespace UserManagementAPI.Controllers
         {
             try
             {
-                _logger.LogInformation("=== UPLOAD PROFILE PICTURE START ===");
-
                 if (profilePicture == null || profilePicture.Length == 0)
                 {
                     _logger.LogWarning("No file uploaded");
                     return BadRequest(new { Status = "Error", Message = "No file uploaded!" });
                 }
 
-                _logger.LogInformation($"File: {profilePicture.FileName}, Size: {profilePicture.Length} bytes");
-
-                var fileService = HttpContext.RequestServices.GetRequiredService<IFileStorageService>();
-
-                if (!fileService.IsValidImageFile(profilePicture))
+                if (!_fileStorage.IsValidImageFile(profilePicture))
                 {
                     _logger.LogWarning("Invalid file validation");
                     return BadRequest(new
@@ -512,13 +535,11 @@ namespace UserManagementAPI.Controllers
                 // Delete old profile picture if exists
                 if (!string.IsNullOrEmpty(user.ProfilePictureUrl))
                 {
-                    _logger.LogInformation($"Deleting old picture: {user.ProfilePictureUrl}");
-                    await fileService.DeleteProfilePictureAsync(user.ProfilePictureUrl);
+                        await _fileStorage.DeleteProfilePictureAsync(user.ProfilePictureUrl);
                 }
 
                 // Save new profile picture (returns relative path like /uploads/profile-pictures/xxx.jpg)
-                var relativePath = await fileService.SaveProfilePictureAsync(profilePicture, userId);
-                _logger.LogInformation($"File saved with relative path: {relativePath}");
+                var relativePath = await _fileStorage.SaveProfilePictureAsync(profilePicture, userId);
 
                 // Store ONLY the relative path in database
                 user.ProfilePictureUrl = relativePath;
@@ -531,11 +552,10 @@ namespace UserManagementAPI.Controllers
                     return BadRequest(new { Status = "Error", Message = "Failed to update profile picture!" });
                 }
 
-                _logger.LogInformation($"✅ Profile picture updated for user: {user.UserName}");
+                _logger.LogInformation("Profile picture updated for user: {UserName}", user.UserName);
 
                 // Build full URL for response
                 var fullUrl = GetFullImageUrl(relativePath);
-                _logger.LogInformation($"Returning full URL: {fullUrl}");
 
                 return Ok(new
                 {
@@ -546,8 +566,8 @@ namespace UserManagementAPI.Controllers
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "❌ Error uploading profile picture");
-                return StatusCode(500, new { Status = "Error", Message = $"An error occurred: {ex.Message}" });
+                _logger.LogError(ex, "Error uploading profile picture");
+                return StatusCode(500, new { Status = "Error", Message = "An error occurred while uploading the picture." });
             }
         }
 
@@ -572,13 +592,12 @@ namespace UserManagementAPI.Controllers
                     return BadRequest(new { Status = "Error", Message = "No profile picture to delete!" });
                 }
 
-                var fileService = HttpContext.RequestServices.GetRequiredService<IFileStorageService>();
-                await fileService.DeleteProfilePictureAsync(user.ProfilePictureUrl);
+                await _fileStorage.DeleteProfilePictureAsync(user.ProfilePictureUrl);
 
                 user.ProfilePictureUrl = null;
                 await _userManager.UpdateAsync(user);
 
-                _logger.LogInformation($"✅ Profile picture deleted for user: {user.UserName}");
+                _logger.LogInformation("Profile picture deleted for user: {UserName}", user.UserName);
 
                 return Ok(new { Status = "Success", Message = "Profile picture deleted successfully!" });
             }
@@ -588,6 +607,64 @@ namespace UserManagementAPI.Controllers
                 return StatusCode(500, new { Status = "Error", Message = "An error occurred" });
             }
         }
+
+        // PUT: api/auth/update-profile-picture-url
+        //
+        // Additive companion to `upload-profile-picture` above, not a
+        // replacement for it. That endpoint receives the raw file and saves it
+        // through `IFileStorageService` (local disk today), which returns a
+        // path RELATIVE to this API and is why its response runs through
+        // `GetFullImageUrl`. This endpoint is for a file that was already
+        // uploaded somewhere else that already hands back a complete URL —
+        // the Next.js frontend's shared R2 upload route
+        // (`TestingReact/src/app/api/upload/route.ts`) — so it takes that URL
+        // as-is and does NOT run it through `GetFullImageUrl`, which would
+        // incorrectly try to rebase an already-absolute R2 URL onto this API's
+        // own host.
+        //
+        // `UpdateProfilePictureUrlViewModel` already existed in `ViewModel/`
+        // with no controller action using it — this is that missing action.
+        [HttpPut("update-profile-picture-url")]
+        [Authorize]
+        [ProducesResponseType(typeof(object), StatusCodes.Status200OK)]
+        [ProducesResponseType(StatusCodes.Status400BadRequest)]
+        public async Task<IActionResult> UpdateProfilePictureUrl([FromBody] UpdateProfilePictureUrlViewModel model)
+        {
+            try
+            {
+                var userId = User.FindFirstValue(ClaimTypes.NameIdentifier);
+                var user = await _userManager.FindByIdAsync(userId);
+
+                if (user == null)
+                {
+                    return NotFound(new { Status = "Error", Message = "User not found!" });
+                }
+
+                user.ProfilePictureUrl = model.ProfilePictureUrl;
+
+                var result = await _userManager.UpdateAsync(user);
+                if (!result.Succeeded)
+                {
+                    _logger.LogError("Failed to update user's profile picture URL in database");
+                    return BadRequest(new { Status = "Error", Message = "Failed to update profile picture!" });
+                }
+
+                _logger.LogInformation("Profile picture URL updated for user: {UserName}", user.UserName);
+
+                return Ok(new
+                {
+                    Status = "Success",
+                    Message = "Profile picture updated successfully!",
+                    ProfilePictureUrl = model.ProfilePictureUrl
+                });
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error updating profile picture URL");
+                return StatusCode(500, new { Status = "Error", Message = "An error occurred" });
+            }
+        }
+
         [HttpGet("profile")]
         [Authorize]
         [ProducesResponseType(typeof(object), StatusCodes.Status200OK)]
@@ -607,11 +684,6 @@ namespace UserManagementAPI.Controllers
 
                 // Build full URL for profile picture
                 var profilePictureUrl = GetFullImageUrl(user.ProfilePictureUrl);
-
-                if (!string.IsNullOrEmpty(profilePictureUrl))
-                {
-                    _logger.LogInformation($"Profile picture URL for {user.UserName}: {profilePictureUrl}");
-                }
 
                 return Ok(new
                 {
@@ -663,23 +735,19 @@ namespace UserManagementAPI.Controllers
                     return NotFound(new { Status = "Error", Message = "User not found!" });
                 }
 
-                _logger.LogInformation($"BEFORE UPDATE: ProfilePictureUrl = '{user.ProfilePictureUrl ?? "NULL"}'");
-
                 // Check if email is being changed and if it's taken
                 if (user.Email != model.Email && await _userManager.FindByEmailAsync(model.Email) != null)
                 {
                     return Conflict(new { Status = "Error", Message = "Email already in use!" });
                 }
 
-                // ✅ Update user properties
                 user.FirstName = model.FirstName;
                 user.LastName = model.LastName;
                 user.Email = model.Email;
                 user.PhoneNumber = model.PhoneNumber;
 
-                // ✅ CRITICAL: Do NOT touch ProfilePictureUrl in this endpoint
+                // Do NOT touch ProfilePictureUrl in this endpoint
                 // ProfilePictureUrl is managed ONLY by upload-profile-picture and delete-profile-picture endpoints
-                _logger.LogInformation($"ProfilePictureUrl unchanged: '{user.ProfilePictureUrl ?? "NULL"}'");
 
                 var result = await _userManager.UpdateAsync(user);
 
@@ -693,9 +761,10 @@ namespace UserManagementAPI.Controllers
                     });
                 }
 
-                var updatedUser = await _userManager.FindByIdAsync(userId);
-                _logger.LogInformation($"AFTER UPDATE: ProfilePictureUrl = '{updatedUser.ProfilePictureUrl ?? "NULL"}'");
-                _logger.LogInformation($"✅ Profile updated successfully for user: {user.UserName}");
+                // `UpdateAsync` saves and mutates this same tracked instance, so
+                // `user` already reflects the post-update row — no need to
+                // re-fetch it from the database just to log it.
+                _logger.LogInformation("Profile updated successfully for user: {UserName}", user.UserName);
 
                 return Ok(new { Status = "Success", Message = "Profile updated successfully!" });
             }
@@ -709,7 +778,41 @@ namespace UserManagementAPI.Controllers
         // ADD this method to AuthController:
 
         /// <summary>
-        /// ✅ Generate Refresh Token and store in database
+        /// Revokes every refresh token still live for a user.
+        /// </summary>
+        /// <remarks>
+        /// Called after a password change or reset. Without this, changing a
+        /// password did nothing to sessions already established: a stolen
+        /// refresh token stayed valid for its full 30-day life, so the usual
+        /// response to a suspected compromise did not actually end the
+        /// attacker's access.
+        /// </remarks>
+        /// <returns>How many tokens were revoked.</returns>
+        private async Task<int> RevokeAllRefreshTokensAsync(string userId, string reason)
+        {
+            var now = DateTime.UtcNow;
+
+            var liveTokens = await _context.RefreshTokens
+                .Where(rt => rt.UserId == userId && !rt.IsRevoked && rt.ExpiresAt > now)
+                .ToListAsync();
+
+            if (liveTokens.Count == 0)
+            {
+                return 0;
+            }
+
+            foreach (var token in liveTokens)
+            {
+                token.IsRevoked = true;
+                token.RevokedReason = reason;
+            }
+
+            await _context.SaveChangesAsync();
+            return liveTokens.Count;
+        }
+
+        /// <summary>
+        /// Generate Refresh Token and store in database
         /// </summary>
         private async Task<string> GenerateRefreshTokenAsync(ApplicationUser user, string jwtId)
         {
@@ -720,8 +823,11 @@ namespace UserManagementAPI.Controllers
             var refreshToken = new RefreshToken
             {
                 UserId = user.Id,
-                Token = Convert.ToBase64String(Guid.NewGuid().ToByteArray()) +
-                        Convert.ToBase64String(Guid.NewGuid().ToByteArray()),
+                // 64 bytes from the crypto RNG. This used to be two
+                // concatenated Guid.NewGuid() values: Guid generation is not
+                // contractually a cryptographic RNG, and a refresh token is a
+                // bearer credential valid for 30 days.
+                Token = Convert.ToBase64String(RandomNumberGenerator.GetBytes(64)),
                 JwtId = jwtId,
                 CreatedAt = DateTime.UtcNow,
                 ExpiresAt = DateTime.UtcNow.AddDays(refreshTokenValidityInDays), // From config
@@ -732,12 +838,12 @@ namespace UserManagementAPI.Controllers
             _context.RefreshTokens.Add(refreshToken);
             await _context.SaveChangesAsync();
 
-            _logger.LogInformation($"✅ Refresh token created for user {user.UserName}, expires: {refreshToken.ExpiresAt}");
+            _logger.LogDebug("Refresh token created for {UserName}, expires {ExpiresAt}.", user.UserName, refreshToken.ExpiresAt);
 
             return refreshToken.Token;
         }
         /// <summary>
-        /// ✅ FIXED: Complete Refresh Token Implementation
+        /// Refresh an access token using a stored refresh token.
         /// POST: api/auth/refresh-token
         /// </summary>
         [HttpPost("refresh-token")]
@@ -796,7 +902,7 @@ namespace UserManagementAPI.Controllers
                 storedToken.ReplacedByToken = newRefreshToken;
                 await _context.SaveChangesAsync();
 
-                _logger.LogInformation("✅ Token refreshed for user: {UserName}", user.UserName);
+                _logger.LogInformation("Token refreshed for user: {UserName}", user.UserName);
 
                 return Ok(new
                 {
@@ -814,7 +920,7 @@ namespace UserManagementAPI.Controllers
         }
 
         /// <summary>
-        /// ✅ Revoke Refresh Token (for logout)
+        /// Revoke a refresh token (logout).
         /// POST: api/auth/revoke-token
         /// </summary>
         [HttpPost("revoke-token")]
@@ -834,21 +940,25 @@ namespace UserManagementAPI.Controllers
 
                 if (token == null)
                 {
-                    return NotFound(new { Status = "Error", Message = "Token not found" });
+                    // Deliberately the same 200 as a successful revoke. A 404
+                    // here told an anonymous caller whether a given refresh
+                    // token string existed, which is a probing oracle for an
+                    // endpoint that needs no authentication.
+                    _logger.LogWarning("Revoke requested for an unknown refresh token.");
+                    return Ok(new { Status = "Success", Message = "Token revoked successfully" });
                 }
 
-                // ✅ Check if already revoked
                 if (token.IsRevoked)
                 {
                     return Ok(new { Status = "Success", Message = "Token already revoked" });
                 }
 
                 token.IsRevoked = true;
-                token.RevokedReason = "Revoked by user logout"; // ✅ SET REASON
+                token.RevokedReason = "Revoked by user logout";
                 _context.RefreshTokens.Update(token);
                 await _context.SaveChangesAsync();
 
-                _logger.LogInformation($"✅ Token revoked for user: {token.UserId}");
+                _logger.LogInformation("Refresh token revoked for user {UserId}.", token.UserId);
 
                 return Ok(new { Status = "Success", Message = "Token revoked successfully" });
             }
@@ -858,23 +968,6 @@ namespace UserManagementAPI.Controllers
                 return StatusCode(500, new { Status = "Error", Message = "An error occurred" });
             }
         }
-        // Helper: Generate JWT Token
-        private JwtSecurityToken GenerateJwtToken(List<Claim> authClaims)
-        {
-            var authSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(_configuration["JWT:Secret"]));
-            var tokenValidityInHours = Convert.ToDouble(_configuration["JWT:TokenValidityInHours"] ?? "3");
-
-            var token = new JwtSecurityToken(
-                issuer: _configuration["JWT:ValidIssuer"],
-                audience: _configuration["JWT:ValidAudience"],
-                expires: DateTime.UtcNow.AddHours(tokenValidityInHours),
-                claims: authClaims,
-                signingCredentials: new SigningCredentials(authSigningKey, SecurityAlgorithms.HmacSha256)
-            );
-
-            return token;
-        }
-
         // Helper: Create consistent login error response
         private object CreateLoginErrorResponse(string message)
         {
@@ -908,8 +1001,6 @@ namespace UserManagementAPI.Controllers
                 relativePath = "/" + relativePath;
 
             var fullUrl = $"{apiBaseUrl}{relativePath}";
-
-            _logger.LogInformation($"Built full URL: {fullUrl}");
 
             return fullUrl;
         }

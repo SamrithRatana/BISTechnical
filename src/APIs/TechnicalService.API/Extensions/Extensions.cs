@@ -189,7 +189,7 @@ internal static class Extensions
 internal sealed class DatabaseHealthCheck(TechnicalServiceContext context) : IHealthCheck
 {
     public async Task<HealthCheckResult> CheckHealthAsync(
-        HealthCheckContext context_,
+        HealthCheckContext healthCheckContext,
         CancellationToken cancellationToken = default)
     {
         try

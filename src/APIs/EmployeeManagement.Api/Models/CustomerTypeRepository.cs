@@ -1,4 +1,4 @@
-﻿using EmployeeManagement.Models;
+using EmployeeManagement.Models;
 using Microsoft.EntityFrameworkCore;
 using System;
 using System.Collections.Generic;
@@ -7,7 +7,7 @@ using System.Threading.Tasks;
 
 namespace EmployeeManagement.Api.Models
 {
-    public class CustomerTypeRepository : ICustomerTypeRespository
+    public class CustomerTypeRepository : ICustomerTypeRepository
     {
         private readonly AppDbContext appDbContext;
 
@@ -18,6 +18,11 @@ namespace EmployeeManagement.Api.Models
 
         public async Task<CustomerType> CreateCustomerType(CustomerType customerType)
         {
+            if (customerType == null)
+            {
+                throw new ArgumentNullException(nameof(customerType));
+            }
+
             customerType.CreatedAt = DateTime.UtcNow;
             customerType.ModifiedAt = DateTime.UtcNow;
 
@@ -29,12 +34,16 @@ namespace EmployeeManagement.Api.Models
 
         public async Task<IEnumerable<CustomerType>> GetCustomerTypes()
         {
-            return await appDbContext.CustomerTypes.ToListAsync();
+            return await appDbContext.CustomerTypes
+                .AsNoTracking()
+                .OrderBy(ct => ct.Type)
+                .ToListAsync();
         }
 
         public async Task<CustomerType> GetCustomerTypeById(int id)
         {
             return await appDbContext.CustomerTypes
+                .AsNoTracking()
                 .FirstOrDefaultAsync(ct => ct.ListId == id);
         }
 
@@ -43,21 +52,26 @@ namespace EmployeeManagement.Api.Models
             int pageSize,
             string searchTerm = null)
         {
-            var query = appDbContext.CustomerTypes.AsQueryable();
+            var query = appDbContext.CustomerTypes.AsNoTracking();
 
-            // Apply search filter
             if (!string.IsNullOrWhiteSpace(searchTerm))
             {
-                searchTerm = searchTerm.ToLower();
-                query = query.Where(ct => ct.Type.ToLower().Contains(searchTerm));
+                // Escaped so wildcards typed by the user are matched literally.
+                var pattern = SearchPattern.Contains(searchTerm.Trim());
+                query = query.Where(ct => ct.Type != null &&
+                    EF.Functions.Like(ct.Type, pattern, SearchPattern.EscapeCharacter));
             }
 
-            // Get total count
             var totalCount = await query.CountAsync();
 
-            // Apply pagination
+            if (totalCount == 0)
+            {
+                return (Array.Empty<CustomerType>(), 0);
+            }
+
             var items = await query
                 .OrderBy(ct => ct.Type)
+                .ThenBy(ct => ct.ListId)
                 .Skip((pageNumber - 1) * pageSize)
                 .Take(pageSize)
                 .ToListAsync();
@@ -67,31 +81,44 @@ namespace EmployeeManagement.Api.Models
 
         public async Task<CustomerType> UpdateCustomerType(CustomerType customerType)
         {
+            if (customerType == null)
+            {
+                throw new ArgumentNullException(nameof(customerType));
+            }
+
             var existingCustomerType = await appDbContext.CustomerTypes
                 .FirstOrDefaultAsync(ct => ct.ListId == customerType.ListId);
 
-            if (existingCustomerType != null)
+            if (existingCustomerType == null)
             {
-                existingCustomerType.Type = customerType.Type;
-                existingCustomerType.ModifiedBy = customerType.ModifiedBy;
-                existingCustomerType.ModifiedAt = DateTime.UtcNow;
-
-                await appDbContext.SaveChangesAsync();
+                return null;
             }
+
+            existingCustomerType.Type = customerType.Type;
+            existingCustomerType.Description = customerType.Description;
+            existingCustomerType.IsActive = customerType.IsActive;
+            existingCustomerType.ModifiedBy = customerType.ModifiedBy;
+            existingCustomerType.ModifiedAt = DateTime.UtcNow;
+
+            await appDbContext.SaveChangesAsync();
 
             return existingCustomerType;
         }
 
-        public async Task DeleteCustomerType(int id)
+        /// <returns><c>true</c> if a row was deleted, <c>false</c> if none existed.</returns>
+        public async Task<bool> DeleteCustomerType(int id)
         {
             var customerType = await appDbContext.CustomerTypes
                 .FirstOrDefaultAsync(ct => ct.ListId == id);
 
-            if (customerType != null)
+            if (customerType == null)
             {
-                appDbContext.CustomerTypes.Remove(customerType);
-                await appDbContext.SaveChangesAsync();
+                return false;
             }
+
+            appDbContext.CustomerTypes.Remove(customerType);
+            await appDbContext.SaveChangesAsync();
+            return true;
         }
     }
 }

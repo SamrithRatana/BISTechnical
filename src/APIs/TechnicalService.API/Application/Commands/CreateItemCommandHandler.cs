@@ -6,16 +6,14 @@ public class CreateItemCommandHandler
     : IRequestHandler<CreateItemCommand, bool>
 {
     private readonly ITechnicalServiceRepository _repairServiceRepository;
-    private readonly IMediator _mediator;
     private readonly ILogger<CreateItemCommandHandler> _logger;
 
     // Using DI to inject infrastructure persitence Repositories
-    public CreateItemCommandHandler(IMediator mediator,
+    public CreateItemCommandHandler(
         ITechnicalServiceRepository repairServiceRepository,
         ILogger<CreateItemCommandHandler> logger)
     {
         _repairServiceRepository = repairServiceRepository ?? throw new ArgumentNullException(nameof(repairServiceRepository));
-        _mediator = mediator ?? throw new ArgumentNullException(nameof(mediator));
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
     }
 

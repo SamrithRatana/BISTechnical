@@ -6,16 +6,14 @@ public class CreateRentalItemCommandHandler
     : IRequestHandler<CreateRentalItemCommand, bool>
 {
     private readonly IRentalServiceRepository _rentalServiceRepository;
-    private readonly IMediator _mediator;
     private readonly ILogger<CreateRentalItemCommandHandler> _logger;
 
     // Using DI to inject infrastructure persitence Repositories
-    public CreateRentalItemCommandHandler(IMediator mediator,
+    public CreateRentalItemCommandHandler(
         IRentalServiceRepository rentalServiceRepository,
         ILogger<CreateRentalItemCommandHandler> logger)
     {
         _rentalServiceRepository = rentalServiceRepository ?? throw new ArgumentNullException(nameof(rentalServiceRepository));
-        _mediator = mediator ?? throw new ArgumentNullException(nameof(mediator));
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
     }
 
@@ -24,7 +22,7 @@ public class CreateRentalItemCommandHandler
         var item = new RentalItem(message.CreatedBy, message.CustomerId, message.CustomerName,
             message.ItemName, message.SerialNumber, message.Condition, message.Location, message.Duration);
 
-        _logger.LogInformation("Creating RentalItem: {@Item}", item);
+        _logger.LogInformation("Creating RentalItem for customer {CustomerId}: {SerialNumber}", message.CustomerId, message.SerialNumber);
 
         _rentalServiceRepository.AddRentalItem(item);
 

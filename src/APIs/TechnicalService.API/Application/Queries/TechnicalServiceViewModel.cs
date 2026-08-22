@@ -1,4 +1,4 @@
-﻿using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.Mvc;
 using TechnicalService.Domain.AggregatesModel.RentalAggregate;
 
 namespace TechnicalService.API.Application.Queries;
@@ -13,7 +13,7 @@ public record Sparepart
     public string PictureUrl { get; init; }
     public Guid LinkItemId { get; init; }
     public int Quantity { get; init; }
-    public decimal DefaultPrice { get; init; } // ✅ ADD THIS
+    public decimal DefaultPrice { get; init; }
 }
 public record SparepartWithUsage
 {
@@ -25,8 +25,8 @@ public record SparepartWithUsage
     public string PictureUrl { get; init; }
     public Guid LinkItemId { get; init; }
     public int Quantity { get; init; }
-    public int UsageCount { get; init; }      // ✅ times used in services
-    public int TotalQtyUsed { get; init; }    // ✅ total qty consumed
+    public int UsageCount { get; init; }      // times used in services
+    public int TotalQtyUsed { get; init; }    // total qty consumed
 }
 public record SparepartItem
 {
@@ -35,10 +35,9 @@ public record SparepartItem
     public string Description { get; init; }
     public int Quantity { get; init; }
     public string Condition { get; init; }
-    public bool IsHoldStatus { get; init; } = false; // ✅ NEW
-    public string Remarks { get; init; } // ✅ NEW
-    public DateTime? RemarksUpdatedAt { get; init; } // ✅ NEW
-
+    public bool IsHoldStatus { get; init; } = false;
+    public string Remarks { get; init; }
+    public DateTime? RemarksUpdatedAt { get; init; }
 
 }
 
@@ -65,7 +64,6 @@ public record Service
     public DateTime? InspectDate { get; init; }
     public Guid? InspectBy { get; init; }
 
-    // ✅ ADD THESE TWO — InspectingBy/Date are separate from InspectBy/Date
     public Guid? InspectingBy { get; init; }
     public DateTime? InspectingDate { get; init; }
 
@@ -85,7 +83,6 @@ public record Service
     public DateTime? FinishedDate { get; init; }
     public Guid? VerifiedBy { get; init; }
 
-    // ✅ ADD THESE TWO
     public DateTime? SaleConfirmedDate { get; init; }
     public Guid? SetSaleConfirmedBy { get; init; }
 
@@ -107,6 +104,229 @@ public record SparepartUsageSummary
     public List<UsageServiceInfo> Services { get; set; } = new();
 
 }
+/// <summary>
+/// One row of the stock transaction ledger — a single movement exactly as the
+/// trigger recorded it, not an aggregate.
+///
+/// This is deliberately transaction-level where <see cref="SparepartUsageSummary"/>
+/// is part-level. The usage report answers "how much was consumed"; it nets
+/// returns against issues, which is correct for consumption but means a return
+/// is invisible unless it pushes the total negative. Roughly 100 units came back
+/// to stock in the last six months without ever appearing as a line anyone could
+/// read. This row type is what makes each of those visible.
+/// </summary>
+public record SparepartTransactionRow
+{
+    public Guid Id { get; init; }
+    public DateTime Timestamp { get; init; }
+    public Guid SparepartId { get; init; }
+    public string ItemName { get; init; }
+    public string SerialNumber { get; init; }
+
+    /// <summary>The trigger's own label: STOCK_IN or STOCK_OUT.</summary>
+    public string OperationType { get; init; }
+
+    /// <summary>Signed, as stored: negative left the shelf, positive returned.</summary>
+    public int QuantityChange { get; init; }
+
+    /// <summary>Unsigned magnitude, for a column a storekeeper reads at a glance.</summary>
+    public int Quantity { get; init; }
+
+    /// <summary>"In" or "Out", derived from the sign.</summary>
+    public string Direction { get; init; }
+
+    /// <summary>
+    /// "Service" (tied to a repair ticket), "Manual" (a manual stock-out) or
+    /// "Adjustment" (a direct edit of the catalogue quantity).
+    /// </summary>
+    public string Source { get; init; }
+
+    /// <summary>
+    /// Stock level immediately after this movement. Verified consistent
+    /// (NewQuantity == OldQuantity + QuantityChange) on all 3,226 ledger rows,
+    /// so it is a genuine running balance rather than a decorative column.
+    /// </summary>
+    public int BalanceAfter { get; init; }
+    public int BalanceBefore { get; init; }
+
+    public Guid? ServiceId { get; init; }
+    public string ReportNo { get; init; }
+    public string CompanyName { get; init; }
+    public string ServiceStatus { get; init; }
+    public string Reason { get; init; }
+
+    /// <summary>
+    /// True when this movement was undone by an opposite movement on the same
+    /// ticket and part later the same day.
+    ///
+    /// This is what reconciles the Telegram feed with the usage report. On
+    /// 2026-08-18 Telegram showed 12 stock-out messages and the report showed
+    /// 9; the difference was exactly three deductions that were reversed within
+    /// hours. Telegram cannot retract a message — `StockNotificationOutbox` has
+    /// no MessageId column, so the worker has nothing to call deleteMessage
+    /// with — and the reversals were posted to the separate "Stock In" topic,
+    /// so the Stock Out feed still reads as 12.
+    ///
+    /// Flagging the pair here means the ledger explains that discrepancy on its
+    /// own, instead of it looking like three units of missing stock.
+    /// </summary>
+    public bool ReversedLater { get; init; }
+
+    /// <summary>True when this movement is itself the reversal of an earlier one.</summary>
+    public bool IsReversal { get; init; }
+}
+
+/// <summary>
+/// One detected inconsistency in the stock data.
+///
+/// This exists because the failures found by hand on 2026-08-19 were all
+/// invisible until someone went looking: 8 Telegram notifications for movements
+/// the ledger never recorded, a part whose ledger implies a negative opening
+/// balance, and 30 catalogue rows sharing the name "Fuser Film Sleeve" — which
+/// is what let a technician pick the wrong one and produce two contradictory
+/// stock messages for the same ticket.
+///
+/// None of those were caught by anything. Turning them into a page someone can
+/// open is the actual protection against "lost transactions": not preventing
+/// the fault, which needs the trigger bodies, but ensuring it cannot sit
+/// undetected for months.
+/// </summary>
+public record StockHealthIssue
+{
+    /// <summary>
+    /// `OrphanNotification`, `LedgerMismatch`, `DuplicateName`, `NegativeStock`
+    /// or `OrphanRestore`.
+    /// </summary>
+    public string Category { get; init; }
+
+    /// <summary>`high` | `medium` | `low`.</summary>
+    public string Severity { get; init; }
+
+    public Guid? SparepartId { get; init; }
+    public string ItemName { get; init; }
+    public string SerialNumber { get; init; }
+
+    /// <summary>Human-readable statement of what is wrong.</summary>
+    public string Detail { get; init; }
+
+    /// <summary>Where relevant: what the number should be, and what it is.</summary>
+    public int? Expected { get; init; }
+    public int? Actual { get; init; }
+
+    /// <summary>When the offending movement happened, where there is one.</summary>
+    public DateTime? OccurredAt { get; init; }
+    public string ReportNo { get; init; }
+}
+
+/// <summary>
+/// One stock movement that was undone — a deduction with a matching return.
+///
+/// This is the row that explains why a Telegram feed and a usage report can
+/// both be correct and still disagree. On 2026-08-18 the outbox sent 12
+/// stock-out notifications while the report showed 9 consumed; the gap was
+/// exactly three deductions returned within hours. Telegram cannot retract a
+/// message (`StockNotificationOutbox` has no MessageId column), and the returns
+/// were posted to the separate "Stock In" topic, so the Stock Out feed still
+/// reads 12 forever.
+/// </summary>
+public record StockReconciliationRow
+{
+    public Guid SparepartId { get; init; }
+    public string ItemName { get; init; }
+    public string SerialNumber { get; init; }
+    public int Quantity { get; init; }
+
+    /// <summary>When the stock left the shelf.</summary>
+    public DateTime OutAt { get; init; }
+
+    /// <summary>When it came back.</summary>
+    public DateTime ReturnedAt { get; init; }
+
+    /// <summary>Minutes the stock was actually out — usually small for a correction.</summary>
+    public int MinutesOut { get; init; }
+
+    /// <summary>Plain-language cause, read from the return's own trigger text.</summary>
+    public string Why { get; init; }
+
+    public string ReportNo { get; init; }
+
+    /// <summary>
+    /// False when this pair exists only in `StockNotificationOutbox` and never
+    /// reached `SparepartStockAuditLog` — a notification was sent for a
+    /// movement the ledger has no record of. These are the "lost" ones, and
+    /// they are the reason this report reads both tables rather than just the
+    /// ledger.
+    /// </summary>
+    public bool RecordedInLedger { get; init; }
+}
+
+/// <summary>
+/// The reconciliation answer for a period: the headline counts plus every
+/// cancelled-out pair behind them.
+/// </summary>
+public record StockReconciliationResult
+{
+    /// <summary>Stock-out notifications sent — what the Telegram feed shows.</summary>
+    public int NotificationsSent { get; init; }
+
+    /// <summary>Stock-out movements the ledger recorded.</summary>
+    public int LedgerStockOut { get; init; }
+
+    /// <summary>Net units consumed — what the usage report shows.</summary>
+    public int ReportedUsage { get; init; }
+
+    /// <summary>Deductions that were returned, and so cancel out.</summary>
+    public int ReversedPairs { get; init; }
+
+    /// <summary>Notifications with no ledger row at all.</summary>
+    public int UnrecordedMovements { get; init; }
+
+    public List<StockReconciliationRow> Rows { get; init; } = new();
+}
+
+/// <summary>
+/// Per-part reconciliation over a period: what the shelf held at the start,
+/// what moved, and what it should hold at the end.
+/// </summary>
+public record SparepartMovementSummary
+{
+    public Guid SparepartId { get; init; }
+    public string ItemName { get; init; }
+    public string SerialNumber { get; init; }
+
+    /// <summary>Balance immediately before the first movement in the window.</summary>
+    public int OpeningBalance { get; init; }
+    public int TotalIn { get; init; }
+    public int TotalOut { get; init; }
+    public int NetChange { get; init; }
+
+    /// <summary>Balance after the last movement in the window.</summary>
+    public int ClosingBalance { get; init; }
+
+    /// <summary>Live catalogue quantity, for spotting drift after the window.</summary>
+    public int CurrentStock { get; init; }
+    public int MovementCount { get; init; }
+}
+
+/// <summary>
+/// A part holding stock that nothing has touched for a while — capital sitting
+/// on a shelf. Deliberately carries no monetary value: `Spareparts.DefaultPrice`
+/// is 0.00 on all 666 catalogue rows, so a valuation column would read zero
+/// everywhere and imply the stock is worthless rather than unpriced.
+/// </summary>
+public record SparepartDeadStockRow
+{
+    public Guid SparepartId { get; init; }
+    public string ItemName { get; init; }
+    public string SerialNumber { get; init; }
+    public int Quantity { get; init; }
+    public int HeldQuantity { get; init; }
+
+    /// <summary>Null when the part has NO movement on record at all.</summary>
+    public DateTime? LastMovement { get; init; }
+    public int? DaysSinceMovement { get; init; }
+}
+
 public class UsageServiceInfo
 {
     public Guid ServiceId { get; set; }
@@ -130,21 +350,81 @@ public class UsageServiceInfo
 /// </summary>
 public class SparepartUsageQuery
 {
-    public int PageNumber { get; set; } = 1;
-    public int PageSize { get; set; } = 15;
+    public int? PageNumber { get; set; }
+    public int? PageSize { get; set; }
     public DateTime? FromDate { get; set; }
     public DateTime? ToDate { get; set; }
-    public string SearchTerm { get; set; }
-    public string Status { get; set; }
-    public string SortBy { get; set; } = "usedquantity";
-    public bool SortDescending { get; set; } = true;
-    public bool IncludeManualStockOut { get; set; } = true;
-    public string ServiceType { get; set; }
-    public string Condition { get; set; }
+    public string? SearchTerm { get; set; }
+    public string? Status { get; set; }
+    public string? SortBy { get; set; }
+    public bool? SortDescending { get; set; }
+    public bool? IncludeManualStockOut { get; set; }
+    public string? ServiceType { get; set; }
+    public string? Condition { get; set; }
     public bool? IsHoldStatus { get; set; }
-    public string DateMode { get; set; } = "standard";
-    public string SourceFilter { get; set; }   // ← ADD: "Service" | "Manual" | null
+    public string? DateMode { get; set; }
+    public string? SourceFilter { get; set; }
 }
+
+/// <summary>
+/// Query parameters for GET /api/spareparts/transactions, /movement-summary
+/// and /dead-stock.
+///
+/// ── EVERY member here is nullable, and that is not cosmetic ────────────────
+///
+/// `SparepartUsageQuery` above declares its strings as non-nullable, and with
+/// nullable reference types on, minimal APIs bind those as REQUIRED. Omit any
+/// one of them and the endpoint throws `BadHttpRequestException`, which the
+/// exception handler renders as a **500**, not a 400 — so it reads like a
+/// server fault rather than a missing parameter. `services/reports.ts` carries a
+/// comment about having to send the full parameter set on every call because of
+/// exactly this.
+///
+/// The trap is wider than strings, which is worth stating plainly because the
+/// first version of this class fell into it: `[AsParameters]` binds a
+/// non-nullable VALUE type as required as well, and **a property initializer
+/// does not exempt it**. `public int PageNumber { get; set; } = 1;` still 500s
+/// when the caller omits `pageNumber` — the default never gets a chance to
+/// apply. Only `int?` / `bool?` are genuinely optional, so the defaults live in
+/// the query methods instead, where they actually run.
+/// </summary>
+public class SparepartTransactionQuery
+{
+    public int? PageNumber { get; set; }
+    public int? PageSize { get; set; }
+    public DateTime? FromDate { get; set; }
+    public DateTime? ToDate { get; set; }
+
+    /// <summary>Matches part name, part serial, ticket report no or company.</summary>
+    public string? SearchTerm { get; set; }
+
+    /// <summary>"In", "Out", or null/"All".</summary>
+    public string? Direction { get; set; }
+
+    /// <summary>"Service", "Manual", "Adjustment", or null/"All".</summary>
+    public string? Source { get; set; }
+
+    /// <summary>
+    /// Tracking-only rows carry `QuantityChange = 0` and exist for audit
+    /// visibility — 2,227 of the 3,226 ledger rows. They are excluded by
+    /// default because summing them distorts nothing but reading them as
+    /// movements does; the ledger page can opt them back in. Defaults to false
+    /// in the query method.
+    /// </summary>
+    public bool? IncludeTrackingRows { get; set; }
+
+    /// <summary>
+    /// Only for the dead-stock report. Days of inactivity to qualify; defaults
+    /// to 90 in the query method.
+    /// </summary>
+    public int? IdleDays { get; set; }
+
+    public string? SortBy { get; set; }
+
+    /// <summary>Defaults to true (newest first) in the query method.</summary>
+    public bool? SortDescending { get; set; }
+}
+
 public class SparepartHoldSummary
 {
     public Guid SparepartId { get; set; }
@@ -280,3 +560,11 @@ public class ActivityLogDto
     public string? UserName { get; set; }
     public DateTime Timestamp { get; set; }
 }
+
+public record AnnualTechnicalMatrixDto(
+    int[] MachineIn,
+    int[] MachineOut,
+    int[] Unrepairable,
+    int[] AwaitingConfirm,
+    int[] OnsiteService
+);

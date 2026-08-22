@@ -6,18 +6,14 @@ namespace TechnicalService.API.Application.Commands;
 public class SetInspectingCommandHandler : IRequestHandler<SetInspectingCommand, bool>
 {
     private readonly ITechnicalServiceRepository _technicalServiceRepository;
-    private readonly IMediator _mediator;
     private readonly ILogger<SetInspectingCommandHandler> _logger;
 
     public SetInspectingCommandHandler(
-        IMediator mediator,
         ITechnicalServiceRepository technicalServiceRepository,
         ILogger<SetInspectingCommandHandler> logger)
     {
         _technicalServiceRepository = technicalServiceRepository
             ?? throw new ArgumentNullException(nameof(technicalServiceRepository));
-        _mediator = mediator
-            ?? throw new ArgumentNullException(nameof(mediator));
         _logger = logger
             ?? throw new ArgumentNullException(nameof(logger));
     }

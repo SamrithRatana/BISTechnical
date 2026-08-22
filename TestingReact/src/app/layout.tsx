@@ -9,6 +9,9 @@ import AiAssistantPanel from "@/components/ai/AiAssistantPanel";
 import AiLauncher from "@/components/ai/AiLauncher";
 import { LanguageProvider, LanguageScript } from "@/i18n/LanguageProvider";
 import { ThemeProvider } from "@/theme/ThemeProvider";
+import { CompanionScannerProvider } from "@/context/CompanionScannerContext";
+import GlobalCompanionModal from "@/components/GlobalCompanionModal";
+import PerformanceProvider from "@/components/PerformanceProvider";
 import { Toaster } from "react-hot-toast";
 import "./globals.css";
 
@@ -83,6 +86,13 @@ export default function RootLayout({
               reduced-motion rules cannot reach a framer animation — see
               components/MotionPreference.tsx. */}
           <MotionPreference>
+          {/* Inside MotionPreference because `isLiteMode` folds in framer's
+              resolved reduced-motion value, which is delivered through that
+              context. Above AuthGuard so the one-time device check runs on the
+              login screen too — it measures the machine, not the session, and
+              a technician who never signs out would otherwise never be asked.
+              It renders nothing until its idle callback fires. */}
+          <PerformanceProvider>
           {/* Above AuthGuard so a requested action survives the page change it
               usually accompanies — the provider stays mounted while routes swap
               underneath it. */}
@@ -90,11 +100,15 @@ export default function RootLayout({
             {/* Inside the bus so the assistant can open dialogs; outside the
                 pages so the conversation survives navigation. */}
             <AiAssistantProvider>
-              <AuthGuard>{children}</AuthGuard>
-              <AiLauncher />
-              <AiAssistantPanel />
+              <CompanionScannerProvider>
+                <AuthGuard>{children}</AuthGuard>
+                <GlobalCompanionModal />
+                <AiLauncher />
+                <AiAssistantPanel />
+              </CompanionScannerProvider>
             </AiAssistantProvider>
           </ActionBusProvider>
+          </PerformanceProvider>
           </MotionPreference>
           </ThemeProvider>
           <Toaster position="top-right" />

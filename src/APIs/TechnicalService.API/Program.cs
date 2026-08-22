@@ -40,6 +40,11 @@ builder.Services.AddProblemDetails();
 // Maps a missing record to 404 before the generic 500 path sees it.
 builder.Services.AddExceptionHandler<NotFoundExceptionHandler>();
 
+// Maps a rejected request value (an unrecognised condition, service location or
+// rental action in the body) to 400. Without it those threw out of the command
+// handler as ArgumentException and were reported as server faults.
+builder.Services.AddExceptionHandler<ValidationExceptionHandler>();
+
 var withApiVersioning = builder.Services.AddApiVersioning();
 
 builder.AddDefaultOpenApi(withApiVersioning);
@@ -81,6 +86,19 @@ app.MapHealthChecks("/health/live", new HealthCheckOptions
     Predicate = registration => registration.Tags.Contains("live"),
 });
 app.MapHealthChecks("/health/ready");
+
+// Live Memory & Process Telemetry endpoint for frontend real-time tracking
+app.MapGet("/health/metrics", () =>
+{
+    var proc = System.Diagnostics.Process.GetCurrentProcess();
+    return Results.Ok(new
+    {
+        service = "TechnicalService.API",
+        workingSetMb = Math.Round(proc.WorkingSet64 / (1024.0 * 1024.0), 1),
+        gcHeapMb = Math.Round(GC.GetTotalMemory(false) / (1024.0 * 1024.0), 1),
+        threads = proc.Threads.Count
+    });
+});
 
 var repairs = app.NewVersionedApi("Repairs");
 repairs.MapRepairsApiV1();

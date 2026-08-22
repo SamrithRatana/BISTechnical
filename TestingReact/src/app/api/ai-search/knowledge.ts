@@ -53,7 +53,19 @@ function menus() {
     groups: NAV_GROUPS.map((group) => ({
       groupLabel: translations.en[group.titleKey],
       groupLabelKhmer: translations.km[group.titleKey],
-      items: group.items.map(describeItem),
+      items: [
+        ...(group.items?.map(describeItem) ?? []),
+        ...(group.subGroups?.flatMap((sg) => sg.items.map(describeItem)) ?? []),
+      ],
+      ...(group.subGroups
+        ? {
+            subGroups: group.subGroups.map((sg) => ({
+              subGroupLabel: translations.en[sg.titleKey],
+              subGroupLabelKhmer: translations.km[sg.titleKey],
+              items: sg.items.map(describeItem),
+            })),
+          }
+        : {}),
     })),
     footer: describeItem(SETTINGS_ITEM),
     notInSidebar: [describeItem(USERS_ITEM)],

@@ -1,10 +1,25 @@
 ﻿using System.Net;
 using System.Net.Mail;
+using System.Text.Encodings.Web;
 
 namespace UserManagementAPI.Services
 {
     public class EmailService : IEmailService
     {
+        // User names and links are interpolated into an HTML body below. Without
+        // encoding, a display name containing markup is rendered as markup by
+        // the recipient's mail client - and registration is open, so that value
+        // is attacker-controlled.
+        private static string Html(string value) => HtmlEncoder.Default.Encode(value ?? string.Empty);
+
+        /// <summary>
+        /// Encodes a URL for use inside an href attribute. HTML encoding, not
+        /// URL encoding: the link is already a well-formed URL, and percent-
+        /// encoding it here would break it. What this has to stop is the quote
+        /// that would end the attribute and let markup in.
+        /// </summary>
+        private static string Attr(string value) => Html(value);
+
         private readonly IConfiguration _configuration;
         private readonly ILogger<EmailService> _logger;
 
@@ -20,9 +35,9 @@ namespace UserManagementAPI.Services
             var body = $@"
                 <html>
                 <body>
-                    <h2>Welcome {userName}!</h2>
+                    <h2>Welcome {Html(userName)}!</h2>
                     <p>Thank you for registering. Please confirm your email address by clicking the link below:</p>
-                    <p><a href='{confirmationLink}'>Confirm Email</a></p>
+                    <p><a href='{Attr(confirmationLink)}'>Confirm Email</a></p>
                     <p>If you didn't register for an account, please ignore this email.</p>
                 </body>
                 </html>
@@ -37,9 +52,9 @@ namespace UserManagementAPI.Services
             var body = $@"
                 <html>
                 <body>
-                    <h2>Hello {userName},</h2>
+                    <h2>Hello {Html(userName)},</h2>
                     <p>You requested to reset your password. Click the link below to reset it:</p>
-                    <p><a href='{resetLink}'>Reset Password</a></p>
+                    <p><a href='{Attr(resetLink)}'>Reset Password</a></p>
                     <p>This link will expire in 24 hours.</p>
                     <p>If you didn't request a password reset, please ignore this email.</p>
                 </body>
@@ -55,7 +70,7 @@ namespace UserManagementAPI.Services
             var body = $@"
                 <html>
                 <body>
-                    <h2>Welcome {userName}!</h2>
+                    <h2>Welcome {Html(userName)}!</h2>
                     <p>Thank you for joining our platform. We're excited to have you on board!</p>
                     <p>Get started by exploring our features and let us know if you need any help.</p>
                 </body>

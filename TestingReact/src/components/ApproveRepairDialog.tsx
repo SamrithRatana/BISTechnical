@@ -5,6 +5,7 @@ import { ShieldCheck, X, ClipboardList, Wrench } from "lucide-react";
 import toast from "react-hot-toast";
 import { RepairServiceItem, updateServiceStatus } from "@/services/api";
 import { useI18n } from "@/i18n/LanguageProvider";
+import { ModalWrapper } from "@/components/av/ModalWrapper";
 
 interface ApproveRepairDialogProps {
   item: RepairServiceItem;
@@ -53,11 +54,20 @@ export default function ApproveRepairDialog({ item, onClose, onApproved }: Appro
   };
 
   return (
-    <div
-      className="enter-fade fixed inset-0 z-[60] flex items-center justify-center p-3 sm:p-4 bg-ink/70 backdrop-blur-md"
-      onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
+    <ModalWrapper
+      open
+      onClose={onClose}
+      maxWidth="max-w-lg"
+      zIndex={60}
+      placement="center"
+      backdropVariant="heavy"
     >
-      <div className={`enter-pop w-full max-w-lg rounded-2xl overflow-hidden my-auto ${modalWrapperClass}`}>
+      {/* Header and footer are already `shrink-0`; making this a bounded
+          column is what gives them something to be pinned against. The
+          inspection and solution notes are free text and can run long, and
+          before the cap existed they pushed the Approve button off a
+          1366x768 screen. */}
+      <div className={`w-full rounded-2xl overflow-hidden flex flex-col max-h-[var(--av-modal-inner-maxh)] ${modalWrapperClass}`}>
         <div className={`px-5 py-4 flex items-center justify-between shrink-0 ${headerClass}`}>
           <div className="flex items-center gap-3">
             <div className="w-9 h-9 rounded-xl bg-success-soft text-success flex items-center justify-center">
@@ -73,7 +83,7 @@ export default function ApproveRepairDialog({ item, onClose, onApproved }: Appro
           </button>
         </div>
 
-        <div className="p-5 space-y-4">
+        <div className="flex-1 min-h-0 overflow-y-auto overscroll-contain p-5 space-y-4">
           <div className="grid grid-cols-2 gap-3 text-xs">
             <div>
               <p className="text-ink-muted font-semibold">{t("field.companyName")}</p>
@@ -103,7 +113,7 @@ export default function ApproveRepairDialog({ item, onClose, onApproved }: Appro
             </p>
           </div>
 
-          <p className="text-[11px] text-ink-muted ">
+          <p className="text-[11px] text-ink-muted">
             {t("approve.explainer")}
           </p>
         </div>
@@ -121,13 +131,13 @@ export default function ApproveRepairDialog({ item, onClose, onApproved }: Appro
             type="button"
             onClick={handleApprove}
             disabled={isSubmitting}
-            className="inline-flex items-center gap-1.5 px-5 py-2 text-xs font-bold text-white bg-success rounded-xl hover:bg-success shadow-md transition-all disabled:opacity-60"
+            className="inline-flex items-center gap-1.5 px-5 py-2 text-xs font-bold text-white bg-success rounded-xl hover:bg-success shadow-md transition-[color,background-color,border-color,box-shadow,opacity,transform,filter] disabled:opacity-60"
           >
             <ShieldCheck className="w-3.5 h-3.5" />
             {isSubmitting ? t("approve.submitting") : t("dialog.approveRepair")}
           </button>
         </div>
       </div>
-    </div>
+    </ModalWrapper>
   );
 }

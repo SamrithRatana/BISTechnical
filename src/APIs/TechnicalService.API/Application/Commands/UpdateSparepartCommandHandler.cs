@@ -6,7 +6,8 @@ public class UpdateSparepartCommandHandler : IRequestHandler<UpdateSparepartComm
 {
     private readonly ITechnicalServiceRepository _repairServiceRepository;
 
-    public UpdateSparepartCommandHandler(ITechnicalServiceRepository repairServiceRepository)
+    public UpdateSparepartCommandHandler(
+        ITechnicalServiceRepository repairServiceRepository)
     {
         _repairServiceRepository = repairServiceRepository;
     }
@@ -27,9 +28,7 @@ public class UpdateSparepartCommandHandler : IRequestHandler<UpdateSparepartComm
             command.PictureUrl,
             command.LinkItemId,
             command.Quantity,
-                command.DefaultPrice); // ✅ ADD
-                                       // ✅ ADD THIS LINE
-
+                command.DefaultPrice);
         return await _repairServiceRepository.UnitOfWork.SaveEntitiesAsync(cancellationToken);
     }
 }

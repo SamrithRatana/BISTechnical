@@ -1,8 +1,10 @@
 "use client";
 
 import React, { useState, useCallback } from "react";
+import { motion } from "framer-motion";
 import { Download, Eye, Edit3, Search, RefreshCw, Plus, Printer, Trash2, ShieldCheck, Inbox } from "lucide-react";
 import toast from "react-hot-toast";
+import { DUR, EASE_OUT } from "@/lib/animations";
 import { fetchRepairServices, updateServiceStatus, deleteTechnicalService, RepairServiceItem, invalidateCachePrefix } from "@/services/api";
 import { getActionUserForStatus } from "@/services/types";
 import { useRealtimeTickets } from "@/hooks/useRealtimeTickets";
@@ -20,6 +22,7 @@ import PrintPreviewSidebar from "./PrintPreviewSidebar";
 import { useActionHandler, type ActionValues } from "./ActionBus";
 import { useI18n } from "@/i18n/LanguageProvider";
 import { translatePriority, translateStatus } from "@/i18n/statusLabel";
+import { ModalWrapper } from "@/components/av/ModalWrapper";
 
 interface ServiceTableProps {
   activeFilter: string;
@@ -79,7 +82,7 @@ function RenderStatusSelect({
   const status = row.status || "RECEIVED";
   const normFilter = (effectiveFilter || "").toUpperCase();
   const selectCls =
-    "px-3 py-1 text-[11px] font-semibold rounded-full border outline-none cursor-pointer text-center font-sans tracking-tight shadow-sm transition-all";
+    "px-3 py-1 text-[11px] font-semibold rounded-full border outline-none cursor-pointer text-center font-sans tracking-tight shadow-sm transition-[color,background-color,border-color,box-shadow,opacity,transform,filter]";
   // The <option> palette is fixed regardless of which coloured <select> the
   // option sits in, so it's hoisted rather than repeated on all ~15 of them.
   const optionCls = "bg-surface text-ink ";
@@ -625,8 +628,8 @@ export default function ServiceTable({
       )}
 
       {/* Table Toolbar */}
-      <div className={`p-3 md:p-4 shrink-0 flex flex-wrap items-center justify-between gap-4 ${toolbarClass}`}>
-        <div className="flex items-center gap-3">
+      <div className={`p-2.5 sm:p-3 lg:p-3 xl:p-4 shrink-0 flex flex-wrap items-center justify-between gap-3 lg:gap-3 xl:gap-4 ${toolbarClass}`}>
+        <div className="flex items-center gap-2.5">
           <div className="relative">
             <Search className={"w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-ink-muted"} />
             <input
@@ -634,7 +637,7 @@ export default function ServiceTable({
               placeholder={t("table.searchPlaceholder")}
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
-              className={`pl-9 pr-4 py-2 text-xs border rounded-xl focus:outline-none focus:ring-2 w-64 md:w-80 transition-all ${searchInputClass}`}
+              className={`pl-9 pr-4 py-1.5 lg:py-1.5 xl:py-2 text-xs border rounded-xl focus:outline-none focus:ring-2 w-52 sm:w-64 lg:w-64 xl:w-80 transition-[color,background-color,border-color,box-shadow,opacity,transform,filter] ${searchInputClass}`}
             />
           </div>
 
@@ -643,7 +646,7 @@ export default function ServiceTable({
               invalidateCachePrefix("repairservices");
               void refreshLoaded();
             }}
-            className={"p-2 rounded-xl transition-colors text-ink-secondary hover:bg-cushion"}
+            className={"p-1.5 lg:p-1.5 xl:p-2 rounded-xl transition-colors text-ink-secondary hover:bg-cushion"}
             title={t("action.reloadData")}
           >
             <RefreshCw className={`w-4 h-4 ${isLoading ? "animate-spin" : ""}`} />
@@ -653,7 +656,7 @@ export default function ServiceTable({
         <div className="flex items-center gap-2">
           <button
             onClick={() => handleCreateTicket()}
-            className={`inline-flex items-center gap-1.5 px-3.5 py-2 text-xs font-semibold rounded-xl transition-all ${createBtnClass}`}
+            className={`inline-flex items-center gap-1.5 px-3 py-1.5 lg:py-1.5 xl:py-2 text-xs font-semibold rounded-xl transition-[color,background-color,border-color,box-shadow,opacity,transform,filter] ${createBtnClass}`}
           >
             <Plus className="w-3.5 h-3.5" />
             <span>{t("action.createTicket")}</span>
@@ -661,7 +664,7 @@ export default function ServiceTable({
 
           <button
             onClick={handleExportCSV}
-            className={"inline-flex items-center gap-1.5 px-3 py-2 text-xs font-semibold rounded-xl transition-colors shadow-soft-sm text-ink bg-surface border border-subtle hover:bg-cushion"}
+            className={"inline-flex items-center gap-1.5 px-3 py-1.5 lg:py-1.5 xl:py-2 text-xs font-semibold rounded-xl transition-colors shadow-soft-sm text-ink bg-surface border border-subtle hover:bg-cushion"}
           >
             <Download className="w-3.5 h-3.5" />
             <span>{t("action.exportCsv")}</span>
@@ -673,30 +676,30 @@ export default function ServiceTable({
       <div ref={scrollRootRef} className="flex-1 overflow-x-auto overflow-y-auto min-h-0">
         <table className="w-full text-left border-collapse min-w-full">
           <thead>
-            {/* Sticky, for the same reason the parts table's header is: this
-                scrolls hundreds of rows inside its own container, and once the
-                header leaves the viewport every row below it is unlabelled. */}
+            {/* Sticky header */}
             <tr
-              className={`sticky top-0 z-10 text-[11px] font-semibold uppercase tracking-wider shadow-soft-sm ${headerRowClass}`}
+              className={`sticky top-0 z-10 text-[10.5px] lg:text-[10.5px] xl:text-[11px] font-semibold uppercase tracking-wider shadow-soft-sm ${headerRowClass}`}
             >
-              <th className="py-3.5 px-3 sm:px-3.5 whitespace-nowrap">{t("field.refNo")}</th>
-              <th className="py-3.5 px-3 sm:px-3.5 whitespace-nowrap">{t("field.receiveDate")}</th>
-              <th className="py-3.5 px-3 sm:px-3.5 whitespace-nowrap">{t("field.companyName")}</th>
-              <th className="py-3.5 px-3 sm:px-3.5 whitespace-nowrap">{t("table.itemNameModel")}</th>
-              <th className="py-3.5 px-3 sm:px-3.5 whitespace-nowrap">{t("field.serialNumber")}</th>
-              <th className="py-3.5 px-3 sm:px-3.5 whitespace-nowrap text-center">{t("field.priority")}</th>
-              <th className="py-3.5 px-3 sm:px-3.5 whitespace-nowrap text-center">{t("field.status")}</th>
-              <th className="py-3.5 px-3 sm:px-3.5 whitespace-nowrap">{t("field.receiver")}</th>
-              <th className="py-3.5 px-3 sm:px-3.5 whitespace-nowrap text-center">{t("field.actions")}</th>
+              <th className="py-2.5 lg:py-2.5 xl:py-3.5 px-2.5 sm:px-3 xl:px-3.5 whitespace-nowrap min-w-[110px]">{t("field.refNo")}</th>
+              <th className="py-2.5 lg:py-2.5 xl:py-3.5 px-2.5 sm:px-3 xl:px-3.5 whitespace-nowrap min-w-[130px]">{t("field.receiveDate")}</th>
+              <th className="py-2.5 lg:py-2.5 xl:py-3.5 px-2.5 sm:px-3 xl:px-3.5 whitespace-nowrap min-w-[160px]">{t("field.companyName")}</th>
+              <th className="py-2.5 lg:py-2.5 xl:py-3.5 px-2.5 sm:px-3 xl:px-3.5 whitespace-nowrap min-w-[160px]">{t("table.itemNameModel")}</th>
+              <th className="py-2.5 lg:py-2.5 xl:py-3.5 px-2.5 sm:px-3 xl:px-3.5 whitespace-nowrap min-w-[120px]">{t("field.serialNumber")}</th>
+              <th className="py-2.5 lg:py-2.5 xl:py-3.5 px-2.5 sm:px-3 xl:px-3.5 whitespace-nowrap min-w-[90px] text-center">{t("field.priority")}</th>
+              <th className="py-2.5 lg:py-2.5 xl:py-3.5 px-2.5 sm:px-3 xl:px-3.5 whitespace-nowrap min-w-[140px] text-center">{t("field.status")}</th>
+              <th className="py-2.5 lg:py-2.5 xl:py-3.5 px-2.5 sm:px-3 xl:px-3.5 whitespace-nowrap min-w-[110px]">{t("field.receiver")}</th>
+              <th className="py-2.5 lg:py-2.5 xl:py-3.5 px-2.5 sm:px-3 xl:px-3.5 whitespace-nowrap min-w-[100px] text-center">{t("field.actions")}</th>
             </tr>
           </thead>
 
-          <tbody className="av-rows-contained-sm divide-y divide-[var(--av-border-subtle)] text-xs text-ink">
+          <motion.tbody
+            key={effectiveFilter}
+            initial={{ opacity: 0, y: 4 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: DUR.fast, ease: EASE_OUT }}
+            className="av-rows-contained-sm divide-y divide-[var(--av-border-subtle)] text-xs text-ink"
+          >
             {isLoading ? (
-              /* Nine real cells per row, not one bar spanning the lot. The
-                 colSpan version gave the table no column widths to hold, so
-                 every column snapped to its true width the instant data
-                 arrived — the layout jump a skeleton exists to prevent. */
               <SkeletonRows rows={8} columns={9} />
             ) : items.length > 0 ? (
               items.map((row, idx) => (
@@ -708,32 +711,32 @@ export default function ServiceTable({
                   }}
                   className="cursor-pointer transition-colors duration-150 ease-out hover:bg-cushion"
                 >
-                  <td className="py-3.5 px-3 sm:px-3.5 whitespace-nowrap font-mono font-semibold text-ink ">
+                  <td className="py-2.5 lg:py-2.5 xl:py-3.5 px-2.5 sm:px-3 xl:px-3.5 whitespace-nowrap font-mono font-semibold text-ink ">
                     <HighlightText text={row.reportNo || "N/A"} query={searchTerm} />
                   </td>
-                  <td className="py-3.5 px-3 sm:px-3.5 whitespace-nowrap text-ink-secondary ">
+                  <td className="py-2.5 lg:py-2.5 xl:py-3.5 px-2.5 sm:px-3 xl:px-3.5 whitespace-nowrap text-ink-secondary ">
                     {row.serviceDate
                       ? `${new Date(row.serviceDate).toLocaleDateString("en-GB")} ${new Date(row.serviceDate).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`
                       : "N/A"}
                   </td>
                   <td
-                    className="py-3.5 px-3 sm:px-3.5 font-medium text-ink max-w-[220px] truncate"
+                    className="py-2.5 lg:py-2.5 xl:py-3.5 px-2.5 sm:px-3 xl:px-3.5 font-medium text-ink max-w-[220px] truncate"
                     title={row.companyName || "N/A"}
                   >
                     <HighlightText text={row.companyName || "N/A"} query={searchTerm} />
                   </td>
                   <td
-                    className="py-3.5 px-3 sm:px-3.5 font-medium text-ink max-w-[240px] truncate"
+                    className="py-2.5 lg:py-2.5 xl:py-3.5 px-2.5 sm:px-3 xl:px-3.5 font-medium text-ink max-w-[240px] truncate"
                     title={row.itemName || "N/A"}
                   >
                     <HighlightText text={row.itemName || "N/A"} query={searchTerm} />
                   </td>
-                  <td className="py-3.5 px-3 sm:px-3.5 whitespace-nowrap">
+                  <td className="py-2.5 lg:py-2.5 xl:py-3.5 px-2.5 sm:px-3 xl:px-3.5 whitespace-nowrap">
                     <code className="px-2 py-0.5 rounded bg-sunken border border-subtle text-[11px] font-mono text-ink ">
                       <HighlightText text={row.serialNumber || "N/A"} query={searchTerm} />
                     </code>
                   </td>
-                  <td className="py-3.5 px-3 sm:px-3.5 whitespace-nowrap text-center">
+                  <td className="py-2.5 lg:py-2.5 xl:py-3.5 px-2.5 sm:px-3 xl:px-3.5 whitespace-nowrap text-center">
                     <span
                       className={`inline-block px-2.5 py-0.5 rounded-full border text-[10px] font-bold ${getPriorityBadge(
                         row.servicePriority || "NORMAL"
@@ -742,22 +745,22 @@ export default function ServiceTable({
                       {translatePriority(row.servicePriority || "NORMAL", t)}
                     </span>
                   </td>
-                  <td className="py-3.5 px-3 sm:px-3.5 whitespace-nowrap text-center">
+                  <td className="py-2.5 lg:py-2.5 xl:py-3.5 px-2.5 sm:px-3 xl:px-3.5 whitespace-nowrap text-center">
                     <RenderStatusSelect
                       row={row}
                       effectiveFilter={effectiveFilter}
                       onStatusChange={handleInlineStatusChange}
                     />
                   </td>
-                  <td className="py-3.5 px-3 sm:px-3.5 whitespace-nowrap text-ink-secondary ">
+                  <td className="py-2.5 lg:py-2.5 xl:py-3.5 px-2.5 sm:px-3 xl:px-3.5 whitespace-nowrap text-ink-secondary ">
                     <HighlightText text={getActionUserForStatus(row)} query={searchTerm} />
                   </td>
-                  <td className="py-3.5 px-3 sm:px-3.5 whitespace-nowrap text-center" onClick={(e) => e.stopPropagation()}>
+                  <td className="py-2.5 lg:py-2.5 xl:py-3.5 px-2.5 sm:px-3 xl:px-3.5 whitespace-nowrap text-center" onClick={(e) => e.stopPropagation()}>
                     <div className="flex items-center justify-center gap-1">
                       {requireApproval && (
                         <button
                           onClick={() => handleApproveClick(row)}
-                          className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] font-semibold text-white bg-success hover:bg-success shadow-sm transition-colors"
+                          className="inline-flex min-h-6 items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] font-semibold text-white bg-success hover:bg-success shadow-sm transition-colors"
                           title={t("nav.approveRepairing")}
                         >
                           <ShieldCheck className="w-3.5 h-3.5" />
@@ -845,7 +848,7 @@ export default function ServiceTable({
                 </td>
               </tr>
             )}
-          </tbody>
+          </motion.tbody>
         </table>
       </div>
 
@@ -908,48 +911,47 @@ export default function ServiceTable({
       )}
 
       {/* Delete Ticket Confirmation Modal */}
-      {deleteConfirmItem && (
-        <div
-          className="enter-fade fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-ink/60 backdrop-blur-sm"
-          onClick={(e) => { if (e.target === e.currentTarget) setDeleteConfirmItem(null); }}
-        >
-          <div className="enter-pop bg-surface border border-subtle w-full max-w-md rounded-2xl shadow-2xl p-6 space-y-4 my-auto">
-            <div className="w-12 h-12 rounded-2xl bg-danger-soft text-danger flex items-center justify-center mx-auto">
-              <Trash2 className="w-6 h-6" />
-            </div>
-            <div className="text-center space-y-1">
-              <h3 className="text-sm font-bold text-ink ">{t("table.deleteTicketTitle")}</h3>
-              {/* The ref number is interpolated into the sentence rather than
-                  wrapped in its own <strong>: Khmer puts the object in a
-                  different position, so a hardcoded prefix/suffix split around
-                  the emphasis would read as scrambled word order there. */}
-              <p className="text-xs text-ink-secondary ">
-                {t("table.deleteTicketBody", {
-                  ref: deleteConfirmItem.reportNo ?? "",
-                  company: deleteConfirmItem.companyName ?? "",
-                })}
-              </p>
-            </div>
-            <div className="flex items-center justify-end gap-3 pt-2 border-t border-subtle ">
-              <button
-                type="button"
-                onClick={() => setDeleteConfirmItem(null)}
-                className="px-4 py-2 text-xs font-semibold text-ink bg-sunken rounded-xl hover:bg-sunken transition-colors"
-              >
-                {t("action.cancel")}
-              </button>
-              <button
-                type="button"
-                onClick={handleDeleteConfirm}
-                disabled={isDeleting}
-                className="px-5 py-2 text-xs font-semibold text-white bg-danger rounded-xl hover:bg-danger shadow-md transition-all disabled:opacity-60"
-              >
-                {isDeleting ? t("table.deleting") : t("table.confirmDelete")}
-              </button>
-            </div>
+      <ModalWrapper
+        open={!!deleteConfirmItem}
+        onClose={() => setDeleteConfirmItem(null)}
+        maxWidth="max-w-md"
+        zIndex={50}
+        placement="center"
+        backdropVariant="heavy"
+        isAlert
+      >
+        <div className="p-6 space-y-4">
+          <div className="w-12 h-12 rounded-2xl bg-danger-soft text-danger flex items-center justify-center mx-auto">
+            <Trash2 className="w-6 h-6" />
+          </div>
+          <div className="text-center space-y-1">
+            <h3 className="text-sm font-bold text-ink">{t("table.deleteTicketTitle")}</h3>
+            <p className="text-xs text-ink-secondary">
+              {t("table.deleteTicketBody", {
+                ref: deleteConfirmItem?.reportNo ?? "",
+                company: deleteConfirmItem?.companyName ?? "",
+              })}
+            </p>
+          </div>
+          <div className="flex items-center justify-end gap-3 pt-2 border-t border-subtle">
+            <button
+              type="button"
+              onClick={() => setDeleteConfirmItem(null)}
+              className="px-4 py-2 text-xs font-semibold text-ink bg-sunken rounded-xl hover:bg-sunken transition-colors"
+            >
+              {t("action.cancel")}
+            </button>
+            <button
+              type="button"
+              onClick={handleDeleteConfirm}
+              disabled={isDeleting}
+              className="px-5 py-2 text-xs font-semibold text-white bg-danger rounded-xl hover:bg-danger shadow-md transition-[color,background-color,border-color,box-shadow,opacity,transform,filter] disabled:opacity-60"
+            >
+              {isDeleting ? t("table.deleting") : t("table.confirmDelete")}
+            </button>
           </div>
         </div>
-      )}
+      </ModalWrapper>
     </div>
   );
 }

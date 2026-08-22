@@ -10,7 +10,7 @@ namespace TechnicalService.API.Application.Commands
         private readonly ILogger<DeleteSparepartItemCommandHandler> _logger;
 
         public DeleteSparepartItemCommandHandler(
-            ITechnicalServiceRepository technicalServiceRepository,
+        ITechnicalServiceRepository technicalServiceRepository,
             ILogger<DeleteSparepartItemCommandHandler> logger)
         {
             _technicalServiceRepository = technicalServiceRepository ??
@@ -24,7 +24,7 @@ namespace TechnicalService.API.Application.Commands
             CancellationToken cancellationToken)
         {
             _logger.LogInformation(
-                "🗑️ Deleting spare part item {SparepartItemId} from service {ServiceId}",
+                "Deleting spare part item {SparepartItemId} from service {ServiceId}",
                 command.SparepartItemId,
                 command.ServiceId);
 
@@ -33,7 +33,7 @@ namespace TechnicalService.API.Application.Commands
 
             if (service == null)
             {
-                _logger.LogWarning("❌ Service {ServiceId} not found", command.ServiceId);
+                _logger.LogWarning("Service {ServiceId} not found", command.ServiceId);
                 return false;
             }
 
@@ -44,14 +44,14 @@ namespace TechnicalService.API.Application.Commands
             if (itemToDelete == null)
             {
                 _logger.LogWarning(
-                    "❌ Spare part item {SparepartItemId} not found in service {ServiceId}",
+                    "Spare part item {SparepartItemId} not found in service {ServiceId}",
                     command.SparepartItemId,
                     command.ServiceId);
                 return false;
             }
 
-            _logger.LogInformation(
-                "📦 Found item to delete - SparepartId: {SparepartId}, Quantity: {Quantity}",
+            _logger.LogDebug(
+                "Found item to delete - SparepartId: {SparepartId}, Quantity: {Quantity}",
                 itemToDelete.SparepartId,
                 itemToDelete.Quantity);
 
@@ -59,23 +59,21 @@ namespace TechnicalService.API.Application.Commands
             // This marks it for deletion in EF Core's change tracker
             service.RemoveSparepartItem(command.SparepartItemId);
 
-            _logger.LogInformation("🔄 Saving changes to database...");
-
-            // Save changes - this will trigger the actual database DELETE
-            // which in turn will fire the SQL trigger to restore stock
+            // Save changes - this issues the actual database DELETE, which in
+            // turn fires the SQL trigger that restores stock.
             var result = await _technicalServiceRepository.UnitOfWork
                 .SaveEntitiesAsync(cancellationToken);
 
             if (result)
             {
                 _logger.LogInformation(
-                    "✅ Successfully deleted spare part item {SparepartItemId}. SQL trigger should have restored stock.",
+                    "Successfully deleted spare part item {SparepartItemId}. SQL trigger should have restored stock.",
                     command.SparepartItemId);
             }
             else
             {
                 _logger.LogError(
-                    "❌ Failed to save deletion of spare part item {SparepartItemId}",
+                    "Failed to save deletion of spare part item {SparepartItemId}",
                     command.SparepartItemId);
             }
 

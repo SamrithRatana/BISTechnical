@@ -297,7 +297,7 @@ export default function PrintPreviewSidebar({
     : formatReportDate(getStatusDate(currentItem));
 
   return (
-    <div className="fixed inset-0 z-50 flex justify-end bg-ink/70 backdrop-blur-xs transition-opacity enter-fade">
+    <div className="fixed inset-0 z-50 flex justify-end av-scrim transition-opacity enter-fade">
       {/* Sidebar Container. `enter-right` rather than `enter-pop`: this panel
           is anchored to the right edge, so sliding in from off-screen matches
           where it lives. It is also the one entrance worth running slightly
@@ -324,7 +324,7 @@ export default function PrintPreviewSidebar({
           <div className="flex items-center gap-2">
             <button
               onClick={handlePrint}
-              className="inline-flex items-center gap-2 px-4 py-1.5 text-xs font-bold text-white bg-info hover:bg-info rounded-lg transition-all shadow-md shadow-blue-500/20 active:scale-95 cursor-pointer"
+              className="inline-flex items-center gap-2 px-4 py-1.5 text-xs font-bold text-white bg-info hover:bg-info rounded-lg transition-[color,background-color,border-color,box-shadow,opacity,transform,filter] shadow-md shadow-info/20 active:scale-95 cursor-pointer"
             >
               <Printer className="w-4 h-4" />
               <span>Print Report</span>
@@ -601,7 +601,7 @@ export default function PrintPreviewSidebar({
             </button>
             <button
               onClick={handlePrint}
-              className="inline-flex items-center gap-2 px-5 py-1.5 text-xs font-bold text-white bg-info hover:bg-info rounded-lg transition-all shadow-md shadow-blue-500/20 active:scale-95 cursor-pointer"
+              className="inline-flex items-center gap-2 px-5 py-1.5 text-xs font-bold text-white bg-info hover:bg-info rounded-lg transition-[color,background-color,border-color,box-shadow,opacity,transform,filter] shadow-md shadow-info/20 active:scale-95 cursor-pointer"
             >
               <Printer className="w-4 h-4" />
               <span>Print Report</span>

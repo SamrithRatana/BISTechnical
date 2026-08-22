@@ -32,7 +32,7 @@ export default function HighlightText({
         regex.test(part) ? (
           <mark
             key={i}
-            className="bg-warning text-warning-fg font-bold px-1 rounded transition-colors "
+            className="bg-highlight text-highlight-fg font-bold px-1 rounded transition-colors "
           >
             {part}
           </mark>

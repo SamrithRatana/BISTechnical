@@ -89,6 +89,37 @@
      stayed a pale band across the top of the app in dark mode. */
   --av-glass-bg: rgba(255, 255, 255, 0.82);
 
+  /* ── Overlay scrim ────────────────────────────────────────────────
+     The dim-and-blur layer behind ANY overlay: modals, dialogs, the
+     lightbox, the mobile drawer. One pair of tokens because "the
+     background recedes the same way every time" is the whole point —
+     there were six different recipes in the app (bg-ink/40 through
+     /80, blur-xs through -md, and the drawer with no blur at all), so
+     the same click read as a different weight of interruption
+     depending on which screen you were on.
+
+     Tuned against the reference: the page stays legible as context but
+     is unmistakably out of reach. Blur does most of that work, so the
+     dim can stay light — a heavy tint plus a heavy blur turns the page
+     into grey mud and loses the sense of depth. */
+  --av-scrim-bg: rgba(0, 0, 0, 0.45);
+  --av-scrim-blur: 14px;
+
+  /* ── Floating panels (popovers, dropdowns, command palettes) ──────
+     Distinct from `--av-glass-bg`, which is sticky CHROME the page
+     scrolls under and therefore near-opaque. A popover floats ABOVE
+     the page for a moment, so it can afford to be more translucent and
+     let what it covers show through — that is what makes it read as
+     glass rather than as a plain card that happens to be on top. */
+  --av-panel-bg: rgba(255, 255, 255, 0.80);
+  --av-panel-blur: 20px;
+  --av-panel-border: rgba(255, 255, 255, 0.9);
+  /* Two layers: a tight contact shadow so the panel sits ON something,
+     and a wide soft one so it reads as lifted well clear of the page. */
+  --av-panel-shadow:
+    0 2px 6px -1px rgba(17, 24, 39, 0.08),
+    0 18px 40px -12px rgba(17, 24, 39, 0.28);
+
   /* ── Accent: emerald / forest ──────────────────────────────────────
      `base` is the deep forest end of the specified range and carries the
      identity — icons, active states, buttons. `bright` is the light end,
@@ -117,6 +148,15 @@
   --av-warning: #B45309;
   --av-warning-soft: #FDF3E7;
   --av-warning-fg: #92400E;
+
+  /* Search-match highlight. Deliberately its OWN token, not a reuse of
+     `--av-warning` — that token also drives badges/alerts elsewhere, and
+     retargeting it to a bright accessible yellow would recolor all of those
+     too. A `<mark>` carries its own background/foreground pair regardless of
+     the surrounding light/dark surface, so light and dark restate the same
+     values on purpose (unlike every other token pair on this page). */
+  --av-highlight: #FDE047;
+  --av-highlight-fg: #111827;
 
   --av-danger: #BE123C;
   --av-danger-soft: #FDECEF;
@@ -156,6 +196,19 @@
     0 20px 40px -12px rgba(16, 24, 40, 0.14),
     0 6px 14px -3px rgba(16, 24, 40, 0.06),
     inset 0 1px 1px 0 rgba(255, 255, 255, 0.95);
+
+  /* ── Surface style (Theme & Branding) ──────────────────────────────
+     `Card`'s `surface`/`elevated` variants read these four instead of a
+     fixed shadow/border/background, so the preset picker on the Settings
+     page can switch them live. `cushion` — the shipped default — just
+     aliases the tokens above; the other two presets are pure additions
+     defined via `[data-surface-style]` further down, so nothing about the
+     existing look changes unless a user opens Settings and picks one. */
+  --av-card-shadow: var(--av-shadow-cushion);
+  --av-card-shadow-hover: var(--av-shadow-cushion-hover);
+  --av-card-blur: 0px;
+  --av-card-bg: var(--av-bg-surface);
+  --av-card-border: var(--av-border-glass);
 
   /* ── Motion ────────────────────────────────────────────────────────
      One curve and one duration scale, so hover states across the app
@@ -295,6 +348,29 @@
      left a pale band across the top of the app in dark mode. */
   --av-glass-bg: rgba(16, 18, 20, 0.82);
 
+  /* ── Overlay scrim ────────────────────────────────────────────────
+     Darker and slightly more opaque than the light theme's. On a dark
+     ground a 0.32 tint is nearly invisible — the layer has to actually
+     separate two dark surfaces, so it leans on pure black rather than
+     the ink hue and takes the opacity up. */
+  --av-scrim-bg: rgba(0, 0, 0, 0.65);
+  --av-scrim-blur: 14px;
+
+  /* ── Floating panels ──────────────────────────────────────────────
+     Lifted ABOVE the surface it floats over, the mirror of the header's
+     rule (which tints down because content scrolls under it). A popover
+     covers static content instead, so raising it is what separates the
+     two. The border drops to a faint sheen for the reason given above:
+     a near-white hairline draws a hard line on a dark panel. */
+  --av-panel-bg: rgba(20, 23, 29, 0.82);
+  --av-panel-blur: 20px;
+  --av-panel-border: rgba(232, 234, 237, 0.12);
+  /* No soft outer glow: on a dark ground a wide light shadow reads as
+     haze. Depth here comes from the border sheen and a hard black edge. */
+  --av-panel-shadow:
+    0 2px 6px -1px rgba(0, 0, 0, 0.5),
+    0 18px 40px -12px rgba(0, 0, 0, 0.65);
+
   /* ── Accent ───────────────────────────────────────────────────────
      `base` moves UP to the bright end. The light theme's #0F6E4E is a
      deep forest that reads as almost black here — an active sidebar row
@@ -321,6 +397,10 @@
   --av-warning: #FBBF24;
   --av-warning-soft: rgba(251, 191, 36, 0.15);
   --av-warning-fg: #FCD777;
+
+  /* Same pair as light — see the light block's comment. */
+  --av-highlight: #FDE047;
+  --av-highlight-fg: #111827;
 
   --av-danger: #FB7185;
   --av-danger-soft: rgba(251, 113, 133, 0.16);
@@ -363,6 +443,13 @@
     0 20px 40px -12px rgba(0, 0, 0, 0.55),
     0 6px 14px -3px rgba(0, 0, 0, 0.34),
     inset 0 1px 1px 0 rgba(232, 234, 237, 0.08);
+
+  /* Same aliasing as the light block — see its comment. */
+  --av-card-shadow: var(--av-shadow-cushion);
+  --av-card-shadow-hover: var(--av-shadow-cushion-hover);
+  --av-card-blur: 0px;
+  --av-card-bg: var(--av-bg-surface);
+  --av-card-border: var(--av-border-glass);
 }
 
 /* ══════════════════════════════════════════════════════════════════════
@@ -421,6 +508,34 @@ html[data-density="compact"] table :is(td, th) :is(.py-1\.5, .py-2) {
   padding-bottom: 0.125rem;
 }
 
+/* ── Surface style ────────────────────────────────────────────────────
+   Three elevation treatments for `Card`'s `surface`/`elevated` variants —
+   `SurfaceStyleName` in `theme/themeConfig.ts`. `cushion` needs no rule
+   here; it's the `--av-card-*` default set in `:root`/`.dark` above.
+
+   `flat` also swaps `--av-card-border` to the dark hairline
+   (`--av-border-subtle`) rather than leaving the near-white
+   `--av-border-glass` in place — `Card.tsx`'s own comment already documents
+   why: that soft border only reads as an edge paired WITH the cushion
+   shadow, and a flat card with no shadow and a near-invisible border would
+   look broken rather than minimal. */
+html[data-surface-style="glass"] {
+  --av-card-shadow: var(--av-shadow-md);
+  --av-card-shadow-hover: var(--av-shadow-lg);
+  --av-card-blur: 20px;
+  --av-card-bg: rgba(255, 255, 255, 0.68);
+}
+html.dark[data-surface-style="glass"] {
+  --av-card-bg: rgba(24, 26, 28, 0.68);
+}
+
+html[data-surface-style="flat"] {
+  --av-card-shadow: none;
+  --av-card-shadow-hover: none;
+  --av-card-blur: 0px;
+  --av-card-border: var(--av-border-subtle);
+}
+
 /* ══════════════════════════════════════════════════════════════════════
    TAILWIND BRIDGE
    ══════════════════════════════════════════════════════════════════════
@@ -469,6 +584,8 @@ html[data-density="compact"] table :is(td, th) :is(.py-1\.5, .py-2) {
   --color-warning: var(--av-warning);
   --color-warning-soft: var(--av-warning-soft);
   --color-warning-fg: var(--av-warning-fg);
+  --color-highlight: var(--av-highlight);
+  --color-highlight-fg: var(--av-highlight-fg);
   --color-danger: var(--av-danger);
   --color-danger-soft: var(--av-danger-soft);
   --color-danger-fg: var(--av-danger-fg);
@@ -545,6 +662,324 @@ body {
   border-bottom: 1px solid var(--av-border-subtle);
 }
 
+/* The dim-and-blur layer behind any overlay.
+
+   Use this for EVERY overlay backdrop rather than hand-picking a
+   `bg-ink/NN backdrop-blur-NN` pair at the call site: the weight of the
+   interruption is a system-level decision, not a per-screen one.
+
+   `backdrop-filter` creates a containing block for fixed descendants, so
+   this is deliberately a class for a dedicated backdrop ELEMENT sitting
+   behind the panel — never put it on the wrapper that also holds the
+   dialog, or the dialog's own positioning starts resolving against it. */
+.av-scrim {
+  background: var(--av-scrim-bg);
+  backdrop-filter: blur(var(--av-scrim-blur));
+  -webkit-backdrop-filter: blur(var(--av-scrim-blur));
+}
+
+/* Sticky Header and Island Nav frosted glass */
+.av-glass,
+.soft-glass {
+  background: rgba(255, 255, 255, 0.82);
+  backdrop-filter: blur(20px) saturate(180%);
+  -webkit-backdrop-filter: blur(20px) saturate(180%);
+  border-color: rgba(0, 0, 0, 0.08);
+}
+
+.dark .av-glass,
+.dark .soft-glass {
+  background: rgba(20, 23, 29, 0.84);
+  backdrop-filter: blur(20px) saturate(180%);
+  -webkit-backdrop-filter: blur(20px) saturate(180%);
+  border-color: rgba(255, 255, 255, 0.08);
+}
+
+/* A floating panel: popover, dropdown menu, search results, command list.
+
+   Sits above the page for a moment rather than being part of it, so it is
+   translucent and blurred — what it covers stays faintly visible, which is
+   what separates a popover from a card. Chrome that content scrolls under
+   wants `.av-glass` instead; that one is near-opaque on purpose. */
+.av-glass-panel {
+  background: var(--av-panel-bg);
+  backdrop-filter: blur(var(--av-panel-blur)) saturate(180%);
+  -webkit-backdrop-filter: blur(var(--av-panel-blur)) saturate(180%);
+  border: 1px solid var(--av-panel-border);
+  box-shadow: var(--av-panel-shadow);
+}
+
+/* ── Dialog geometry ───────────────────────────────────────────────────────
+   How much room a dialog is allowed, in one place.
+
+   `ModalWrapper` used to spell its gutter as
+   `pt-16 sm:pt-18 pb-6 px-3 sm:p-4 lg:p-4 xl:p-6`, which mixes the `p-*`
+   shorthand with `pt-*`/`pb-*` longhands. Tailwind emits the shorthand first,
+   so from `sm` upward `p-4`/`p-6` silently won every edge and the `pt-16`
+   written to clear the floating header had no effect on any desktop width.
+   Measured at 1366x768: 24px on all four sides, not the 64px/24px intended.
+
+   More importantly the panel itself had `max-height: none`. A 1366x768 laptop
+   has ~625px of viewport once browser chrome and the Windows taskbar are gone,
+   so any dialog taller than that turned the whole overlay into a scrolling
+   page: the title and the close button scrolled off the top, and the panel's
+   own sticky header — where it had one — went with them.
+
+   `--av-modal-maxh` is the height a panel may actually occupy. Panels cap
+   themselves with it and scroll their own body, so the overlay never scrolls
+   and the header always stays put. It is redeclared on the centering wrapper
+   for `placement="top"`, which spends more of the viewport above the panel.
+
+   The gutter tightens on short viewports: 24px a side is 8% of a 625px screen
+   and buys nothing there. `dvh`, not `vh`, so a mobile URL bar cannot push the
+   bottom of a dialog under itself.
+
+   Two vars, not one, because the panel has a 1px border and `box-sizing` is
+   `border-box` everywhere: a child capped at the same `--av-modal-maxh` as the
+   panel is 2px taller than the panel's content box, and the panel grows a
+   scrollbar of its own next to the child's. `--av-modal-inner-maxh` is the
+   one anything INSIDE a panel should use; `--av-modal-maxh` is ModalWrapper's
+   alone. */
+:root {
+  --av-modal-gutter: 1.5rem;
+  --av-modal-gutter-top: 5rem;
+}
+
+@media (max-height: 780px) {
+  :root {
+    --av-modal-gutter: 0.75rem;
+    --av-modal-gutter-top: 3rem;
+  }
+}
+
+@media (max-width: 640px) {
+  :root {
+    --av-modal-gutter: 0.75rem;
+    --av-modal-gutter-top: 3rem;
+  }
+}
+
+/* `--av-header-h` is written on <html> by `Header.tsx` while a header is
+   mounted, and removed on the headerless routes — hence the `0px` fallback,
+   which makes `/login` and `/scanner` reserve nothing.
+
+   Reserving it is not cosmetic. The header is `sticky top-0` and is raised to
+   `z-[2500]` whenever a dialog is open — above the modal layer at 1120 — so a
+   viewport-centred panel is painted UNDER the band, losing its top corner and
+   part of its title row. Centring inside the region below the header is what
+   the long-dead `pt-16` in `ModalWrapper` was reaching for. */
+.av-modal-center {
+  --av-modal-pad-top: calc(var(--av-header-h, 0px) + var(--av-modal-gutter));
+  padding: var(--av-modal-pad-top) var(--av-modal-gutter) var(--av-modal-gutter);
+  --av-modal-maxh: calc(
+    100dvh - var(--av-modal-pad-top) - var(--av-modal-gutter)
+  );
+  --av-modal-inner-maxh: calc(var(--av-modal-maxh) - 2px);
+}
+
+/* The command palette already stands off the top; `max()` keeps that spacing
+   on a tall screen and lets the header push it down on a short one, rather
+   than the two settings fighting. */
+.av-modal-top {
+  --av-modal-pad-top: max(
+    var(--av-modal-gutter-top),
+    calc(var(--av-header-h, 0px) + var(--av-modal-gutter))
+  );
+  padding: var(--av-modal-pad-top) var(--av-modal-gutter) var(--av-modal-gutter);
+  --av-modal-maxh: calc(
+    100dvh - var(--av-modal-pad-top) - var(--av-modal-gutter)
+  );
+  --av-modal-inner-maxh: calc(var(--av-modal-maxh) - 2px);
+}
+
+/* Command Palette panel glass — matches the Aura Velvet reference exactly.
+   Light: rgba(255,255,255,0.80) + blur(20px) + white border
+   Dark:  rgba(20,23,29,0.82)   + blur(20px) + subtle border
+   The av-scrim backdrop is already blurring the page behind it, so the panel
+   only needs its own blur to achieve the soft "frosted glass inside frosted
+   glass" layering without compounding into grey mud. */
+.cmd-palette-glass {
+  background: linear-gradient(135deg, rgba(255, 255, 255, 0.65) 0%, rgba(255, 255, 255, 0.40) 100%);
+  backdrop-filter: blur(32px) saturate(190%);
+  -webkit-backdrop-filter: blur(32px) saturate(190%);
+  border: 1px solid rgba(255, 255, 255, 0.35);
+  box-shadow: 
+    0 25px 60px -15px rgba(0, 0, 0, 0.12),
+    0 10px 25px -5px rgba(0, 0, 0, 0.04),
+    0 0 0 1px rgba(0, 0, 0, 0.03),
+    inset 0 1px 1px 0 rgba(255, 255, 255, 0.5);
+}
+
+.dark .cmd-palette-glass {
+  background: linear-gradient(135deg, rgba(30, 41, 59, 0.70) 0%, rgba(15, 23, 42, 0.75) 100%);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  box-shadow: 
+    0 25px 60px -15px rgba(0, 0, 0, 0.5),
+    0 10px 25px -5px rgba(0, 0, 0, 0.3),
+    0 0 0 1px rgba(255, 255, 255, 0.05),
+    inset 0 1px 1px 0 rgba(255, 255, 255, 0.12);
+}
+
+/* NOTE: the dark variants below are written `html[...].dark`, not
+   `.dark html[...]`. `ThemeProvider` toggles `.dark` on <html> itself, so a
+   descendant `html` can never match — 23 selectors in this family were written
+   that way and had never applied to anything. They were not merely inert:
+   every one still had to be matched against every element on each style
+   recalculation, and a theme toggle invalidates all of them at once. */
+
+/* ── Command Palette Style: Solid Theme Surface ────────────────── */
+html[data-cmd-palette-style="solid"] .cmd-palette-glass {
+  background: #ffffff;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  border: 1px solid rgba(0, 0, 0, 0.10);
+  box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.18), 0 10px 20px -5px rgba(0, 0, 0, 0.06);
+}
+
+html[data-cmd-palette-style="solid"].dark .cmd-palette-glass {
+  background: #14171d;
+  border: 1px solid rgba(255, 255, 255, 0.10);
+  box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.6);
+}
+
+/* ── Command Palette Style: Brand-Tinted Glass (Light Mode) ─────── */
+html[data-cmd-palette-style="tinted"] .cmd-palette-glass {
+  background: linear-gradient(135deg, color-mix(in srgb, var(--color-accent, #06b6d4) 14%, rgba(255, 255, 255, 0.72)) 0%, color-mix(in srgb, var(--color-accent, #06b6d4) 6%, rgba(255, 255, 255, 0.45)) 100%);
+  backdrop-filter: blur(32px) saturate(190%);
+  -webkit-backdrop-filter: blur(32px) saturate(190%);
+  border: 1px solid color-mix(in srgb, var(--color-accent, #06b6d4) 30%, rgba(255, 255, 255, 0.60));
+  box-shadow: 
+    0 25px 60px -15px rgba(0, 0, 0, 0.12),
+    0 0 30px -5px color-mix(in srgb, var(--color-accent, #06b6d4) 20%, transparent),
+    inset 0 1px 1px 0 rgba(255, 255, 255, 0.7);
+}
+
+/* ── Command Palette Style: Brand-Tinted Glass (Dark Mode) ──────── */
+html[data-cmd-palette-style="tinted"].dark .cmd-palette-glass {
+  background: linear-gradient(135deg, color-mix(in srgb, var(--color-accent, #06b6d4) 28%, #0f172a) 0%, rgba(15, 23, 42, 0.88) 100%);
+  border: 1px solid color-mix(in srgb, var(--color-accent, #06b6d4) 40%, rgba(255, 255, 255, 0.18));
+  box-shadow: 
+    0 25px 60px -15px rgba(0, 0, 0, 0.55),
+    0 0 35px -5px color-mix(in srgb, var(--color-accent, #06b6d4) 25%, transparent),
+    inset 0 1px 1px 0 rgba(255, 255, 255, 0.15);
+}
+
+/* ── Command Palette Style: Obsidian Acrylic Dark Glass (Always Dark) ── */
+html[data-cmd-palette-style="acrylic"] .cmd-palette-glass {
+  background: linear-gradient(135deg, rgba(15, 23, 42, 0.94) 0%, rgba(2, 6, 23, 0.97) 100%);
+  backdrop-filter: blur(36px) saturate(190%);
+  -webkit-backdrop-filter: blur(36px) saturate(190%);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  box-shadow: 
+    0 30px 70px -15px rgba(0, 0, 0, 0.7),
+    0 0 0 1px rgba(255, 255, 255, 0.06),
+    inset 0 1px 1px 0 rgba(255, 255, 255, 0.2);
+  color: #ffffff;
+}
+
+/* ── High-Contrast White Text & Icons for Obsidian Dark & Dark Brand Tinted ── */
+html[data-cmd-palette-style="acrylic"] .cmd-palette-glass input,
+html[data-cmd-palette-style="tinted"].dark .cmd-palette-glass input {
+  color: #ffffff !important;
+}
+
+html[data-cmd-palette-style="acrylic"] .cmd-palette-glass input::placeholder,
+html[data-cmd-palette-style="tinted"].dark .cmd-palette-glass input::placeholder {
+  color: rgba(255, 255, 255, 0.55) !important;
+}
+
+html[data-cmd-palette-style="acrylic"] .cmd-palette-glass p.text-slate-900,
+html[data-cmd-palette-style="acrylic"] .cmd-palette-glass p.text-ink,
+html[data-cmd-palette-style="acrylic"] .cmd-palette-glass p:not(.text-accent),
+html[data-cmd-palette-style="acrylic"] .cmd-palette-glass span.text-slate-900,
+html[data-cmd-palette-style="tinted"].dark .cmd-palette-glass p.text-slate-900,
+html[data-cmd-palette-style="tinted"].dark .cmd-palette-glass p.text-ink,
+html[data-cmd-palette-style="tinted"].dark .cmd-palette-glass p:not(.text-accent),
+html[data-cmd-palette-style="tinted"].dark .cmd-palette-glass span.text-slate-900 {
+  color: #ffffff !important;
+}
+
+html[data-cmd-palette-style="acrylic"] .cmd-palette-glass .text-slate-700,
+html[data-cmd-palette-style="acrylic"] .cmd-palette-glass .text-slate-600,
+html[data-cmd-palette-style="acrylic"] .cmd-palette-glass .text-slate-500,
+html[data-cmd-palette-style="acrylic"] .cmd-palette-glass .text-ink-secondary,
+html[data-cmd-palette-style="acrylic"] .cmd-palette-glass .text-ink-muted,
+html[data-cmd-palette-style="tinted"].dark .cmd-palette-glass .text-slate-700,
+html[data-cmd-palette-style="tinted"].dark .cmd-palette-glass .text-slate-600,
+html[data-cmd-palette-style="tinted"].dark .cmd-palette-glass .text-slate-500,
+html[data-cmd-palette-style="tinted"].dark .cmd-palette-glass .text-ink-secondary,
+html[data-cmd-palette-style="tinted"].dark .cmd-palette-glass .text-ink-muted {
+  color: rgba(255, 255, 255, 0.70) !important;
+}
+
+html[data-cmd-palette-style="acrylic"] .cmd-palette-glass kbd,
+html[data-cmd-palette-style="tinted"].dark .cmd-palette-glass kbd {
+  background-color: rgba(255, 255, 255, 0.15) !important;
+  border-color: rgba(255, 255, 255, 0.20) !important;
+  color: #ffffff !important;
+}
+
+html[data-cmd-palette-style="acrylic"] .cmd-palette-glass [class*="ROW_ICON"],
+html[data-cmd-palette-style="acrylic"] .cmd-palette-glass .bg-white\/80,
+html[data-cmd-palette-style="acrylic"] .cmd-palette-glass .w-9.h-9:not(.bg-accent),
+html[data-cmd-palette-style="tinted"].dark .cmd-palette-glass [class*="ROW_ICON"],
+html[data-cmd-palette-style="tinted"].dark .cmd-palette-glass .bg-white\/80,
+html[data-cmd-palette-style="tinted"].dark .cmd-palette-glass .w-9.h-9:not(.bg-accent) {
+  background-color: rgba(255, 255, 255, 0.12) !important;
+  border-color: rgba(255, 255, 255, 0.18) !important;
+  color: #ffffff !important;
+}
+
+html[data-cmd-palette-style="acrylic"] .cmd-palette-glass .border-b,
+html[data-cmd-palette-style="acrylic"] .cmd-palette-glass .border-t,
+html[data-cmd-palette-style="tinted"].dark .cmd-palette-glass .border-b,
+html[data-cmd-palette-style="tinted"].dark .cmd-palette-glass .border-t {
+  border-color: rgba(255, 255, 255, 0.10) !important;
+}
+
+html[data-cmd-palette-style="acrylic"] .cmd-palette-glass button.text-slate-700,
+html[data-cmd-palette-style="tinted"].dark .cmd-palette-glass button.text-slate-700 {
+  color: rgba(255, 255, 255, 0.85) !important;
+}
+
+html[data-cmd-palette-style="acrylic"] .cmd-palette-glass .bg-black\/\[0\.06\],
+html[data-cmd-palette-style="tinted"].dark .cmd-palette-glass .bg-black\/\[0\.06\] {
+  background-color: rgba(255, 255, 255, 0.18) !important;
+  color: #ffffff !important;
+}
+
+html[data-cmd-palette-style="acrylic"] .cmd-palette-glass .bg-black\/\[0\.02\],
+html[data-cmd-palette-style="tinted"].dark .cmd-palette-glass .bg-black\/\[0\.02\] {
+  background-color: rgba(0, 0, 0, 0.28) !important;
+  color: rgba(255, 255, 255, 0.80) !important;
+}
+
+/* Backdrop-blur is not universal (older Firefox, and anything with the
+   effect disabled). Without a fallback those users get a barely-tinted
+   translucent sheet with page content legible straight through the panel
+   they are supposed to be reading. Fall back to the opaque surface. */
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  .av-scrim {
+    background: var(--av-scrim-bg);
+    opacity: 1;
+  }
+  .av-glass-panel {
+    background: var(--av-bg-elevated);
+  }
+}
+
+/* Rows inside a glass panel.
+
+   A solid `bg-sunken` hover would punch an opaque rectangle through the
+   frosted fill and break the illusion; these stay translucent so the blur
+   continues underneath them. */
+.av-glass-row {
+  transition: background-color var(--av-dur-fast) var(--av-ease);
+}
+.av-glass-row:hover {
+  background-color: color-mix(in srgb, var(--av-text-primary) 6%, transparent);
+}
+
 /* Hover elevation.
 
    `translateY` + `box-shadow` only — never margin, height or top — so the
@@ -558,7 +993,7 @@ body {
 }
 .av-hover-lift:hover {
   transform: translateY(-3px);
-  box-shadow: var(--av-shadow-cushion-hover);
+  box-shadow: var(--av-card-shadow-hover);
 }
 
 /* The pulsing dot on a "Live Real-Time" pill. Scale/opacity only. */
@@ -641,11 +1076,64 @@ html[data-lang="km"] .tracking-widest {
   letter-spacing: normal;
 }
 
-/* `uppercase` has no meaning in Khmer — the script has no letter case — but the
-   property still applies to any Latin mixed into the same label (a serial
-   number, "CSV"), producing a jarring size break mid-heading. */
 html[data-lang="km"] .uppercase {
   text-transform: none;
+}
+
+/* ─── Ultra-Fast & Snappy Language Morph Transition (0.24s Crisp Response) ─── */
+html.lang-switching h1,
+html.lang-switching h2,
+html.lang-switching h3,
+html.lang-switching h4,
+html.lang-switching h5,
+html.lang-switching h6,
+html.lang-switching p,
+html.lang-switching span:not(.font-mono),
+html.lang-switching th,
+html.lang-switching td,
+html.lang-switching label,
+html.lang-switching button span {
+  animation: snappy-text-roll 0.24s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+  will-change: transform, opacity;
+}
+
+@keyframes snappy-text-roll {
+  0% {
+    opacity: 0.4;
+    transform: translateY(3px);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0px);
+  }
+}
+
+/* Gentle transitions on typography properties — opt-in, exactly like
+   `.av-theme-transition`, and for a stronger reason than that one.
+
+   This selector list matches 185 elements on a typical page, and BOTH animated
+   properties trigger layout. Declared unconditionally it left every heading,
+   paragraph, span, label, button, link and table cell in the document holding
+   a live layout-animating transition at all times, against the project's
+   "animate transform and opacity only" rule.
+
+   `ThemeProvider.withTypeFade()` adds the class only when `fontScale` or
+   `density` actually changes — the two preferences that move type metrics —
+   and removes it 230ms later. */
+html.av-type-transition :is(h1, h2, h3, h4, h5, h6, p, span, label, button, a, td, th) {
+  transition: letter-spacing 0.18s ease-out, line-height 0.18s ease-out;
+}
+
+/* Dark theme input autofill override (Prevents Chrome/Edge from turning inputs white) */
+input:-webkit-autofill,
+input:-webkit-autofill:hover, 
+input:-webkit-autofill:focus,
+input:-webkit-autofill:active {
+  -webkit-text-fill-color: #f8fafc !important;
+  -webkit-box-shadow: 0 0 0px 1000px #090d16 inset !important;
+  box-shadow: 0 0 0px 1000px #090d16 inset !important;
+  transition: background-color 5000s ease-in-out 0s !important;
+  caret-color: #10b981 !important;
 }
 
 /* Entrance for popover-style panels positioned with exact fixed pixel
@@ -659,6 +1147,17 @@ html[data-lang="km"] .uppercase {
 }
 .dropdown-panel-in {
   animation: dropdown-panel-in 0.15s ease-out;
+}
+
+/* The scrim behind an anchored dropdown. Opacity only — the blur is already
+   expensive to composite, and animating the filter itself would re-rasterise
+   the backdrop every frame. */
+@keyframes dropdown-scrim-in {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+.dropdown-scrim-in {
+  animation: dropdown-scrim-in 0.15s ease-out;
 }
 
 @keyframes dropdown-panel-in-top {
@@ -1267,6 +1766,115 @@ html[data-motion="reduced"] .av-skeleton {
 html[data-motion="reduced"] .animate-spin {
   animation-duration: 1.2s !important;
   animation-iteration-count: infinite !important;
+}
+
+/* ══════════════════════════════════════════════════════════════════════
+   LITE MODE
+   ══════════════════════════════════════════════════════════════════════
+
+   `html[data-lite="on"]`, written pre-paint by `ThemeScript` from the same
+   `ui-prefs` object as every other appearance preference, and set either by
+   the user in Settings or by accepting the offer `PerformanceProvider` makes
+   when it detects a low-tier device.
+
+   ── What it removes, and why these specifically ────────────────────────
+
+   Not animation — `data-motion="reduced"` above already owns that, and the
+   two are separate switches because they solve different problems. These are
+   the effects that cost on every PAINT, moving or still:
+
+   1. `backdrop-filter`. The single most expensive thing in this stylesheet.
+      Each blurred surface forces the compositor to re-sample everything
+      behind it, and the app stacks them — a dropdown (`.av-glass-panel`)
+      over a scrim (`.av-scrim`) over a sticky header (`.av-glass`) is three
+      full-viewport blurs in one frame. On integrated graphics that alone
+      misses frame budget with nothing animating at all.
+
+   2. Layered shadows. `--av-shadow-*` are multi-stop with large blur radii;
+      each is a separate offscreen pass. Flattened to a hairline border, which
+      keeps the edge that separates a card from the page — the *information*
+      the shadow carries — at effectively no cost.
+
+   3. 3D transforms. Anything that promotes a layer and holds it there.
+
+   ── What it must NOT remove ────────────────────────────────────────────
+
+   Layout, content, colour, or any feature. Lite Mode is strictly a reduction
+   in visual richness: every row, control and number stays exactly where it
+   was, so a technician switching it on mid-shift is not relearning the
+   screen. Row virtualization is untouched by design — that is a
+   data-rendering optimisation, not decoration, and it matters MORE on a weak
+   machine, not less.
+
+   The opaque fallbacks below deliberately reuse the same tokens as the
+   `@supports not (backdrop-filter)` block further up: a browser that cannot
+   blur and a machine that should not blur want the identical surface. */
+
+html[data-lite="on"] .av-glass,
+html[data-lite="on"] .soft-glass,
+html[data-lite="on"] .av-glass-panel,
+html[data-lite="on"] .cmd-palette-glass,
+html[data-lite="on"] .av-scrim,
+html[data-lite="on"] [class*="backdrop-blur"] {
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+
+/* Opaque replacements, so removing the blur never leaves text sitting on a
+   translucent sheet with page content legible straight through it. */
+html[data-lite="on"] .av-glass,
+html[data-lite="on"] .soft-glass {
+  background: var(--av-bg-surface);
+}
+html[data-lite="on"] .av-glass-panel,
+html[data-lite="on"] .cmd-palette-glass {
+  background: var(--av-bg-elevated);
+}
+html[data-lite="on"] .av-scrim {
+  background: var(--av-scrim-bg);
+  opacity: 1;
+}
+
+/* Shadows flatten.
+
+   Overriding the tokens rather than the utilities is what makes this reach
+   everything: `@theme inline` maps `--shadow-soft-sm` → `var(--av-shadow-sm)`,
+   so the 22 `shadow-soft-*` utilities in `src/` resolve through these same
+   custom properties and flatten with them. `--av-card-shadow*` are set
+   directly by the `[data-surface-style]` blocks as well as derived from
+   `--av-shadow-cushion`, so both ends are overridden.
+
+   Not everything goes to `none`. A card can lose its shadow because it still
+   has `border border-subtle` holding its edge. A floating panel — a dropdown
+   or a dialog over live content — has only the shadow separating it from what
+   is behind it, and with the blur gone too it would read as part of the page.
+   Those keep a single hairline ring: one uniform 1px spread, no blur radius,
+   which is the cheapest thing that still says "this is above". */
+html[data-lite="on"] {
+  --av-shadow-sm: none;
+  --av-shadow-md: none;
+  --av-shadow-lg: none;
+  --av-shadow-inner: none;
+  --av-shadow-cushion: none;
+  --av-shadow-cushion-hover: none;
+  --av-card-shadow: none;
+  --av-card-shadow-hover: none;
+
+  /* The two that stay visible, for the reason above. */
+  --av-shadow-xl: 0 0 0 1px var(--av-border-prominent);
+  --av-panel-shadow: 0 0 0 1px var(--av-border-prominent);
+}
+
+/* The hover lift keeps its transform (compositor-only, already cheap) but
+   loses the shadow cross-fade that has nothing left to fade to. */
+html[data-lite="on"] .av-hover-lift {
+  transition: transform var(--av-dur-base) var(--av-ease);
+}
+
+/* No layer promotion for decoration. */
+html[data-lite="on"] * {
+  perspective: none !important;
+  transform-style: flat !important;
 }
 
 /* Print Styles for Technical Service Report */

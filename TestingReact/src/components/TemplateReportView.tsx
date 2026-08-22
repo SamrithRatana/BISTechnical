@@ -16,8 +16,10 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { Workbook } from "exceljs";
 import toast from "react-hot-toast";
+import * as Sentry from "@sentry/nextjs";
 import { Download, Printer, Loader2 } from "lucide-react";
 import ExcelViewer from "@/components/ExcelViewer";
+import { ErrorState } from "@/components/av";
 import ReportFilterBar, {
   EMPTY_FILTERS,
   type ReportFilterKind,
@@ -102,6 +104,26 @@ export default function TemplateReportView({
   const [exporting, setExporting] = useState(false);
 
   /**
+   * A failure, kept distinct from "the period is empty".
+   *
+   * Before this, a failed load set `workbook` to null and showed
+   * `report.noData` — "No records in this period" — with only a toast to say
+   * otherwise, and the toast is gone in seconds. So a backend outage rendered
+   * as a confident statement that nothing happened that month, on a screen
+   * whose entire job is answering that question. There was also no way back
+   * short of reloading the browser, since the effect only re-runs when a
+   * filter or date changes.
+   */
+  const [failed, setFailed] = useState(false);
+
+  /**
+   * Bumping this re-runs the load effect with identical inputs, which is what
+   * a Retry button needs and what `useEffect`'s dependency list otherwise makes
+   * impossible — every other dependency is unchanged after a failure.
+   */
+  const [retryToken, setRetryToken] = useState(0);
+
+  /**
    * Which request the displayed workbook belongs to.
    *
    * Fetch plus `fillTemplate` is not instant, and nothing made these calls
@@ -123,6 +145,7 @@ export default function TemplateReportView({
     async (from: Date, to: Date, active: ReportFilterValues) => {
       const requestId = ++latestRequest.current;
       setLoading(true);
+      setFailed(false);
       try {
         const { groups, summary } = await load(from, to, active);
         const filled = await fillTemplate({
@@ -138,9 +161,23 @@ export default function TemplateReportView({
         // request owns the screen, including its own loading state.
         if (requestId !== latestRequest.current) return;
         setWorkbook(filled);
-      } catch {
+      } catch (err) {
         if (requestId !== latestRequest.current) return;
         setWorkbook(null);
+        setFailed(true);
+        // Through the existing Sentry setup rather than a console line: this
+        // is the one place a report failure is observable, and until now it
+        // was swallowed into a toast that nobody sees after five seconds.
+        // Tagged with the template so a single broken report is separable
+        // from the backend being down for all eight.
+        Sentry.captureException(err, {
+          tags: { area: "report", template },
+          extra: {
+            from: from.toISOString(),
+            to: to.toISOString(),
+            statuses: active.statuses,
+          },
+        });
         toast.error(t("report.loadFailed"));
       } finally {
         // Only the newest request may clear the spinner — otherwise an early
@@ -162,7 +199,9 @@ export default function TemplateReportView({
     // Nested so the effect body itself never calls setState synchronously.
     const run = () => void build(debouncedFrom, debouncedTo, filterValues);
     run();
-  }, [build, debouncedFrom, debouncedTo, filterValues]);
+    // `retryToken` is intentionally a dependency with no other use: it is the
+    // only thing that changes when the user asks for the same report again.
+  }, [build, debouncedFrom, debouncedTo, filterValues, retryToken]);
 
   const handleExport = async () => {
     if (!workbook) return;
@@ -265,12 +304,24 @@ export default function TemplateReportView({
             </div>
           </div>
         )}
-        {!loading && !sheet && (
+        {/* Failure first — a failed load must never fall through to the
+            "nothing happened this period" message below it. */}
+        {!loading && failed && (
+          <div className="flex h-full w-full items-center justify-center rounded-2xl border border-subtle/90 bg-surface p-8 shadow-sm">
+            <ErrorState
+              title={t("report.loadFailedTitle")}
+              description={t("report.loadFailed")}
+              retryLabel={t("state.retry")}
+              onRetry={() => setRetryToken((n) => n + 1)}
+            />
+          </div>
+        )}
+        {!loading && !failed && !sheet && (
           <div className="flex h-full w-full items-center justify-center rounded-2xl border border-subtle/90 bg-surface p-16 text-center text-sm text-ink-muted shadow-sm ">
             {t("report.noData")}
           </div>
         )}
-        {!loading && sheet && (
+        {!loading && !failed && sheet && (
           <ExcelViewer
             sheet={sheet}
             title={title}

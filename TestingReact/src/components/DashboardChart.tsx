@@ -35,7 +35,7 @@ const AreaChart = dynamic(
   {
     ssr: false,
     loading: () => (
-      <div className="h-[260px] grid place-items-center text-sm text-ink-muted">
+      <div className="h-[190px] lg:h-[200px] xl:h-[250px] grid place-items-center text-sm text-ink-muted">
         Loading chart…
       </div>
     ),
@@ -164,11 +164,11 @@ export default function DashboardChart() {
       }
     >
       {loading ? (
-        <div className="h-[260px] grid place-items-center text-sm text-ink-muted">
+        <div className="h-[190px] lg:h-[200px] xl:h-[250px] grid place-items-center text-sm text-ink-muted">
           {t("common.loading")}
         </div>
       ) : (
-        <AreaChart data={series} />
+        <AreaChart data={series} height={210} />
       )}
     </ChartPanel>
   );

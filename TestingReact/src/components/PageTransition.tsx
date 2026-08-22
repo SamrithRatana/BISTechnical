@@ -1,8 +1,10 @@
 "use client";
 
-import React, { useCallback } from "react";
+import React, { useCallback, useTransition } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import { animate, motion } from "framer-motion";
+import { PAGE_TRANSITION_SPRING } from "@/lib/animations";
+import { usePerformance } from "@/components/PerformanceProvider";
 
 /**
  * @file components/PageTransition.tsx
@@ -43,11 +45,55 @@ import { animate, motion } from "framer-motion";
  * shell persists, which is the *right* long-term shape but means rewriting all
  * 25 pages off `PageWrapper`.
  *
- * So the exit runs BEFORE the route changes instead. `useAnimatedNavigate`
- * plays it on the live stage, waits for it to finish, and only then pushes.
- * That reproduces the reference app's `mode="wait"` sequencing exactly — old
- * content leaves completely, then new content arrives — without depending on a
- * component surviving a change that destroys it.
+ * So the exit runs on the live stage, before the router has swapped it out.
+ *
+ * ── Why the push is NOT chained off the animation ──────────────────────────
+ *
+ * It used to be: `animate(...).then(() => router.push(href))`, to reproduce
+ * `mode="wait"` — old content leaves completely, THEN new content arrives.
+ * That sequencing is correct as choreography and wrong as engineering, for two
+ * measured reasons.
+ *
+ * 1. **It serialises the render behind the animation.** The push only fired
+ *    once the stage had reached opacity 0, so every millisecond the next route
+ *    then cost was spent on a blank screen showing the OLD url. Measured on a
+ *    production build, clicking Received Inventory → SparePart Inventory:
+ *
+ *      no throttle      blank 238→ 725ms   (487ms)
+ *      3G               blank 251→ 749ms   (498ms)
+ *      600ms latency    blank 234→2020ms  (1786ms)
+ *
+ *    The sidebar links are `<Link>`s, so the RSC payload was already
+ *    prefetched — that half-second is React *rendering* a heavy route, not
+ *    network. It cannot be prefetched away; it has to overlap the animation
+ *    instead of following it. Users read the blank-plus-stale-url as "my click
+ *    did nothing" and click again, which restarts the exit and pushes the
+ *    destination further out.
+ *
+ * 2. **A cancelled animation dropped the navigation on the floor, for good.**
+ *    `JSAnimation.cancel()` calls `teardown()` and never `notifyFinished()`,
+ *    and `GroupAnimation.finished` is a `Promise.all` over those — carrying an
+ *    explicit `TODO: Filter out cancelled or stopped animations`. So an
+ *    interrupted exit leaves a promise that never settles, `.then()` never
+ *    runs, `router.push` is never called, and the stage is stranded at opacity
+ *    0 with no timeout and no recovery. The old code had no `.catch`, no
+ *    guard, and no unmount cleanup: the single line that performed the
+ *    navigation was reachable only through a promise the animation library
+ *    does not promise to settle.
+ *
+ * Both go away by issuing the navigation FIRST and letting the exit play over
+ * the top of it. `startTransition` keeps the outgoing page mounted and
+ * on-screen while React renders the next route concurrently, so the fade and
+ * the render happen in the same window rather than end to end — and the push
+ * no longer depends on the animation reaching any particular state. If the
+ * route commits mid-fade the swap simply happens a little early, which is a
+ * far better failure than a blank screen that outlasts the user's patience.
+ *
+ * `isNavigating` is exposed so the caller can say something during a slow
+ * route instead of showing nothing; `Sidebar` renders a top progress bar off
+ * it. That matters because this app has no `loading.tsx` anywhere — during a
+ * pending transition React keeps rendering the OLD page, which is exactly the
+ * page being faded to invisible.
  *
  * Known limit, stated rather than hidden: only navigations that go through
  * `useAnimatedNavigate` play the exit. The sidebar uses it. Browser back /
@@ -81,72 +127,94 @@ import { animate, motion } from "framer-motion";
 const STAGE_ATTR = "data-page-stage";
 
 /**
- * The content stage's spring, lifted from the reference app's `AnimatePresence`
- * block so the two apps move identically.
+ * The stage's spring comes from `lib/animations`, which is the one place any
+ * duration or easing in this app is allowed to be written down. It used to be
+ * declared here as well, character-for-character identical to the copy there —
+ * two definitions of one constant, either of which could be tuned without the
+ * other moving. See that file for why the `restDelta` / `restSpeed` widening is
+ * part of it: framer's defaults keep a spring "running" for ~600ms after it
+ * reached opacity 0 at ~170ms, and here that tail is dead time before the next
+ * route starts loading.
  *
- * `restDelta` / `restSpeed` are the one addition. A spring approaches its
- * target asymptotically, and framer's defaults keep it "running" long after it
- * is visually finished — measured in the reference, the exit reached opacity 0
- * at ~170ms but the spring did not report itself settled until ~600ms. That
- * tail is invisible, and here it would be dead time the user waits through
- * before the next route even starts loading. Widening the rest thresholds ends
- * the animation when it stops being perceptible, which is the same picture and
- * roughly a third of the wait.
+ * Re-exported because this module owned the name first and removing it would be
+ * a breaking change for no gain.
  */
-export const PAGE_TRANSITION_SPRING = {
-  type: "spring",
-  stiffness: 420,
-  damping: 30,
-  restDelta: 0.01,
-  restSpeed: 0.5,
-} as const;
+export { PAGE_TRANSITION_SPRING };
 
 /** The frame the stage leaves on, matching the reference's `exit`. */
 const EXIT_KEYFRAME = { opacity: 0, y: -10, scale: 0.99 };
 
 /**
- * Whether motion is switched off, by either of the two routes the stylesheet
- * already honours: the OS preference, or this app's own setting.
+ * Whether the stage should skip its animation.
  *
  * Checked here as well as in `MotionPreference` because this animation is
  * imperative — it is not a `<motion.*>` component, so framer's context-level
- * `reducedMotion` never reaches it.
+ * `reducedMotion` never reaches it. Read from the DOM rather than from context
+ * for the same reason: `useAnimatedNavigate` is called from an event handler,
+ * where the attributes `ThemeScript` and `ThemeProvider` maintain are the
+ * cheapest source of truth and cannot be stale.
+ *
+ * Three sources, not two:
+ *
+ * - the OS `prefers-reduced-motion` setting;
+ * - this app's own motion switch (`data-motion`);
+ * - **Lite Mode** (`data-lite`), which is otherwise about paint cost rather
+ *   than animation. It counts here because this is the one animation that
+ *   composites the ENTIRE viewport every frame — a full-page opacity and
+ *   transform on the heaviest element in the tree. Small local animations stay
+ *   on under Lite Mode; the whole-screen one does not.
  */
 function motionIsOff(): boolean {
+  const root = document.documentElement;
   return (
-    document.documentElement.dataset.motion === "reduced" ||
+    root.dataset.motion === "reduced" ||
+    root.dataset.lite === "on" ||
     window.matchMedia("(prefers-reduced-motion: reduce)").matches
   );
 }
 
 /**
- * Returns a navigate function that plays the stage's exit, then routes.
+ * Returns a navigate function that routes immediately and plays the stage's
+ * exit over the top of it, plus whether a route change is currently in flight.
  *
- * Falls straight through to a plain push whenever there is nothing to animate:
- * no stage on screen, motion switched off, or the destination is already the
- * current page.
+ * The exit is decoration on a navigation that is already under way — never a
+ * step the navigation waits on. See the header for the measurements that
+ * forced that ordering.
  */
-export function useAnimatedNavigate(): (href: string) => void {
+export function useAnimatedNavigate(): {
+  navigate: (href: string) => void;
+  isNavigating: boolean;
+} {
   const router = useRouter();
   const pathname = usePathname();
+  const [isNavigating, startNavigation] = useTransition();
 
-  return useCallback(
+  const navigate = useCallback(
     (href: string) => {
+      // Already here. Re-pushing would restart the route for no visible
+      // change, and the animation would blink the page the user is reading.
+      if (href === pathname) return;
+
       const stage = document.querySelector<HTMLElement>(`[${STAGE_ATTR}]`);
 
-      if (href === pathname || !stage || motionIsOff()) {
-        router.push(href);
-        return;
-      }
-
-      // `void`, not `await`: the push is chained off the animation's own
-      // promise below, and nothing else needs to block on it.
-      void animate(stage, EXIT_KEYFRAME, PAGE_TRANSITION_SPRING).then(() => {
+      // The navigation goes out first and unconditionally. Nothing below this
+      // line can prevent it — that is the entire point of the ordering.
+      startNavigation(() => {
         router.push(href);
       });
+
+      // Nothing to animate, or the user asked for no motion. The route change
+      // above is already handling it.
+      if (!stage || motionIsOff()) return;
+
+      // `void`: this is purely visual now. If it is interrupted, cancelled, or
+      // never settles, the only thing lost is a fade.
+      void animate(stage, EXIT_KEYFRAME, PAGE_TRANSITION_SPRING);
     },
     [router, pathname]
   );
+
+  return { navigate, isNavigating };
 }
 
 export default function PageTransition({
@@ -160,15 +228,16 @@ export default function PageTransition({
 
   return (
     <motion.div
-      // Still keyed on the pathname. The stage is re-created by the router on
-      // every navigation anyway, but the key also covers the case the original
-      // fix was written for: two routes that DO reconcile would otherwise reuse
-      // this node and skip the enter entirely.
       key={pathname}
       {...{ [STAGE_ATTR]: true }}
-      initial={{ opacity: 0, y: 12, scale: 0.99 }}
+      initial={{ opacity: 0, y: 26, scale: 0.975 }}
       animate={{ opacity: 1, y: 0, scale: 1 }}
-      transition={PAGE_TRANSITION_SPRING}
+      transition={{
+        type: "spring",
+        stiffness: 145,
+        damping: 20,
+        mass: 1.05,
+      }}
       className={className}
     >
       {children}

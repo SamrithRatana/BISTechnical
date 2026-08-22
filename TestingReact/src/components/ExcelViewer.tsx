@@ -484,7 +484,7 @@ export default function ExcelViewer({
         {/* ── Standard View Controls ────────────────────────────────────────── */}
         <div className="shrink-0 flex flex-wrap items-center justify-between gap-2 border-b border-subtle bg-cushion/50 px-3 py-1.5 print:hidden">
           <div className="flex flex-wrap items-center gap-3">
-            <label className="flex cursor-pointer items-center gap-2 text-xs font-medium text-ink-secondary hover:text-ink transition-colors">
+            <label className="flex min-h-6 cursor-pointer items-center gap-2 text-xs font-medium text-ink-secondary hover:text-ink transition-colors">
               <input
                 type="checkbox"
                 checked={showStyles}
@@ -577,7 +577,7 @@ export default function ExcelViewer({
 
       {/* ── Fullscreen Modal View ─────────────────────────────────────────── */}
       {isFullscreen && (
-        <div className="fixed inset-0 z-50 flex flex-col bg-ink/80 backdrop-blur-md p-2 sm:p-4 md:p-6 animate-in fade-in duration-200">
+        <div className="fixed inset-0 z-50 flex flex-col av-scrim p-2 sm:p-4 md:p-6 animate-in fade-in duration-200">
           <div className="flex flex-col h-full w-full max-w-[98vw] mx-auto bg-white rounded-2xl shadow-2xl border border-subtle overflow-hidden">
             {/* Fullscreen Header */}
             <div className="flex flex-wrap items-center justify-between gap-3 border-b border-subtle bg-cushion/90 px-4 py-2.5 backdrop-blur-sm">
@@ -596,7 +596,7 @@ export default function ExcelViewer({
 
                 <div className="h-4 w-px bg-sunken hidden sm:block" />
 
-                <label className="flex cursor-pointer items-center gap-2 text-xs font-medium text-ink-secondary hover:text-ink transition-colors">
+                <label className="flex min-h-6 cursor-pointer items-center gap-2 text-xs font-medium text-ink-secondary hover:text-ink transition-colors">
                   <input
                     type="checkbox"
                     checked={showStyles}

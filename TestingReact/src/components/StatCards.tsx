@@ -156,7 +156,7 @@ export default function StatCards({ selectedFilter, setSelectedFilter }: StatCar
   );
 
   return (
-    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2.5 sm:gap-3 lg:gap-3 xl:gap-4">
       {STAT_DEFS.map((stat, i) => {
         const Icon = stat.icon;
         const s = series[stat.id];

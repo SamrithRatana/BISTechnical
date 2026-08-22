@@ -14,9 +14,6 @@ internal static class MigrateDbContextExtensions
     public static IServiceCollection AddMigration<TContext>(this IServiceCollection services, Func<TContext, IServiceProvider, Task> seeder)
         where TContext : DbContext
     {
-        // Enable migration tracing
-        //services.AddOpenTelemetry().WithTracing(tracing => tracing.AddSource(ActivitySourceName));
-
         return services.AddHostedService(sp => new MigrationHostedService<TContext>(sp, seeder));
     }
 
@@ -33,7 +30,7 @@ internal static class MigrateDbContextExtensions
         using var scope = services.CreateScope();
         var scopeServices = scope.ServiceProvider;
         var logger = scopeServices.GetRequiredService<ILogger<TContext>>();
-        var context = scopeServices.GetService<TContext>();
+        var context = scopeServices.GetRequiredService<TContext>();
 
         using var activity = ActivitySource.StartActivity($"Migration operation {typeof(TContext).Name}");
 

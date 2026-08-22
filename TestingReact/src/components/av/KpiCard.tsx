@@ -74,26 +74,26 @@ export const KpiCard = memo(function KpiCard({
       hover={Boolean(onClick)}
       onClick={onClick}
       className={cn(
-        "p-5 flex flex-col justify-between transition-shadow duration-150 ease-out",
+        "p-3.5 sm:p-4 lg:p-3.5 xl:p-5 flex flex-col justify-between transition-shadow duration-150 ease-out",
         // `ring` draws outside the border box, so selecting a card cannot
         // change its size and shift the ones beside it.
         selected && "ring-2 ring-accent/45 shadow-soft-md",
         className
       )}
     >
-      <div className="flex items-start justify-between gap-3">
+      <div className="flex items-start justify-between gap-2.5">
         <div className="min-w-0">
-          <span className="block text-[11px] font-medium uppercase tracking-wider text-ink-muted truncate">
+          <span className="block text-[10px] lg:text-[10px] xl:text-[11px] font-medium uppercase tracking-wider text-ink-muted truncate">
             {label}
           </span>
-          <span className="mt-1 block text-2xl sm:text-[26px] font-bold tracking-tight text-ink tabular-nums">
+          <span className="mt-0.5 lg:mt-0.5 xl:mt-1 block text-xl sm:text-2xl lg:text-xl xl:text-[26px] font-bold tracking-tight text-ink tabular-nums">
             {value}
           </span>
         </div>
         {icon && (
           <span
             className={cn(
-              "shrink-0 grid place-items-center p-2.5 rounded-2xl shadow-soft-sm",
+              "shrink-0 grid place-items-center p-2 lg:p-1.5 xl:p-2.5 rounded-xl xl:rounded-2xl shadow-soft-sm",
               selected ? "bg-accent text-accent-fg" : "bg-accent-soft text-accent"
             )}
           >
@@ -103,12 +103,12 @@ export const KpiCard = memo(function KpiCard({
       </div>
 
       {hasFooter && (
-        <div className="mt-3.5 pt-3 border-t border-subtle flex items-end justify-between gap-3">
+        <div className="mt-2.5 pt-2 lg:mt-2 lg:pt-1.5 xl:mt-3.5 xl:pt-3 border-t border-subtle flex items-end justify-between gap-2.5">
           <div className="min-w-0">
             {hasTrend && (
               <span
                 className={cn(
-                  "flex items-center gap-0.5 text-[11px] font-bold tabular-nums",
+                  "flex items-center gap-0.5 text-[10px] lg:text-[10px] xl:text-[11px] font-bold tabular-nums",
                   flat ? "text-ink-muted" : good ? "text-success" : "text-danger"
                 )}
               >
@@ -118,7 +118,7 @@ export const KpiCard = memo(function KpiCard({
               </span>
             )}
             {trendCaption && (
-              <span className="block mt-0.5 text-[10px] text-ink-muted truncate">
+              <span className="block mt-0.5 text-[9px] lg:text-[9px] xl:text-[10px] text-ink-muted truncate">
                 {trendCaption}
               </span>
             )}

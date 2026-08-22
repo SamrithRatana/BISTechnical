@@ -44,7 +44,13 @@ async function loadTickets(force = false): Promise<RepairServiceItem[]> {
 
   inflight = (async () => {
     try {
-      const res = await fetchRepairServices(1, FETCH_SIZE, "All", "");
+      // `projection: "summary"` asks the backend for id + status + the two
+      // dates and nothing else. Everything below reads exactly those; the full
+      // ticket was 901 KB for 400 rows against 39 KB of usable data, with the
+      // SparepartItems of every row along for the ride.
+      const res = await fetchRepairServices(1, FETCH_SIZE, "All", "", {
+        projection: "summary",
+      });
       cache = res?.items ?? [];
       return cache;
     } catch (err) {

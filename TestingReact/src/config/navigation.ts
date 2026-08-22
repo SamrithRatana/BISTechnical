@@ -40,9 +40,20 @@ export interface NavItem {
   available?: boolean;
 }
 
+export interface NavSubGroup {
+  /** i18n key for the sub-group title. */
+  titleKey: TranslationKey;
+  /** Optional icon name for this subcategory. */
+  iconName?: string;
+  /** Optional purpose description for AI assistant context. */
+  purpose?: string;
+  items: NavItem[];
+}
+
 export interface NavGroup {
   titleKey: TranslationKey;
-  items: NavItem[];
+  items?: NavItem[];
+  subGroups?: NavSubGroup[];
 }
 
 /** The dashboard link that sits above the groups. */
@@ -205,58 +216,217 @@ export const NAV_GROUPS: NavGroup[] = [
     ],
   },
   {
-    // Ports of the Blazor app's Pages/Reports screens. Layout for each lives in
-    // an .xlsx under public/templates/ — edit those in Excel to change columns,
-    // headers or styling. See services/excelTemplate.ts.
+    // Structured 5-category reporting ecosystem
     titleKey: "nav.groupReports",
-    items: [
+    subGroups: [
       {
-        nameKey: "nav.dailyReport",
-        href: "/daily-report",
-        purpose:
-          "Daily repair report: the day's tickets grouped by status, so a supervisor can see what is stuck where. Defaults to today; any date range can be chosen.",
+        titleKey: "nav.subgroupOperations",
+        iconName: "Wrench",
+        purpose: "Core everyday repair and operational reports.",
+        items: [
+          {
+            nameKey: "nav.dailyReport",
+            href: "/daily-report",
+            purpose:
+              "Daily repair report: the day's tickets grouped by status, so a supervisor can see what is stuck where. Defaults to today; any date range can be chosen.",
+          },
+          {
+            nameKey: "nav.monthlyReport",
+            href: "/monthly-report",
+            purpose:
+              "Monthly repair report: every ticket in a chosen date range, grouped by company, with per-company subtotals and a Fixed / Customer Rejected / Unrepairable breakdown.",
+          },
+          {
+            nameKey: "nav.monthlyTechnicalMatrix",
+            href: "/monthly-technical-matrix",
+            purpose:
+              "Monthly technical department performance and forecast matrix: full 12-month KPI table with auto-calculated database figures, editable manual metrics, and forecast summary notes.",
+          },
+          {
+            nameKey: "nav.pendingRepairs",
+            href: "/pending-repairs",
+            purpose:
+              "Active backlog and work-in-progress report: all incomplete tickets currently in progress or waiting, with aging days taken, bottleneck status and assigned technician.",
+          },
+          {
+            nameKey: "nav.completedRepairs",
+            href: "/completed-repairs",
+            purpose:
+              "Completed repair report: tickets finished within a chosen date range, filtered by finished date, with turnaround time, solution and spare parts used.",
+          },
+          {
+            nameKey: "nav.stageReport",
+            href: "/stage-report",
+            purpose:
+              "Stage activity report: service tickets filtered by specific process milestone dates (Inspection, Await Confirm, Repairing, Finished), tracking throughput for each workflow stage.",
+          },
+          {
+            nameKey: "nav.repairReport",
+            href: "/repair-report",
+            purpose:
+              "Repair summary: a matrix of engineers against months of the year, counting jobs each engineer handled per month, with a per-engineer total.",
+          },
+          {
+            nameKey: "nav.historyReport",
+            href: "/history-report",
+            purpose:
+              "Machine history: tickets grouped by serial number, so one machine's whole repair history reads top to bottom with the inspection and solution for each visit. Defaults to the current year.",
+          },
+          {
+            nameKey: "nav.thirdPartyRepairs",
+            href: "/third-party-repairs",
+            purpose:
+              "Third-party outsourced repairs: tickets sent to external vendor workshops with days out and return status.",
+          },
+          {
+            nameKey: "nav.locationReport",
+            href: "/location-report",
+            purpose:
+              "Service location report: on-site technician visits to customer premises compared to in-house workshop repairs.",
+          },
+        ],
       },
       {
-        nameKey: "nav.monthlyReport",
-        href: "/monthly-report",
-        purpose:
-          "Monthly repair report: every ticket in a chosen date range, grouped by company, with per-company subtotals and a Fixed / Customer Rejected / Unrepairable breakdown.",
+        titleKey: "nav.subgroupDiagnostics",
+        iconName: "AlertCircle",
+        purpose: "Quality assurance, common symptoms, diagnostics, and scrap equipment analysis.",
+        items: [
+          {
+            nameKey: "nav.faultsReport",
+            href: "/faults-report",
+            purpose:
+              "Common faults & diagnostics report: common machine errors, inspection diagnoses, and applied solutions grouped by model.",
+          },
+          {
+            nameKey: "nav.rejectedReport",
+            href: "/rejected-report",
+            purpose:
+              "Rejected & scrap report: tickets marked as Customer Rejected or Unrepairable with inspection diagnosis and customer requests.",
+          },
+        ],
       },
       {
-        nameKey: "nav.customerReport",
-        href: "/customer-report",
-        purpose:
-          "Customer report: tickets grouped by company with contact name and phone, so one customer's activity for the period reads as a single block.",
+        titleKey: "nav.subgroupEngineerKpi",
+        iconName: "Award",
+        purpose: "Technician KPI scorecard, MTTR turnaround, and engineer workload distribution.",
+        items: [
+          {
+            nameKey: "nav.engineerKpi",
+            href: "/engineer-kpi-report",
+            purpose:
+              "Technician KPI & Performance Scorecard: objective metrics per engineer including completed jobs, MTTR, fix success rate %, active WIP load, and ranking grade.",
+          },
+          {
+            nameKey: "nav.engineerReport",
+            href: "/engineer-report",
+            purpose:
+              "Engineer report: tickets grouped by the technician who worked them, with days taken, showing each engineer's workload for the period.",
+          },
+        ],
       },
       {
-        nameKey: "nav.engineerReport",
-        href: "/engineer-report",
-        purpose:
-          "Engineer report: tickets grouped by the technician who worked them, with days taken, showing each engineer's workload for the period.",
+        titleKey: "nav.subgroupSalesCrm",
+        iconName: "TrendingUp",
+        purpose: "Sales follow-up, quote win/loss rate, replacement machine leads, contract renewals, and top accounts.",
+        items: [
+          {
+            nameKey: "nav.salesFollowup",
+            href: "/sales-followup",
+            purpose:
+              "Quotation follow-up tracker: tickets awaiting customer confirmation with contact details, quoted spare parts, and days waiting.",
+          },
+          {
+            nameKey: "nav.salesConversion",
+            href: "/sales-conversion-report",
+            purpose:
+              "Sales quote conversion report: quote approval rate % (Sale Confirmed vs Customer Rejected) and average closing days.",
+          },
+          {
+            nameKey: "nav.salesLeads",
+            href: "/sales-leads-report",
+            purpose:
+              "New machine hot sales leads: unrepairable and customer rejected jobs to pitch new replacement equipment.",
+          },
+          {
+            nameKey: "nav.contractRenewal",
+            href: "/contract-renewal-report",
+            purpose:
+              "Contract SLA renewal tracker: identifies expiring maintenance agreements and high-frequency walk-in clients ready to upgrade to annual AMC.",
+          },
+          {
+            nameKey: "nav.topCustomers",
+            href: "/top-customers-report",
+            purpose:
+              "Top customer accounts: ranks top enterprise and VIP clients by service frequency and parts usage with dynamic CustomerType.",
+          },
+          {
+            nameKey: "nav.customerReport",
+            href: "/customer-report",
+            purpose:
+              "Customer report: tickets grouped by company with contact name and phone, so one customer's activity for the period reads as a single block.",
+          },
+          {
+            nameKey: "nav.contractReport",
+            href: "/contract-report",
+            purpose:
+              "Contract vs walk-in report: service volume breakdown between annual SLA maintenance contracts and per-visit chargeable walk-in customers.",
+          },
+        ],
       },
       {
-        nameKey: "nav.repairReport",
-        href: "/repair-report",
-        purpose:
-          "Repair summary: a matrix of engineers against months of the year, counting jobs each engineer handled per month, with a per-engineer total.",
-      },
-      {
-        nameKey: "nav.historyReport",
-        href: "/history-report",
-        purpose:
-          "Machine history: tickets grouped by serial number, so one machine's whole repair history reads top to bottom with the inspection and solution for each visit. Defaults to the current year.",
-      },
-      {
-        nameKey: "nav.sparepartUsage",
-        href: "/sparepart-usage",
-        purpose:
-          "Spare part usage: what was consumed over the period, split by whether it left stock through a service job or a manual stock-out.",
-      },
-      {
-        nameKey: "nav.sparepartHold",
-        href: "/sparepart-hold",
-        purpose:
-          "Spare part hold: parts committed to open jobs but not yet consumed, with effective stock after holds. Describes the present moment, so it takes no date range.",
+        titleKey: "nav.subgroupStockParts",
+        iconName: "Package",
+        purpose: "Spare parts consumption, stock transaction ledger, movement, reconciliations, and health audits.",
+        items: [
+          {
+            nameKey: "nav.sparepartUsage",
+            href: "/sparepart-usage",
+            purpose:
+              "Spare part usage: what was consumed over the period, split by whether it left stock through a service job or a manual stock-out.",
+          },
+          {
+            nameKey: "nav.sparepartHold",
+            href: "/sparepart-hold",
+            purpose:
+              "Spare part hold: parts committed to open jobs but not yet consumed, with effective stock after holds. Describes the present moment, so it takes no date range.",
+          },
+          {
+            nameKey: "nav.stockTransactions",
+            href: "/stock-transactions",
+            purpose:
+              "Stock transaction ledger: every individual stock movement in the period, newest first, with the running balance after each one and the ticket it came from. Filterable to stock-in only, stock-out only or adjustments only.",
+          },
+          {
+            nameKey: "nav.stockMovement",
+            href: "/stock-movement",
+            purpose:
+              "Stock movement summary: per part over the period — opening balance, total in, total out, net change, closing balance, and the live catalogue quantity for comparison.",
+          },
+          {
+            nameKey: "nav.stockAdjustments",
+            href: "/stock-adjustments",
+            purpose:
+              "Inventory adjustments: stock changed by editing the catalogue quantity directly rather than through a repair job, with the before and after values and the stated reason.",
+          },
+          {
+            nameKey: "nav.stockReconciliation",
+            href: "/stock-reconciliation",
+            purpose:
+              "Stock reconciliation: for a chosen date range, explains why the Telegram stock-out notification count and the usage report figure disagree.",
+          },
+          {
+            nameKey: "nav.stockHealth",
+            href: "/stock-health",
+            purpose:
+              "Stock data health: standing faults that make stock numbers disagree — Telegram notifications sent for movements the ledger never recorded, returns with no matching issue, parts whose ledger implies an impossible opening balance, negative stock, and duplicate catalogue names.",
+          },
+          {
+            nameKey: "nav.stockDead",
+            href: "/stock-dead",
+            purpose:
+              "Dead stock: parts holding stock that has not moved in 90 days, with how much of it is already on hold.",
+          },
+        ],
       },
     ],
   },
@@ -265,7 +435,10 @@ export const NAV_GROUPS: NavGroup[] = [
 /** Every routable destination, sidebar or not — what the assistant may offer to open. */
 export const ALL_NAV_ITEMS: NavItem[] = [
   HOME_ITEM,
-  ...NAV_GROUPS.flatMap((group) => group.items),
+  ...NAV_GROUPS.flatMap((group) => [
+    ...(group.items ?? []),
+    ...(group.subGroups?.flatMap((sg) => sg.items) ?? []),
+  ]),
   USERS_ITEM,
   SETTINGS_ITEM,
 ];

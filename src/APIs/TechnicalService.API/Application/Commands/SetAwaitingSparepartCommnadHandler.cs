@@ -5,16 +5,14 @@ namespace TechnicalService.API.Application.Commands;
 public class SetAwaitingSparepartCommnadHandler : IRequestHandler<SetAwaitingSparepartCommand, bool>
 {
     private readonly ITechnicalServiceRepository _technicalServiceRepository;
-    private readonly IMediator _mediator;
     private readonly ILogger<SetAwaitingSparepartCommnadHandler> _logger;
 
     // Using DI to inject infrastructure persistence Repositories
-    public SetAwaitingSparepartCommnadHandler(IMediator mediator,
+    public SetAwaitingSparepartCommnadHandler(
         ITechnicalServiceRepository technicalServiceRepository,
         ILogger<SetAwaitingSparepartCommnadHandler> logger)
     {
         _technicalServiceRepository = technicalServiceRepository ?? throw new ArgumentNullException(nameof(technicalServiceRepository));
-        _mediator = mediator ?? throw new ArgumentNullException(nameof(mediator));
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
     }
 
@@ -29,7 +27,7 @@ public class SetAwaitingSparepartCommnadHandler : IRequestHandler<SetAwaitingSpa
 
         serviceToUpdate.SetAwaitingSparepart(command.SetAwaitingSparepartBy, command.AwaitingSparepartDate);
 
-        _logger.LogInformation("Updating Service - SetAwaitingSparepart: {@Service}", serviceToUpdate);
+        _logger.LogInformation("Updating Service - SetAwaitingSparepart: {ServiceId}", serviceToUpdate.Id);
 
         return await _technicalServiceRepository.UnitOfWork.SaveEntitiesAsync(cancellationToken);
     }

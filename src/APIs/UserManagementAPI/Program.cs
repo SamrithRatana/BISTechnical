@@ -1,4 +1,4 @@
-﻿using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.RateLimiting;
@@ -74,7 +74,9 @@ builder.Services.AddAuthentication(options =>
 .AddJwtBearer(options =>
 {
     options.SaveToken = true;
-    options.RequireHttpsMetadata = false; // Set to true in production with HTTPS
+    // Only relax this in development. Left unconditionally false, the metadata
+    // used to validate tokens could be fetched over plain HTTP in production.
+    options.RequireHttpsMetadata = !builder.Environment.IsDevelopment();
     options.TokenValidationParameters = new TokenValidationParameters()
     {
         ValidateIssuer = true,
@@ -101,7 +103,10 @@ builder.Services.AddAuthentication(options =>
         {
             var logger = context.HttpContext.RequestServices
                 .GetRequiredService<ILogger<Program>>();
-            logger.LogInformation("Token validated for user: {User}",
+            // Debug, not Information: this fires on every authenticated
+            // request, so at Information it wrote the signed-in username into
+            // the log once per API call.
+            logger.LogDebug("Token validated for user: {User}",
                 context.Principal?.Identity?.Name ?? "Unknown");
             return Task.CompletedTask;
         }
@@ -269,11 +274,24 @@ app.UseHttpsRedirection();
 // 4. Static Files
 app.UseStaticFiles();
 
-// Configure uploads folder with CORS
-var uploadsPath = Path.Combine(
-    builder.Environment.WebRootPath ?? Directory.GetCurrentDirectory(),
-    "wwwroot",
-    "uploads");
+// Configure uploads folder with CORS.
+//
+// WebRootPath already ends in "wwwroot", so combining it with another
+// "wwwroot" produced <content>/wwwroot/wwwroot/uploads - an empty directory
+// this code then created. LocalFileStorageService writes to
+// <webroot>/uploads/profile-pictures, so the provider below was pointed at the
+// wrong folder and served nothing; the plain UseStaticFiles() above happened to
+// serve the files instead, which is why nobody noticed - but it meant the
+// Cache-Control and Access-Control-Allow-Origin headers set here never applied
+// to a single response. The frontend reads uploaded avatars into a canvas to
+// derive an accent colour, and that read needs the CORS header.
+var webRootPath = builder.Environment.WebRootPath;
+if (string.IsNullOrEmpty(webRootPath))
+{
+    webRootPath = Path.Combine(builder.Environment.ContentRootPath, "wwwroot");
+}
+
+var uploadsPath = Path.Combine(webRootPath, "uploads");
 Directory.CreateDirectory(uploadsPath);
 
 app.UseStaticFiles(new StaticFileOptions
@@ -306,6 +324,19 @@ app.UseAuthorization();
 
 // 10. Map Controllers
 app.MapControllers().RequireRateLimiting("api");
+
+// Live Memory & Process Telemetry endpoint for frontend real-time tracking
+app.MapGet("/health/metrics", () =>
+{
+    var proc = System.Diagnostics.Process.GetCurrentProcess();
+    return Results.Ok(new
+    {
+        service = "UserManagementAPI",
+        workingSetMb = Math.Round(proc.WorkingSet64 / (1024.0 * 1024.0), 1),
+        gcHeapMb = Math.Round(GC.GetTotalMemory(false) / (1024.0 * 1024.0), 1),
+        threads = proc.Threads.Count
+    });
+});
 
 // ============ DATABASE SEEDING ============
 using (var scope = app.Services.CreateScope())
@@ -360,27 +391,52 @@ async Task SeedRolesAndAdmin(IServiceProvider serviceProvider)
         }
     }
 
-    // Seed Admin User
-    var adminEmail = "admin@usermanagement.com";
+    // Seed Admin User.
+    //
+    // The password used to be the literal "Admin@123", committed here. That
+    // gave every deployment that had ever run this seeder the same known
+    // administrator credentials, for an account that is never prompted to
+    // change them. It now comes from configuration ("Seed:AdminPassword",
+    // which belongs in user-secrets or an environment variable); with nothing
+    // configured a random one is generated so the account is still created but
+    // is not guessable, and the operator is told to reset it.
+    var config = serviceProvider.GetRequiredService<IConfiguration>();
+    var adminEmail = config["Seed:AdminEmail"] ?? "admin@usermanagement.com";
     var adminUser = await userManager.FindByEmailAsync(adminEmail);
 
     if (adminUser == null)
     {
         var admin = new ApplicationUser
         {
-            UserName = "admin",
+            UserName = config["Seed:AdminUserName"] ?? "admin",
             Email = adminEmail,
             FirstName = "System",
             LastName = "Administrator",
             EmailConfirmed = true
         };
 
-        var result = await userManager.CreateAsync(admin, "Admin@123");
+        var configuredPassword = config["Seed:AdminPassword"];
+        var generatedPassword = string.IsNullOrWhiteSpace(configuredPassword);
+        var adminPassword = generatedPassword
+            ? GenerateSeedPassword()
+            : configuredPassword;
+
+        var result = await userManager.CreateAsync(admin, adminPassword);
 
         if (result.Succeeded)
         {
             await userManager.AddToRoleAsync(admin, "Admin");
             logger.LogInformation("Created admin user: {Email}", adminEmail);
+
+            if (generatedPassword)
+            {
+                // Logged once, at first creation only. Set Seed:AdminPassword
+                // to avoid this, and change the password after signing in.
+                logger.LogWarning(
+                    "No Seed:AdminPassword configured. A random password was generated " +
+                    "for {Email}: {Password} - sign in and change it now.",
+                    adminEmail, adminPassword);
+            }
         }
         else
         {
@@ -392,4 +448,59 @@ async Task SeedRolesAndAdmin(IServiceProvider serviceProvider)
     {
         logger.LogInformation("Admin user already exists: {Email}", adminEmail);
     }
+
+    // Ensure AppSettings table has the branding columns
+    try
+    {
+        var context = serviceProvider.GetRequiredService<UserManagementContext>();
+        await context.Database.ExecuteSqlRawAsync(@"
+            IF NOT EXISTS (SELECT * FROM sys.columns WHERE object_id = OBJECT_ID('dbo.AppSettings') AND name = 'AccentColor')
+            BEGIN
+                ALTER TABLE dbo.AppSettings ADD AccentColor nvarchar(50) NULL;
+            END
+            IF NOT EXISTS (SELECT * FROM sys.columns WHERE object_id = OBJECT_ID('dbo.AppSettings') AND name = 'LogoScale')
+            BEGIN
+                ALTER TABLE dbo.AppSettings ADD LogoScale int NULL;
+            END
+            IF NOT EXISTS (SELECT * FROM sys.columns WHERE object_id = OBJECT_ID('dbo.AppSettings') AND name = 'SurfaceStyle')
+            BEGIN
+                ALTER TABLE dbo.AppSettings ADD SurfaceStyle nvarchar(50) NULL;
+            END
+        ");
+    }
+    catch (Exception ex)
+    {
+        logger.LogWarning("Schema check on AppSettings table: {Message}", ex.Message);
+    }
+}
+
+// Satisfies the configured Identity password policy (digit, lower, upper,
+// length >= 6) without being predictable.
+static string GenerateSeedPassword()
+{
+    const string upper = "ABCDEFGHJKLMNPQRSTUVWXYZ";
+    const string lower = "abcdefghijkmnopqrstuvwxyz";
+    const string digits = "23456789";
+    const string all = upper + lower + digits;
+
+    var chars = new List<char>
+    {
+        upper[System.Security.Cryptography.RandomNumberGenerator.GetInt32(upper.Length)],
+        lower[System.Security.Cryptography.RandomNumberGenerator.GetInt32(lower.Length)],
+        digits[System.Security.Cryptography.RandomNumberGenerator.GetInt32(digits.Length)],
+    };
+
+    while (chars.Count < 20)
+    {
+        chars.Add(all[System.Security.Cryptography.RandomNumberGenerator.GetInt32(all.Length)]);
+    }
+
+    // Shuffle so the guaranteed character classes are not always in front.
+    for (var i = chars.Count - 1; i > 0; i--)
+    {
+        var j = System.Security.Cryptography.RandomNumberGenerator.GetInt32(i + 1);
+        (chars[i], chars[j]) = (chars[j], chars[i]);
+    }
+
+    return new string(chars.ToArray());
 }

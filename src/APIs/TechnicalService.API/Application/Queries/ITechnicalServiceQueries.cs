@@ -1,4 +1,4 @@
-﻿using TechnicalService.API.Apis;
+using TechnicalService.API.Apis;
 
 namespace TechnicalService.API.Application.Queries;
 
@@ -17,10 +17,39 @@ public interface ITechnicalServiceQueries
     Task<PagedResult<SparepartUsageSummary>> GetSparepartUsageByDateRangeAsync(SparepartUsageQuery query);
     Task<PagedResult<SparepartHoldSummary>> GetSparepartHoldStatusAsync(SparepartHoldQuery query);
 
+    // ── Stock transaction reporting ─────────────────────────────────────────
+    // Transaction-level views over SparepartStockAuditLog. The usage report is
+    // an aggregate and nets returns against issues; these show the movements
+    // themselves, so a return is a line someone can read rather than a number
+    // quietly cancelling another one.
+    Task<PagedResult<SparepartTransactionRow>> GetSparepartTransactionsAsync(SparepartTransactionQuery query);
+    Task<PagedResult<SparepartMovementSummary>> GetSparepartMovementSummaryAsync(SparepartTransactionQuery query);
+    Task<PagedResult<SparepartDeadStockRow>> GetSparepartDeadStockAsync(SparepartTransactionQuery query);
+
+    /// <summary>
+    /// Detects stock-data inconsistencies: notifications sent for movements the
+    /// ledger never recorded, ledgers implying impossible opening balances,
+    /// duplicate catalogue names, negative stock, and returns with no matching
+    /// issue. Read-only; it reports, it does not repair.
+    /// </summary>
+    Task<PagedResult<StockHealthIssue>> GetStockHealthAsync(SparepartTransactionQuery query);
+
+    /// <summary>
+    /// Explains, for a date range, why the stock-out notification count and the
+    /// usage figure disagree: every deduction that was returned, including the
+    /// ones that exist only as notifications and never reached the ledger.
+    /// </summary>
+    Task<StockReconciliationResult> GetStockReconciliationAsync(SparepartTransactionQuery query);
+
     // Search methods with advanced filtering
     Task<PagedResult<Item>> SearchItemsAsync(ItemSearchQuery query);
     Task<PagedResult<Sparepart>> SearchSparepartsAsync(SparepartSearchQuery query);
     Task<PagedResult<Service>> SearchServicesAsync(ServiceSearchQuery query);
+
+    /// <summary>
+    /// Same filters as <see cref="SearchServicesAsync"/>, four columns instead of 40.
+    /// </summary>
+    Task<PagedResult<ServiceSummary>> SearchServiceSummariesAsync(ServiceSearchQuery query);
     Task<PagedResult<RentalItem>> SearchRentalItemsAsync(RentalItemSearchQuery query);
     Task<PagedResult<RentalService>> SearchRentalServicesAsync(RentalServiceSearchQuery query);
     Task<List<CompanyStatusSummary>> GetMonthlyReportCompanySummaryAsync(
@@ -50,4 +79,6 @@ public interface ITechnicalServiceQueries
     Task<IEnumerable<RentalItemDetail>> GetRentalItemsByDateAsync(DateTime? fromDate, DateTime? toDate);
     Task<IEnumerable<RentalItemDetail>> GetRentalItemsBySerialNumberAsync(string serialNo);
 
+    // Annual Technical Performance Matrix
+    Task<AnnualTechnicalMatrixDto> GetAnnualTechnicalMatrixAsync(int year);
 }

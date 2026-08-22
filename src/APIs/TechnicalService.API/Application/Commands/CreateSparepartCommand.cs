@@ -15,15 +15,14 @@ public class CreateSparepartCommand : IRequest<bool>
     [DataMember]
     public Guid LinkItemId { get; private set; }
     [DataMember]
-    public int Quantity { get; private set; } // ✅ ADD THIS LINE
-    [DataMember]
-    public decimal DefaultPrice { get; private set; } // ✅ ADD
+    public int Quantity { get; private set; }
 
+    [DataMember]
+    public decimal DefaultPrice { get; private set; }
 
     public CreateSparepartCommand(string itemName, string serialNumber,
          string description, string useFor, string pictureUrl,
-         Guid linkItemId, int quantity = 0, decimal defaultPrice = 0) // ✅ ADD
-    {
+         Guid linkItemId, int quantity = 0, decimal defaultPrice = 0)    {
         ItemName = itemName;
         SerialNumber = serialNumber;
         Description = description;
@@ -31,6 +30,5 @@ public class CreateSparepartCommand : IRequest<bool>
         PictureUrl = pictureUrl;
         LinkItemId = linkItemId;
         Quantity = quantity;
-        DefaultPrice = defaultPrice; // ✅ ADD
-    }
+        DefaultPrice = defaultPrice;    }
 }

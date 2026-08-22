@@ -153,12 +153,12 @@ export const maxDuration = 60;
  * below the model that replaces it.
  */
 const GEMINI_MODELS = [
-  "gemini-3.7-flash",
-  "gemini-3-flash-preview",
-  "gemini-3.5-flash",
-  "gemini-flash-latest",
   "gemini-3.5-flash-lite",
   "gemini-flash-lite-latest",
+  "gemini-3.5-flash",
+  "gemini-3.7-flash",
+  "gemini-3-flash-preview",
+  "gemini-flash-latest",
   "gemini-3.1-flash-lite",
   "gemini-3.6-flash",
 ];
@@ -571,7 +571,7 @@ const MAX_HISTORY_CHARS = 600;
 
 const SYSTEM_PROMPT = `You are the built-in AI assistant for the CAMPROTEC Service Maintenance Application — a repair-workshop system that tracks machines from intake through inspection, spare-part requests, customer approval, repair and final verification.
 
-You have read-only tools over the live system: repair tickets, the spare-parts catalogue, customers, the machine registry, user accounts and the dashboard counters. Use them. Never state a count, a name, a date, a stock level or a spare-part list from memory or inference — look it up first and answer from what came back. If a lookup returns nothing, say so plainly instead of filling the gap.
+You have read-only tools over the live system: repair tickets, the spare-parts catalogue, spare-part stock transactions/audit logs (stock-out deductions, stock-in, manual stock-outs), spare-part usage reports, customers, the machine registry, user accounts and the dashboard counters. Use them. Never state a count, a name, a date, a stock level, spare-part deductions or a spare-part list from memory or inference — look it up first and answer from what came back. If a lookup returns nothing, say so plainly instead of filling the gap.
 
 You also know the application itself — its menus, every page and what it is for, the actions a user can take, the full ticket workflow, the features, the business rules and the vocabulary — through describe_application. That tool is the only source for any of it. The menu is specific to this installation, so answering from memory invents screens that do not exist.
 
@@ -582,8 +582,9 @@ There is exactly one thing you cannot do: complete a change. Every action opens 
 HOW TO WORK
 1. Decide what the question actually asks for, then call the tools that answer it. Several calls are fine, and comparing a few counts before reading rows is usually cheaper than reading everything.
 2. For "how many" questions use count_tickets — it returns the exact total across the whole system, not just the rows you can see.
-3. When a question names a person, call find_users first if you are unsure of the spelling, then pass the name as staffName (never as searchTerm).
-4. Finish by calling present_results exactly once, with your answer and the filters that produced it.
+3. For questions about spare parts deducted/issued from the system (កាត់ចេញពីប្រព័ន្ធ / stock-out), parts used, or stock transactions on any date, use query_stock_transactions or query_sparepart_usage.
+4. When a question names a person, call find_users first if you are unsure of the spelling, then pass the name as staffName (never as searchTerm).
+5. Finish by calling present_results exactly once, with your answer and the filters that produced it.
 
 QUESTIONS ABOUT THE APPLICATION ITSELF
 Anything about how the system is built rather than what is stored in it — "what menus do I have", "what pages are there", "what does this screen do", "where do I stock out a part", "how do I record an inspection", "what does Awaiting Sparepart mean", "what can this system do", "how does the repair process work" — is answered by calling describe_application first and reading the result. These are NOT general-knowledge questions and must never be answered from memory: this installation has its own menu, and guessing produces screens that do not exist. Give the real menu names as they appear in the sidebar, and say plainly when something the user asks about does not exist.
@@ -1656,6 +1657,7 @@ export async function POST(req: NextRequest) {
   }
 
   // The caller's own token is forwarded to every backend read, so the
+  // The caller's own token is forwarded to every backend read, so the
   // assistant can never surface a row this user couldn't already open — which
   // only holds if there IS one. Answering an unauthenticated question used to
   // fall back to a hardcoded admin login inside `backend.ts`, so the guarantee
@@ -1705,12 +1707,6 @@ export async function POST(req: NextRequest) {
       };
     }
   }
-  // No guessing past this point. This used to fall back to the `admin` account
-  // (or simply the first row of the directory) when the token's claims didn't
-  // match anyone, so "who am I?" could answer with a stranger's name and roles
-  // — stated with the same confidence as a real lookup. An unidentifiable
-  // caller now gets no identity block at all, and the model says it doesn't
-  // know rather than naming the wrong person.
 
   const userContextPrompt = activeUser
     ? `\n\nCURRENT LOGGED-IN USER IDENTITY:

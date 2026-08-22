@@ -1,15 +1,15 @@
-﻿using EmployeeManagement.Models;
+using EmployeeManagement.Models;
 using System.Collections.Generic;
 using System.Threading.Tasks;
 
 namespace EmployeeManagement.Api.Models
 {
-    public interface ICustomerTypeRespository
+    public interface ICustomerTypeRepository
     {
-        // Create operation
+        // Create
         Task<CustomerType> CreateCustomerType(CustomerType customerType);
 
-        // Read operations
+        // Read
         Task<IEnumerable<CustomerType>> GetCustomerTypes();
         Task<CustomerType> GetCustomerTypeById(int id);
         Task<(IEnumerable<CustomerType> Items, int TotalCount)> GetCustomerTypesPaginated(
@@ -17,10 +17,10 @@ namespace EmployeeManagement.Api.Models
             int pageSize,
             string searchTerm = null);
 
-        // Update operation
+        // Update
         Task<CustomerType> UpdateCustomerType(CustomerType customerType);
 
-        // Delete operation
-        Task DeleteCustomerType(int id);
+        // Delete
+        Task<bool> DeleteCustomerType(int id);
     }
 }

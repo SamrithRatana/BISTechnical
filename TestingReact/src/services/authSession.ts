@@ -229,6 +229,20 @@ export function clearSession(): void {
     localStorage.removeItem(TOKEN_KEY);
     localStorage.removeItem(USER_KEY);
 
+    // Terminate and delete mobile companion scanner session
+    const scannerSessionId = localStorage.getItem("companion_scanner_session_id");
+    if (scannerSessionId) {
+      try {
+        fetch("/api/scanner/emit", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ sessionId: scannerSessionId, type: "terminate" }),
+          keepalive: true,
+        }).catch(() => {});
+      } catch {}
+      localStorage.removeItem("companion_scanner_session_id");
+    }
+
     for (const key of Object.keys(sessionStorage)) {
       if (key.startsWith("cache:")) sessionStorage.removeItem(key);
     }

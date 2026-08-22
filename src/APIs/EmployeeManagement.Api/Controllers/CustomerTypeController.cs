@@ -1,10 +1,9 @@
-﻿using EmployeeManagement.Api.Models;
+using EmployeeManagement.Api.Models;
 using EmployeeManagement.Models;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Logging;
 using System;
-using System.Collections.Generic;
 using System.Threading.Tasks;
 
 namespace EmployeeManagement.Api.Controllers
@@ -14,25 +13,28 @@ namespace EmployeeManagement.Api.Controllers
     [Produces("application/json")]
     public class CustomerTypeController : ControllerBase
     {
-        private readonly ICustomerTypeRespository customerTypeRepository;
+        private const int DefaultPageSize = 10;
+        private const int MaxPageSize = 100;
+
+        private readonly ICustomerTypeRepository _customerTypeRepository;
         private readonly ILogger<CustomerTypeController> _logger;
 
         public CustomerTypeController(
-            ICustomerTypeRespository customerTypeRepository,
+            ICustomerTypeRepository customerTypeRepository,
             ILogger<CustomerTypeController> logger)
         {
-            this.customerTypeRepository = customerTypeRepository;
+            _customerTypeRepository = customerTypeRepository;
             _logger = logger;
         }
 
         /// <summary>
-        /// Get customer types with optional pagination
-        /// GET: api/CustomerType (returns all)
-        /// GET: api/CustomerType?pageNumber=1&pageSize=10 (returns paginated)
-        /// GET: api/CustomerType?pageNumber=1&pageSize=10&searchTerm=abc
+        /// Gets customer types, optionally paginated.
+        /// GET: api/CustomerType (all)
+        /// GET: api/CustomerType?pageNumber=1&amp;pageSize=10&amp;searchTerm=abc
         /// </summary>
         [HttpGet]
-        [Produces("application/json")]
+        [ProducesResponseType(StatusCodes.Status200OK)]
+        [ProducesResponseType(StatusCodes.Status500InternalServerError)]
         public async Task<ActionResult> GetCustomerTypes(
             [FromQuery] int? pageNumber = null,
             [FromQuery] int? pageSize = null,
@@ -40,183 +42,154 @@ namespace EmployeeManagement.Api.Controllers
         {
             try
             {
-                if (pageNumber.HasValue && pageSize.HasValue)
+                if (pageNumber.HasValue || pageSize.HasValue)
                 {
-                    return await GetCustomerTypesPaginated(pageNumber.Value, pageSize.Value, searchTerm);
+                    var page = Math.Max(1, pageNumber ?? 1);
+                    var size = Math.Clamp(pageSize ?? DefaultPageSize, 1, MaxPageSize);
+
+                    var (items, totalCount) = await _customerTypeRepository.GetCustomerTypesPaginated(
+                        page, size, searchTerm);
+
+                    return Ok(new PagedResponse<CustomerType>(items, page, size, totalCount));
                 }
-                else
-                {
-                    return await GetAllCustomerTypes();
-                }
+
+                return Ok(await _customerTypeRepository.GetCustomerTypes());
             }
             catch (Exception ex)
             {
-                _logger.LogError($"Error: {ex.Message}");
-                return StatusCode(StatusCodes.Status500InternalServerError,
-                    $"Error retrieving customer types: {ex.Message}");
+                _logger.LogError(ex, "Error retrieving customer types.");
+                return Problem(
+                    detail: "An error occurred while retrieving customer types.",
+                    statusCode: StatusCodes.Status500InternalServerError);
             }
         }
 
-        private async Task<ActionResult> GetAllCustomerTypes()
-        {
-            var customerTypes = await customerTypeRepository.GetCustomerTypes();
-            Response.ContentType = "application/json";
-            return Ok(customerTypes);
-        }
-
-        private async Task<ActionResult> GetCustomerTypesPaginated(
-            int pageNumber,
-            int pageSize,
-            string searchTerm = null)
-        {
-            if (pageNumber < 1)
-                pageNumber = 1;
-
-            if (pageSize < 1)
-                pageSize = 10;
-
-            if (pageSize > 100)
-                pageSize = 100;
-
-            var (items, totalCount) = await customerTypeRepository.GetCustomerTypesPaginated(
-                pageNumber,
-                pageSize,
-                searchTerm);
-
-            var pagedResponse = new PagedResponse<CustomerType>(
-                items,
-                pageNumber,
-                pageSize,
-                totalCount);
-
-            Response.ContentType = "application/json";
-            return Ok(pagedResponse);
-        }
-
-        /// <summary>
-        /// Get customer type by ID
-        /// GET: api/CustomerType/{id}
-        /// </summary>
-        [HttpGet("{id}")]
-        [Produces("application/json")]
+        /// <summary>GET: api/CustomerType/{id}</summary>
+        [HttpGet("{id:int}")]
+        [ProducesResponseType(StatusCodes.Status200OK)]
+        [ProducesResponseType(StatusCodes.Status404NotFound)]
+        [ProducesResponseType(StatusCodes.Status500InternalServerError)]
         public async Task<ActionResult<CustomerType>> GetCustomerTypeById(int id)
         {
             try
             {
-                var customerType = await customerTypeRepository.GetCustomerTypeById(id);
+                var customerType = await _customerTypeRepository.GetCustomerTypeById(id);
+
                 if (customerType == null)
                 {
                     return NotFound($"CustomerType with ID = {id} not found.");
                 }
-                Response.ContentType = "application/json";
+
                 return Ok(customerType);
             }
             catch (Exception ex)
             {
-                _logger.LogError($"Error: {ex.Message}");
-                return StatusCode(StatusCodes.Status500InternalServerError,
-                    $"Error retrieving customer type: {ex.Message}");
+                _logger.LogError(ex, "Error retrieving customer type {CustomerTypeId}.", id);
+                return Problem(
+                    detail: "An error occurred while retrieving the customer type.",
+                    statusCode: StatusCodes.Status500InternalServerError);
             }
         }
 
-        /// <summary>
-        /// Create a new customer type
-        /// POST: api/CustomerType
-        /// </summary>
+        /// <summary>POST: api/CustomerType</summary>
         [HttpPost]
-        [Produces("application/json")]
+        [ProducesResponseType(StatusCodes.Status201Created)]
+        [ProducesResponseType(StatusCodes.Status400BadRequest)]
+        [ProducesResponseType(StatusCodes.Status500InternalServerError)]
         public async Task<ActionResult<CustomerType>> CreateCustomerType([FromBody] CustomerType customerType)
         {
+            if (customerType == null)
+            {
+                return BadRequest("CustomerType data is required.");
+            }
+
+            if (string.IsNullOrWhiteSpace(customerType.Type))
+            {
+                return BadRequest("CustomerType 'Type' is required.");
+            }
+
             try
             {
-                if (customerType == null)
-                {
-                    return BadRequest("CustomerType data is required.");
-                }
+                var createdCustomerType = await _customerTypeRepository.CreateCustomerType(customerType);
 
-                // Set creation metadata
-                customerType.CreatedAt = DateTime.UtcNow;
-                customerType.ModifiedAt = DateTime.UtcNow;
-
-                var createdCustomerType = await customerTypeRepository.CreateCustomerType(customerType);
-
-                Response.ContentType = "application/json";
-                return CreatedAtAction(nameof(GetCustomerTypeById),
+                return CreatedAtAction(
+                    nameof(GetCustomerTypeById),
                     new { id = createdCustomerType.ListId },
                     createdCustomerType);
             }
             catch (Exception ex)
             {
-                _logger.LogError($"Error: {ex.Message}");
-                return StatusCode(StatusCodes.Status500InternalServerError,
-                    $"Error creating customer type: {ex.Message}");
+                _logger.LogError(ex, "Error creating customer type.");
+                return Problem(
+                    detail: "An error occurred while creating the customer type.",
+                    statusCode: StatusCodes.Status500InternalServerError);
             }
         }
 
-        /// <summary>
-        /// Update an existing customer type
-        /// PUT: api/CustomerType/{id}
-        /// </summary>
-        [HttpPut("{id}")]
-        [Produces("application/json")]
+        /// <summary>PUT: api/CustomerType/{id}</summary>
+        [HttpPut("{id:int}")]
+        [ProducesResponseType(StatusCodes.Status200OK)]
+        [ProducesResponseType(StatusCodes.Status400BadRequest)]
+        [ProducesResponseType(StatusCodes.Status404NotFound)]
+        [ProducesResponseType(StatusCodes.Status500InternalServerError)]
         public async Task<ActionResult<CustomerType>> UpdateCustomerType(int id, [FromBody] CustomerType customerType)
         {
+            if (customerType == null)
+            {
+                return BadRequest("CustomerType data is required.");
+            }
+
+            if (id != customerType.ListId)
+            {
+                return BadRequest("CustomerType ID mismatch.");
+            }
+
             try
             {
-                if (customerType == null)
-                {
-                    return BadRequest("CustomerType data is required.");
-                }
+                // A null return already means "no such row"; the previous
+                // existence pre-check was a second, redundant query.
+                var updatedCustomerType = await _customerTypeRepository.UpdateCustomerType(customerType);
 
-                if (id != customerType.ListId)
-                {
-                    return BadRequest("CustomerType ID mismatch.");
-                }
-
-                var existingCustomerType = await customerTypeRepository.GetCustomerTypeById(id);
-                if (existingCustomerType == null)
+                if (updatedCustomerType == null)
                 {
                     return NotFound($"CustomerType with ID = {id} not found.");
                 }
 
-                var updatedCustomerType = await customerTypeRepository.UpdateCustomerType(customerType);
-
-                Response.ContentType = "application/json";
                 return Ok(updatedCustomerType);
             }
             catch (Exception ex)
             {
-                _logger.LogError($"Error: {ex.Message}");
-                return StatusCode(StatusCodes.Status500InternalServerError,
-                    $"Error updating customer type: {ex.Message}");
+                _logger.LogError(ex, "Error updating customer type {CustomerTypeId}.", id);
+                return Problem(
+                    detail: "An error occurred while updating the customer type.",
+                    statusCode: StatusCodes.Status500InternalServerError);
             }
         }
 
-        /// <summary>
-        /// Delete a customer type
-        /// DELETE: api/CustomerType/{id}
-        /// </summary>
-        [HttpDelete("{id}")]
-        [Produces("application/json")]
+        /// <summary>DELETE: api/CustomerType/{id}</summary>
+        [HttpDelete("{id:int}")]
+        [ProducesResponseType(StatusCodes.Status200OK)]
+        [ProducesResponseType(StatusCodes.Status404NotFound)]
+        [ProducesResponseType(StatusCodes.Status500InternalServerError)]
         public async Task<ActionResult> DeleteCustomerType(int id)
         {
             try
             {
-                var customerType = await customerTypeRepository.GetCustomerTypeById(id);
-                if (customerType == null)
+                var deleted = await _customerTypeRepository.DeleteCustomerType(id);
+
+                if (!deleted)
                 {
                     return NotFound($"CustomerType with ID = {id} not found.");
                 }
-
-                await customerTypeRepository.DeleteCustomerType(id);
 
                 return Ok(new { message = $"CustomerType with ID = {id} deleted successfully." });
             }
             catch (Exception ex)
             {
-                _logger.LogError($"Error: {ex.Message}");
-                return StatusCode(StatusCodes.Status500InternalServerError,
-                    $"Error deleting customer type: {ex.Message}");
+                _logger.LogError(ex, "Error deleting customer type {CustomerTypeId}.", id);
+                return Problem(
+                    detail: "An error occurred while deleting the customer type.",
+                    statusCode: StatusCodes.Status500InternalServerError);
             }
         }
     }

@@ -1,4 +1,4 @@
-﻿using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using System.Security.Claims;
@@ -7,20 +7,37 @@ using UserManagementAPI.Models;
 
 namespace UserManagementAPI.Controllers
 {
+    /// <summary>
+    /// Direct messages between users.
+    /// </summary>
+    /// <remarks>
+    /// Every endpoint here took the participant ids from the request and never
+    /// compared them to the caller. `[Authorize]` meant a token was required,
+    /// but ANY token worked: a signed-in user could read any two other people's
+    /// conversation by passing their ids, read any message by its id, mark
+    /// someone else's messages read, delete any message, and - because
+    /// SendMessage took `UserID` from the body - post a message under another
+    /// user's name. Ownership is now derived from the caller's own
+    /// NameIdentifier claim rather than trusted from the request.
+    /// </remarks>
     [Route("api/[controller]")]
     [ApiController]
     [Authorize]
     public class MessageController : ControllerBase
     {
-        private readonly UserManagementContext _context;
-        private readonly ILogger<MessageController> _logger; // ✅ ADD THIS
+        private const int MaxPageSize = 200;
 
-        // ✅ FIXED: Add logger to constructor
+        private readonly UserManagementContext _context;
+        private readonly ILogger<MessageController> _logger;
+
         public MessageController(UserManagementContext context, ILogger<MessageController> logger)
         {
             _context = context;
-            _logger = logger; // ✅ ADD THIS
+            _logger = logger;
         }
+
+        /// <summary>The signed-in caller's user id, taken from the token.</summary>
+        private string CallerId => User.FindFirstValue(ClaimTypes.NameIdentifier);
 
         // GET: api/Message/conversation
         [HttpGet("conversation")]
@@ -30,7 +47,24 @@ namespace UserManagementAPI.Controllers
             [FromQuery] int page = 1,
             [FromQuery] int pageSize = 50)
         {
+            if (string.IsNullOrWhiteSpace(userId) || string.IsNullOrWhiteSpace(recipientId))
+            {
+                return BadRequest(new { Status = "Error", Message = "userId and recipientId are required." });
+            }
+
+            // The caller has to be one of the two participants.
+            var callerId = CallerId;
+            if (!string.Equals(callerId, userId, StringComparison.Ordinal) &&
+                !string.Equals(callerId, recipientId, StringComparison.Ordinal))
+            {
+                return Forbid();
+            }
+
+            page = page < 1 ? 1 : page;
+            pageSize = pageSize < 1 ? 50 : (pageSize > MaxPageSize ? MaxPageSize : pageSize);
+
             var messages = await _context.Messages
+                .AsNoTracking()
                 .Where(m => (m.UserID == userId && m.RecipientID == recipientId) ||
                            (m.UserID == recipientId && m.RecipientID == userId))
                 .OrderByDescending(m => m.When)
@@ -58,11 +92,14 @@ namespace UserManagementAPI.Controllers
         }
 
         // GET: api/Message/{id}
-        [HttpGet("{id}")]
+        [HttpGet("{id:int}")]
         public async Task<ActionResult<MessageDto>> GetMessage(int id)
         {
+            var callerId = CallerId;
+
             var message = await _context.Messages
-                .Where(m => m.Id == id)
+                .AsNoTracking()
+                .Where(m => m.Id == id && (m.UserID == callerId || m.RecipientID == callerId))
                 .Select(m => new MessageDto
                 {
                     Id = m.Id,
@@ -81,6 +118,9 @@ namespace UserManagementAPI.Controllers
                 })
                 .FirstOrDefaultAsync();
 
+            // A message the caller is not party to is reported as missing
+            // rather than forbidden, so this cannot be used to probe for the
+            // existence of other people's messages.
             if (message == null)
                 return NotFound();
 
@@ -93,7 +133,20 @@ namespace UserManagementAPI.Controllers
             [FromQuery] string userId,
             [FromQuery] string recipientId)
         {
+            if (string.IsNullOrWhiteSpace(userId) || string.IsNullOrWhiteSpace(recipientId))
+            {
+                return BadRequest(new { Status = "Error", Message = "userId and recipientId are required." });
+            }
+
+            var callerId = CallerId;
+            if (!string.Equals(callerId, userId, StringComparison.Ordinal) &&
+                !string.Equals(callerId, recipientId, StringComparison.Ordinal))
+            {
+                return Forbid();
+            }
+
             var message = await _context.Messages
+                .AsNoTracking()
                 .Where(m => (m.UserID == userId && m.RecipientID == recipientId) ||
                            (m.UserID == recipientId && m.RecipientID == userId))
                 .OrderByDescending(m => m.When)
@@ -115,48 +168,37 @@ namespace UserManagementAPI.Controllers
             return Ok(message);
         }
 
-        // ✅ FIXED: GET: api/Message/unread/counts
+        // GET: api/Message/unread/counts
         [HttpGet("unread/counts")]
-        public async Task<ActionResult> GetUnreadCounts([FromQuery] string recipientId)
+        public async Task<ActionResult> GetUnreadCounts()
         {
             try
             {
-                _logger.LogInformation($"📊 GetUnreadCounts called for recipientId: {recipientId}");
+                // The recipient is always the caller. It used to be a query
+                // parameter, so anyone could read anyone else's unread tallies.
+                var recipientId = CallerId;
 
-                if (string.IsNullOrEmpty(recipientId))
-                {
-                    return BadRequest(new
-                    {
-                        Status = "Error",
-                        Message = "RecipientId is required",
-                        Data = new Dictionary<string, int>()
-                    });
-                }
-
-                // Get unread messages grouped by sender
                 var counts = await _context.Messages
+                    .AsNoTracking()
                     .Where(m => m.RecipientID == recipientId && !m.IsRead)
                     .GroupBy(m => m.UserID)
                     .Select(g => new { SenderId = g.Key, Count = g.Count() })
                     .ToDictionaryAsync(x => x.SenderId, x => x.Count);
 
-                _logger.LogInformation($"✅ Found {counts.Count} senders with unread messages");
-
-                // ✅ CRITICAL: Return wrapped response, not raw dictionary
                 return Ok(new
                 {
                     Status = "Success",
                     Message = $"Found unread messages from {counts.Count} senders",
-                    Data = counts  // <-- Dictionary goes inside Data property
+                    Data = counts
                 });
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "❌ Error getting unread counts");
+                _logger.LogError(ex, "Error getting unread counts.");
                 return StatusCode(500, new
                 {
                     Status = "Error",
-                    Message = $"Internal server error: {ex.Message}",
+                    Message = "An error occurred while reading unread counts.",
                     Data = new Dictionary<string, int>()
                 });
             }
@@ -164,18 +206,20 @@ namespace UserManagementAPI.Controllers
 
         // GET: api/Message/unread/count
         [HttpGet("unread/count")]
-        public async Task<ActionResult<int>> GetUnreadCount(
-            [FromQuery] string recipientId,
-            [FromQuery] string senderId)
+        public async Task<ActionResult<int>> GetUnreadCount([FromQuery] string senderId)
         {
             try
             {
-                _logger.LogInformation($"📊 GetUnreadCount: recipientId={recipientId}, senderId={senderId}");
+                if (string.IsNullOrWhiteSpace(senderId))
+                {
+                    return BadRequest(new { Status = "Error", Message = "senderId is required.", Count = 0 });
+                }
+
+                var recipientId = CallerId;
 
                 var count = await _context.Messages
+                    .AsNoTracking()
                     .CountAsync(m => m.RecipientID == recipientId && m.UserID == senderId && !m.IsRead);
-
-                _logger.LogInformation($"✅ Count: {count}");
 
                 return Ok(new
                 {
@@ -186,11 +230,11 @@ namespace UserManagementAPI.Controllers
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "❌ Error getting unread count");
+                _logger.LogError(ex, "Error getting unread count.");
                 return StatusCode(500, new
                 {
                     Status = "Error",
-                    Message = ex.Message,
+                    Message = "An error occurred while reading the unread count.",
                     Count = 0
                 });
             }
@@ -200,11 +244,23 @@ namespace UserManagementAPI.Controllers
         [HttpPost]
         public async Task<ActionResult<MessageDto>> SendMessage([FromBody] SendMessageDto dto)
         {
+            if (dto == null || string.IsNullOrWhiteSpace(dto.Text))
+            {
+                return BadRequest(new { Status = "Error", Message = "Message text is required." });
+            }
+
+            if (string.IsNullOrWhiteSpace(dto.RecipientID))
+            {
+                return BadRequest(new { Status = "Error", Message = "RecipientID is required." });
+            }
+
             var message = new Message
             {
                 UserName = dto.UserName,
                 Text = dto.Text,
-                UserID = dto.UserID,
+                // Sender is the authenticated caller, NOT dto.UserID. Taking it
+                // from the body let any signed-in user post as anyone else.
+                UserID = CallerId,
                 RecipientID = dto.RecipientID,
                 FileUrl = dto.FileUrl,
                 AudioURL = dto.AudioURL,
@@ -239,73 +295,63 @@ namespace UserManagementAPI.Controllers
             return CreatedAtAction(nameof(GetMessage), new { id = message.Id }, result);
         }
 
-        // ✅ FIXED: PUT: api/Message/read
+        // PUT: api/Message/read
         [HttpPut("read")]
         public async Task<ActionResult> MarkMessagesAsRead([FromBody] MarkReadRequest request)
         {
             try
             {
-                _logger.LogInformation($"✉️ MarkMessagesAsRead: recipientId={request.RecipientId}, senderId={request.SenderId}");
-
-                if (string.IsNullOrEmpty(request.RecipientId) || string.IsNullOrEmpty(request.SenderId))
+                if (request == null || string.IsNullOrWhiteSpace(request.SenderId))
                 {
                     return BadRequest(new
                     {
                         Status = "Error",
-                        Message = "Both RecipientId and SenderId are required",
+                        Message = "SenderId is required",
                         MarkedCount = 0
                     });
                 }
 
-                var messages = await _context.Messages
-                    .Where(m => m.RecipientID == request.RecipientId &&
-                               m.UserID == request.SenderId &&
-                               !m.IsRead)
-                    .ToListAsync();
+                // Only the recipient can mark their own messages read; the
+                // recipient id is the caller, not a value from the body.
+                var recipientId = CallerId;
 
-                if (messages.Count == 0)
-                {
-                    return Ok(new
-                    {
-                        Status = "Success",
-                        Message = "No unread messages",
-                        MarkedCount = 0
-                    });
-                }
-
-                foreach (var msg in messages)
-                {
-                    msg.IsRead = true;
-                }
-
-                await _context.SaveChangesAsync();
-
-                _logger.LogInformation($"✅ Marked {messages.Count} messages as read");
+                // One UPDATE rather than loading every unread row to flip a bool.
+                var marked = await _context.Messages
+                    .Where(m => m.RecipientID == recipientId &&
+                                m.UserID == request.SenderId &&
+                                !m.IsRead)
+                    .ExecuteUpdateAsync(setters => setters.SetProperty(m => m.IsRead, true));
 
                 return Ok(new
                 {
                     Status = "Success",
-                    Message = $"Marked {messages.Count} messages as read",
-                    MarkedCount = messages.Count
+                    Message = marked == 0 ? "No unread messages" : $"Marked {marked} messages as read",
+                    MarkedCount = marked
                 });
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "❌ Error marking messages as read");
+                _logger.LogError(ex, "Error marking messages as read.");
                 return StatusCode(500, new
                 {
                     Status = "Error",
-                    Message = ex.Message,
+                    Message = "An error occurred while marking messages as read.",
                     MarkedCount = 0
                 });
             }
         }
 
         // DELETE: api/Message/{id}
-        [HttpDelete("{id}")]
+        [HttpDelete("{id:int}")]
         public async Task<IActionResult> DeleteMessage(int id)
         {
-            var message = await _context.Messages.FindAsync(id);
+            var callerId = CallerId;
+
+            // Only the sender may delete their own message. This used to delete
+            // any message by id, for any signed-in caller.
+            var message = await _context.Messages
+                .FirstOrDefaultAsync(m => m.Id == id && m.UserID == callerId);
+
             if (message == null)
                 return NotFound();
 
@@ -314,52 +360,50 @@ namespace UserManagementAPI.Controllers
 
             return NoContent();
         }
-        // ✅ NEW: DELETE messages by ReportNo
+
+        // DELETE: api/Message/byReportNo/{reportNo}
+        //
+        // Bulk cleanup that accompanies deleting a ticket, so it is not scoped
+        // to one user's messages - which is exactly why it needs to be an
+        // administrator action rather than something any signed-in caller can
+        // invoke on any report number.
         [HttpDelete("byReportNo/{reportNo}")]
+        [Authorize(Roles = "Admin")]
         public async Task<ActionResult> DeleteMessagesByReportNo(string reportNo)
         {
             try
             {
-                _logger.LogInformation($"🗑️ Deleting messages with ReportNo: {reportNo}");
-
-                // Find all messages containing this ReportNo
-                var messages = await _context.Messages
-                    .Where(m => m.Text.Contains($"ReportNo: {reportNo}") ||
-                               m.Text.Contains($"ReportNo:{reportNo}"))
-                    .ToListAsync();
-
-                if (!messages.Any())
+                if (string.IsNullOrWhiteSpace(reportNo))
                 {
-                    _logger.LogInformation($"ℹ️ No messages found with ReportNo: {reportNo}");
-                    return Ok(new
-                    {
-                        Status = "Success",
-                        Message = "No messages found with this ReportNo",
-                        DeletedCount = 0
-                    });
+                    return BadRequest(new { Status = "Error", Message = "reportNo is required.", DeletedCount = 0 });
                 }
 
-                _logger.LogInformation($"📊 Found {messages.Count} messages to delete");
+                var withSpace = $"ReportNo: {reportNo}";
+                var withoutSpace = $"ReportNo:{reportNo}";
 
-                _context.Messages.RemoveRange(messages);
-                var deletedCount = await _context.SaveChangesAsync();
+                var deletedCount = await _context.Messages
+                    .Where(m => m.Text.Contains(withSpace) || m.Text.Contains(withoutSpace))
+                    .ExecuteDeleteAsync();
 
-                _logger.LogInformation($"✅ Deleted {deletedCount} messages for ReportNo: {reportNo}");
+                _logger.LogInformation(
+                    "Deleted {DeletedCount} message(s) for report {ReportNo}.", deletedCount, reportNo);
 
                 return Ok(new
                 {
                     Status = "Success",
-                    Message = $"Deleted {deletedCount} messages",
+                    Message = deletedCount == 0
+                        ? "No messages found with this ReportNo"
+                        : $"Deleted {deletedCount} messages",
                     DeletedCount = deletedCount
                 });
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, $"❌ Error deleting messages by ReportNo: {reportNo}");
+                _logger.LogError(ex, "Error deleting messages for report {ReportNo}.", reportNo);
                 return StatusCode(500, new
                 {
                     Status = "Error",
-                    Message = $"Error: {ex.Message}",
+                    Message = "An error occurred while deleting messages.",
                     DeletedCount = 0
                 });
             }
@@ -388,7 +432,13 @@ namespace UserManagementAPI.Controllers
     {
         public string UserName { get; set; }
         public string Text { get; set; }
+
+        /// <summary>
+        /// Ignored. The sender is taken from the caller's token; this remains
+        /// only so existing clients posting it do not fail model binding.
+        /// </summary>
         public string UserID { get; set; }
+
         public string RecipientID { get; set; }
         public string FileUrl { get; set; }
         public string AudioURL { get; set; }
@@ -398,10 +448,15 @@ namespace UserManagementAPI.Controllers
         public string ReplyToText { get; set; }
     }
 
-    // ✅ NEW: Request model for marking messages as read
+    /// <summary>Request model for marking messages as read.</summary>
     public class MarkReadRequest
     {
+        /// <summary>
+        /// Ignored. The recipient is always the caller; kept so existing
+        /// clients posting it do not fail model binding.
+        /// </summary>
         public string RecipientId { get; set; }
+
         public string SenderId { get; set; }
     }
 }

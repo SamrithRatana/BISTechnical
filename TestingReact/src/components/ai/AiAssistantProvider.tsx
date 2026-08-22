@@ -78,6 +78,15 @@ export interface ChatMessage {
  */
 const HISTORY_TURNS = 6;
 
+/**
+ * How long the panel waits for `/api/ai-search` before giving up.
+ *
+ * Above every server-side budget (`AGENT_BUDGET_MS` 50s, `IMAGE_BUDGET_MS`
+ * 55s, the route's `maxDuration` 60s), so this only ever fires when the
+ * response is genuinely not coming — not when a slow model is still working.
+ */
+const ASK_TIMEOUT_MS = 70_000;
+
 interface AiAssistantValue {
   open: boolean;
   setOpen: (open: boolean) => void;
@@ -119,7 +128,22 @@ export function AiAssistantProvider({ children }: { children: React.ReactNode })
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [loading, setLoading] = useState(false);
   const [models, setModels] = useState<ModelStatus[]>([]);
-  const [selectedModel, setSelectedModel] = useState("");
+  const [selectedModel, setSelectedModelState] = useState<string>(() => {
+    if (typeof window !== "undefined") {
+      return localStorage.getItem("beauramei_ai_model") || "gemini-3.5-flash-lite";
+    }
+    return "gemini-3.5-flash-lite";
+  });
+  const setSelectedModel = useCallback((modelId: string) => {
+    setSelectedModelState(modelId);
+    if (typeof window !== "undefined") {
+      if (modelId) {
+        localStorage.setItem("beauramei_ai_model", modelId);
+      } else {
+        localStorage.removeItem("beauramei_ai_model");
+      }
+    }
+  }, []);
   const [imageModels, setImageModels] = useState<ModelStatus[]>([]);
   const [selectedImageModel, setSelectedImageModel] = useState("");
   const [quotaWait, setQuotaWait] = useState<number | null>(null);
@@ -151,6 +175,31 @@ export function AiAssistantProvider({ children }: { children: React.ReactNode })
       requestRef.current?.abort();
       const controller = new AbortController();
       requestRef.current = controller;
+
+      /*
+        Client-side ceiling on the wait.
+
+        The route already bounds its own work — `AGENT_BUDGET_MS` 50s,
+        `IMAGE_BUDGET_MS` 55s, `maxDuration` 60s — so in normal operation it
+        always answers. What this catches is the case where the *response*
+        never arrives at all: the dev server restarting mid-question, a
+        connection dropped after the request went out, a proxy holding it open.
+        `fetch` never rejects for those, so `loading` stayed true and the
+        panel's typing indicator ran until the page was reloaded.
+
+        70s sits above every server-side budget on purpose. Firing earlier
+        would abort answers the route was still legitimately producing — the
+        slowest model in the rotation measured 21-45s per round.
+
+        `timedOut` distinguishes this abort from a real cancellation: the catch
+        below returns silently on `AbortError`, which is right when a newer
+        question superseded this one and wrong when nothing is coming back.
+      */
+      let timedOut = false;
+      const timeoutId = setTimeout(() => {
+        timedOut = true;
+        controller.abort();
+      }, ASK_TIMEOUT_MS);
 
       const history = messages.slice(-HISTORY_TURNS).map((m) => ({
         role: m.role,
@@ -246,8 +295,10 @@ export function AiAssistantProvider({ children }: { children: React.ReactNode })
           }
         } catch (err) {
           // A superseded question isn't a failure — its replacement owns the
-          // conversation now.
-          if ((err as Error)?.name === "AbortError") return;
+          // conversation now. A TIMED-OUT one is: nothing is coming back, and
+          // returning silently here would leave the user looking at their own
+          // question with no reply and no explanation.
+          if ((err as Error)?.name === "AbortError" && !timedOut) return;
           setMessages((prev) => [
             ...prev,
             {
@@ -260,6 +311,7 @@ export function AiAssistantProvider({ children }: { children: React.ReactNode })
             },
           ]);
         } finally {
+          clearTimeout(timeoutId);
           if (requestRef.current === controller) setLoading(false);
         }
       })();

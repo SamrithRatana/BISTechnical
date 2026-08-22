@@ -6,16 +6,14 @@ public class CreateSparepartCommandHandler
     : IRequestHandler<CreateSparepartCommand, bool>
 {
     private readonly ITechnicalServiceRepository _repairServiceRepository;
-    private readonly IMediator _mediator;
     private readonly ILogger<CreateSparepartCommandHandler> _logger;
 
     // Using DI to inject infrastructure persitence Repositories
-    public CreateSparepartCommandHandler(IMediator mediator,
+    public CreateSparepartCommandHandler(
         ITechnicalServiceRepository repairServiceRepository,
         ILogger<CreateSparepartCommandHandler> logger)
     {
         _repairServiceRepository = repairServiceRepository ?? throw new ArgumentNullException(nameof(repairServiceRepository));
-        _mediator = mediator ?? throw new ArgumentNullException(nameof(mediator));
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
     }
 
@@ -29,9 +27,7 @@ public class CreateSparepartCommandHandler
             message.PictureUrl,
             message.LinkItemId,
             message.Quantity,
-                message.DefaultPrice); // ✅ ADD
-                                       // ✅ ADD THIS LINE
-
+                message.DefaultPrice);
         _logger.LogInformation("Creating Sparepart - Sparepart: {@Sparepart}", sparepart);
         _repairServiceRepository.AddSparepart(sparepart);
         return await _repairServiceRepository.UnitOfWork.SaveEntitiesAsync(cancellationToken);

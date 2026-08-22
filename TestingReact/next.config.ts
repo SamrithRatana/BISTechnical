@@ -1,5 +1,9 @@
 import type { NextConfig } from "next";
 import { withSentryConfig } from "@sentry/nextjs";
+import { EventEmitter } from "events";
+
+// Increase default max listeners for Node.js process to support concurrent API proxy routes & SSE streams
+EventEmitter.defaultMaxListeners = 100;
 
 const nextConfig: NextConfig = {
   /**

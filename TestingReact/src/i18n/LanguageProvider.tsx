@@ -58,9 +58,18 @@ function isLanguage(value: unknown): value is Language {
  * to swap in the Battambang Khmer font.
  */
 function applyToDocument(lang: Language) {
+  if (typeof document === "undefined") return;
   const root = document.documentElement;
   root.lang = lang === "km" ? "km" : "en";
   root.dataset.lang = lang;
+
+  // Add smooth language-switching cross-fade class to prevent abrupt font snap
+  root.classList.add("lang-switching");
+  const win = window as any;
+  if (win._langSwitchTimer) clearTimeout(win._langSwitchTimer);
+  win._langSwitchTimer = setTimeout(() => {
+    root.classList.remove("lang-switching");
+  }, 280);
 }
 
 // ─── External store over localStorage ────────────────────────────────────────

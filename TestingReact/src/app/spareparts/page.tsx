@@ -1,6 +1,7 @@
 "use client";
 
-import React, { memo, useState, useCallback } from "react";
+import React, { memo, useState, useEffect, useCallback, useRef } from "react";
+import toast from "react-hot-toast";
 import PageWrapper from "@/components/PageWrapper";
 import HighlightText from "@/components/HighlightText";
 import {
@@ -15,8 +16,12 @@ import {
   Trash2,
   X,
   Save,
-  Image as ImageIcon
+  Upload,
+  Loader2,
+  Image as ImageIcon,
+  Smartphone,
 } from "lucide-react";
+import { useCompanionScanner } from "@/context/CompanionScannerContext";
 import {
   fetchSparePartsInventory,
   createSparePart,
@@ -26,6 +31,8 @@ import {
   invalidateCachePrefix,
   SparePartItem
 } from "@/services/api";
+import { uploadImage, UploadError } from "@/services/upload";
+import { uploadErrorTranslationKey } from "@/lib/uploadErrorMessage";
 import { useDebouncedValue } from "@/hooks/useDebouncedValue";
 import { useRealtimeResource } from "@/hooks/useRealtimeTickets";
 import { useSearchQueryParam } from "@/hooks/useSearchQueryParam";
@@ -36,6 +43,7 @@ import type { TranslationKey } from "@/i18n/translations";
 import InfiniteScrollStatus from "@/components/InfiniteScrollStatus";
 import { useActionHandler, type ActionValues } from "@/components/ActionBus";
 import { Badge, ConfirmDialog, EmptyState, ProgressBar, SkeletonRows } from "@/components/av";
+import { ModalWrapper } from "@/components/av/ModalWrapper";
 import MediaLightbox from "@/components/MediaLightbox";
 import { useVirtualRows } from "@/hooks/useVirtualRows";
 import { cn } from "@/lib/utils";
@@ -281,7 +289,7 @@ const PartRow = memo(function PartRow({
       <td className="py-3 px-3.5 text-center whitespace-nowrap">
         <button
           onClick={() => onStockIn(part)}
-          className="inline-flex items-center gap-1 px-3 py-1.5 text-[11px] font-semibold text-ink bg-surface border border-subtle rounded-xl hover:bg-success-soft hover:text-success-fg hover:border-success transition-all shadow-2xs "
+          className="inline-flex items-center gap-1 px-3 py-1.5 text-[11px] font-semibold text-ink bg-surface border border-subtle rounded-xl hover:bg-success-soft hover:text-success-fg hover:border-success transition-[color,background-color,border-color,box-shadow,opacity,transform,filter] shadow-2xs "
         >
           <PackageCheck className="w-3.5 h-3.5 text-success " />
           <span>{t("action.stockIn")}</span>
@@ -293,7 +301,7 @@ const PartRow = memo(function PartRow({
         <button
           disabled={qty <= 0}
           onClick={() => onStockOut(part)}
-          className="inline-flex items-center gap-1 px-3 py-1.5 text-[11px] font-semibold text-danger bg-surface border border-danger rounded-xl hover:bg-danger-soft hover:border-danger transition-all shadow-2xs disabled:opacity-40 disabled:cursor-not-allowed "
+          className="inline-flex items-center gap-1 px-3 py-1.5 text-[11px] font-semibold text-danger bg-surface border border-danger rounded-xl hover:bg-danger-soft hover:border-danger transition-[color,background-color,border-color,box-shadow,opacity,transform,filter] shadow-2xs disabled:opacity-40 disabled:cursor-not-allowed "
         >
           <MinusCircle className="w-3.5 h-3.5" />
           <span>{t("action.stockOut")}</span>
@@ -337,11 +345,25 @@ export default function SparePartsPage() {
   const [search, setSearch] = useState("");
   const pageSize = 25;
 
+  const { openPairingModal } = useCompanionScanner();
+
   // Modal states
   const [activeModal, setActiveModal] = useState<"stockIn" | "stockOut" | "edit" | "delete" | null>(null);
   const [selectedPart, setSelectedPart] = useState<SparePartItem | null>(null);
   const [quantityInput, setQuantityInput] = useState(1);
   const [reasonInput, setReasonInput] = useState("");
+
+  // Listen to global Companion Barcode Scanner events to filter spare parts catalogue
+  useEffect(() => {
+    const handleCompanionScan = (e: Event) => {
+      const customEvent = e as CustomEvent<{ barcode?: string }>;
+      if (customEvent?.detail?.barcode) {
+        setSearch(customEvent.detail.barcode);
+      }
+    };
+    window.addEventListener("companion-barcode-scanned", handleCompanionScan);
+    return () => window.removeEventListener("companion-barcode-scanned", handleCompanionScan);
+  }, []);
 
   /** Which thumbnail is open full-size, if any. */
   const [lightbox, setLightbox] = useState<
@@ -374,6 +396,32 @@ export default function SparePartsPage() {
     quantity: 0,
     defaultPrice: 0,
   });
+
+  // Image upload — R2 via the shared `services/upload.ts` utility. The
+  // "Picture URL" text field stays alongside this rather than being replaced
+  // by it, so existing parts (and anyone who'd rather paste a URL) keep
+  // working exactly as before.
+  const [isUploadingImage, setIsUploadingImage] = useState(false);
+  const imageFileInputRef = useRef<HTMLInputElement>(null);
+  const handleImageFileSelected = useCallback(
+    async (e: React.ChangeEvent<HTMLInputElement>) => {
+      const file = e.target.files?.[0];
+      e.target.value = ""; // allows re-selecting the same file after an error
+      if (!file) return;
+
+      setIsUploadingImage(true);
+      try {
+        const url = await uploadImage(file);
+        setFormState((prev) => ({ ...prev, pictureUrl: url }));
+      } catch (err) {
+        const reason = err instanceof UploadError ? err.reason : "uploadFailed";
+        toast.error(t(uploadErrorTranslationKey(reason)));
+      } finally {
+        setIsUploadingImage(false);
+      }
+    },
+    [t]
+  );
 
 
   /**
@@ -711,6 +759,17 @@ export default function SparePartsPage() {
               />
             </div>
 
+            {/* Mobile Companion Barcode Scanner */}
+            <button
+              type="button"
+              onClick={openPairingModal}
+              className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-semibold text-cyan-700 dark:text-cyan-300 bg-cyan-500/10 hover:bg-cyan-500/20 border border-cyan-500/30 rounded-xl transition-all shadow-2xs cursor-pointer active:scale-95"
+              title="Scan Barcode with Phone"
+            >
+              <Smartphone className="w-3.5 h-3.5" />
+              <span className="hidden sm:inline">Phone Scan</span>
+            </button>
+
             <button
               onClick={loadData}
               className="p-2 text-ink-secondary hover:bg-sunken rounded-xl transition-colors "
@@ -952,6 +1011,8 @@ export default function SparePartsPage() {
               ? lightbox.part.serialNumber ?? lightbox.part.partNumber ?? ""
               : undefined
           }
+          part={lightbox?.part}
+          kind={lightbox?.kind}
         >
           {lightbox?.kind === "barcode" ? (
             <div className="scale-[2.2] origin-center py-8">
@@ -972,8 +1033,15 @@ export default function SparePartsPage() {
 
         {/* ── CREATE / EDIT DIALOG ── */}
         {activeModal === "edit" && (
-          <div className="enter-fade fixed inset-0 z-50 bg-ink/60 backdrop-blur-xs flex items-center justify-center p-4">
-            <div className="bg-surface border border-subtle rounded-2xl shadow-xl max-w-2xl w-full flex flex-col max-h-[90vh] enter-pop">
+          <ModalWrapper
+            open
+            onClose={() => setActiveModal(null)}
+            maxWidth="max-w-2xl"
+            zIndex={120}
+            placement="center"
+            backdropVariant="heavy"
+          >
+            <div className="bg-surface border border-subtle rounded-2xl flex flex-col max-h-[var(--av-modal-inner-maxh)]">
               <div className="px-5 py-4 border-b border-subtle flex items-center justify-between">
                 <h3 className="font-bold text-ink text-base">
                   {formState.id ? t("sp.edit") : t("sp.addNew")}
@@ -990,34 +1058,67 @@ export default function SparePartsPage() {
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   {/* Left Column: Image Box & Description */}
                   <div className="space-y-4">
-                    <div className="w-full h-44 rounded-xl border-2 border-dashed border-subtle bg-cushion flex flex-col items-center justify-center relative overflow-hidden p-2">
+                    <div
+                      onClick={() => !formState.pictureUrl && imageFileInputRef.current?.click()}
+                      className={`w-full h-44 rounded-xl border-2 border-dashed border-subtle bg-cushion flex flex-col items-center justify-center relative overflow-hidden p-3 transition-colors ${
+                        !formState.pictureUrl ? "cursor-pointer hover:border-accent/50 hover:bg-cushion/80" : ""
+                      }`}
+                    >
                       {formState.pictureUrl ? (
                         <>
                           <img
                             src={getImageUrl(formState.pictureUrl)}
                             alt="preview"
-                            className="max-h-36 object-contain rounded"
+                            className="max-h-36 max-w-full object-contain rounded-lg drop-shadow-sm"
                           />
                           <button
                             type="button"
-                            onClick={() => setFormState({ ...formState, pictureUrl: "" })}
-                            className="absolute top-2 right-2 p-1 rounded-full bg-ink/60 text-white hover:bg-ink transition-colors"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setFormState({ ...formState, pictureUrl: "" });
+                            }}
+                            className="absolute top-2 right-2 p-1 rounded-full bg-ink/60 text-white hover:bg-ink transition-colors cursor-pointer"
                           >
                             <X className="w-4 h-4" />
                           </button>
                         </>
                       ) : (
-                        <div className="text-center space-y-2">
-                          <ImageIcon className="w-8 h-8 text-ink-muted mx-auto" />
-                          <span className="text-xs text-ink-muted">{t("sp.noImageSelected")}</span>
+                        <div className="text-center space-y-1.5 px-2">
+                          <ImageIcon className="w-7 h-7 text-ink-muted mx-auto" />
+                          <p className="text-xs font-semibold text-ink">{t("sp.noImageSelected")}</p>
+                          <p className="text-[11px] text-ink-muted leading-tight max-w-[240px]">
+                            {t("sp.imageGuidelines")}
+                          </p>
                         </div>
                       )}
                     </div>
 
                     <div className="space-y-1">
-                      <label className="text-xs font-semibold text-ink ">
-                        {t("sp.pictureUrl")}
-                      </label>
+                      <div className="flex items-center justify-between gap-2">
+                        <label className="text-xs font-semibold text-ink ">
+                          {t("sp.pictureUrl")}
+                        </label>
+                        <button
+                          type="button"
+                          disabled={isUploadingImage}
+                          onClick={() => imageFileInputRef.current?.click()}
+                          className="inline-flex items-center gap-1.5 rounded-lg border border-subtle bg-surface px-2.5 py-1 text-[11px] font-semibold text-ink-secondary transition-colors hover:bg-cushion hover:text-ink disabled:opacity-60"
+                        >
+                          {isUploadingImage ? (
+                            <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                          ) : (
+                            <Upload className="w-3.5 h-3.5" />
+                          )}
+                          {t(isUploadingImage ? "upload.uploading" : "upload.fromDevice")}
+                        </button>
+                        <input
+                          ref={imageFileInputRef}
+                          type="file"
+                          accept="image/jpeg,image/png,image/webp,image/gif"
+                          onChange={handleImageFileSelected}
+                          className="hidden"
+                        />
+                      </div>
                       <input
                         type="text"
                         placeholder={t("sp.pictureUrlPlaceholder")}
@@ -1130,7 +1231,7 @@ export default function SparePartsPage() {
                 </div>
               </form>
             </div>
-          </div>
+          </ModalWrapper>
         )}
 
         {/* ── DELETE CONFIRM DIALOG ── */}
@@ -1159,8 +1260,15 @@ export default function SparePartsPage() {
 
         {/* ── STOCK IN DIALOG ── */}
         {activeModal === "stockIn" && selectedPart && (
-          <div className="enter-fade fixed inset-0 z-50 bg-ink/60 backdrop-blur-xs flex items-center justify-center p-4">
-            <div className="bg-surface border border-subtle rounded-2xl shadow-xl max-w-md w-full p-6 enter-pop">
+          <ModalWrapper
+            open
+            onClose={() => setActiveModal(null)}
+            maxWidth="max-w-md"
+            zIndex={120}
+            placement="center"
+            backdropVariant="heavy"
+          >
+            <div className="bg-surface border border-subtle rounded-2xl p-6">
               <div className="flex items-center gap-3 border-b border-subtle pb-3 mb-4">
                 <div className="p-2 bg-success-soft text-success-fg rounded-xl ">
                   <PackageCheck className="w-5 h-5" />
@@ -1205,13 +1313,20 @@ export default function SparePartsPage() {
                 </div>
               </div>
             </div>
-          </div>
+          </ModalWrapper>
         )}
 
         {/* ── STOCK OUT DIALOG ── */}
         {activeModal === "stockOut" && selectedPart && (
-          <div className="enter-fade fixed inset-0 z-50 bg-ink/60 backdrop-blur-xs flex items-center justify-center p-4">
-            <div className="bg-surface border border-subtle rounded-2xl shadow-xl max-w-md w-full p-6 enter-pop">
+          <ModalWrapper
+            open
+            onClose={() => setActiveModal(null)}
+            maxWidth="max-w-md"
+            zIndex={120}
+            placement="center"
+            backdropVariant="heavy"
+          >
+            <div className="bg-surface border border-subtle rounded-2xl p-6">
               <div className="flex items-center gap-3 border-b border-subtle pb-3 mb-4">
                 <div className="p-2 bg-danger-soft text-danger-fg rounded-xl ">
                   <MinusCircle className="w-5 h-5" />
@@ -1282,7 +1397,7 @@ export default function SparePartsPage() {
                 </div>
               </div>
             </div>
-          </div>
+          </ModalWrapper>
         )}
       </div>
     </PageWrapper>

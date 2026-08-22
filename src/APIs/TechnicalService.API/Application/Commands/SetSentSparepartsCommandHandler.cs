@@ -4,15 +4,10 @@ namespace TechnicalService.API.Application.Commands;
 public class SetSentSparepartsCommandHandler : IRequestHandler<SetSentSparepartsCommand, bool>
 {
     private readonly ITechnicalServiceRepository _technicalServiceRepository;
-    private readonly IMediator _mediator;
-    private readonly ILogger<SetSentSparepartsCommandHandler> _logger; // ✅ fixed type
-
-    public SetSentSparepartsCommandHandler(IMediator mediator, // ✅ fixed name
-        ITechnicalServiceRepository technicalServiceRepository,
-        ILogger<SetSentSparepartsCommandHandler> logger) // ✅ fixed type
-    {
+    private readonly ILogger<SetSentSparepartsCommandHandler> _logger;
+    public SetSentSparepartsCommandHandler(        ITechnicalServiceRepository technicalServiceRepository,
+        ILogger<SetSentSparepartsCommandHandler> logger)    {
         _technicalServiceRepository = technicalServiceRepository ?? throw new ArgumentNullException(nameof(technicalServiceRepository));
-        _mediator = mediator ?? throw new ArgumentNullException(nameof(mediator));
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
     }
 
@@ -24,7 +19,7 @@ public class SetSentSparepartsCommandHandler : IRequestHandler<SetSentSpareparts
             return false;
         }
         serviceToUpdate.SetSentSparepartsStatus(command.SentSparepartsDate, command.SetSentSparepartsBy);
-        _logger.LogInformation("Updating Service - SetSentSpareparts: {@Service}", serviceToUpdate);
+        _logger.LogInformation("Updating Service - SetSentSpareparts: {ServiceId}", serviceToUpdate.Id);
         return await _technicalServiceRepository.UnitOfWork.SaveEntitiesAsync(cancellationToken);
     }
 }

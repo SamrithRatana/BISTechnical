@@ -1,7 +1,6 @@
 ﻿using System.Runtime.Serialization;
 using MediatR;
-using TechnicalService.API.Application.DTOs;  // ✅ use shared DTO
-
+using TechnicalService.API.Application.DTOs;
 namespace TechnicalService.API.Application.Commands;
 
 [DataContract]
@@ -30,5 +29,4 @@ public class UpdateInspectItemCommand : IRequest<bool>
         Spareparts = new List<SparepartItemDTO>();
     }
 
-    // ✅ REMOVED nested SparepartItemDTO record
 }

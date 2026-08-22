@@ -104,7 +104,7 @@ export default function StatusUpdateDropdown({
         }}
         aria-haspopup="listbox"
         aria-expanded={open}
-        className={`inline-flex items-center gap-1.5 pl-3 pr-2 py-1 text-[11px] font-semibold rounded-full border cursor-pointer font-sans tracking-tight shadow-sm transition-all hover:shadow-md hover:brightness-[1.03] active:scale-[0.98] ${styles.trigger}`}
+        className={`inline-flex items-center gap-1.5 pl-3 pr-2 py-1 text-[11px] font-semibold rounded-full border cursor-pointer font-sans tracking-tight shadow-sm transition-[color,background-color,border-color,box-shadow,opacity,transform,filter] hover:shadow-md hover:brightness-[1.03] active:scale-[0.98] ${styles.trigger}`}
       >
         <span className="truncate max-w-[150px]">{currentLabel}</span>
         <ChevronDown
@@ -125,7 +125,7 @@ export default function StatusUpdateDropdown({
               width: coords.width,
               transform: coords.placement === "top" ? "translateY(-100%)" : undefined,
             }}
-            className={`z-[100] bg-elevated  border border-subtle  rounded-xl shadow-xl  overflow-hidden py-1 ${
+            className={`z-[100] av-glass-panel rounded-xl overflow-hidden py-1 ${
               coords.placement === "top" ? "dropdown-panel-in-top" : "dropdown-panel-in"
             }`}
           >

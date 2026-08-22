@@ -1,11 +1,13 @@
 ﻿using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.EntityFrameworkCore;
 using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Security.Claims;
 using System.Threading.Tasks;
+using UserManagementAPI.Data;
 using UserManagementAPI.Models;
 using UserManagementAPI.ViewModel;
 
@@ -19,15 +21,35 @@ namespace UserManagementAPI.Controllers
         private readonly UserManager<ApplicationUser> _userManager;
         private readonly RoleManager<IdentityRole> _roleManager;
         private readonly ILogger<PermissionManagementController> _logger;
+        private readonly UserManagementContext _context;
 
         public PermissionManagementController(
             UserManager<ApplicationUser> userManager,
             RoleManager<IdentityRole> roleManager,
-            ILogger<PermissionManagementController> logger)
+            ILogger<PermissionManagementController> logger,
+            UserManagementContext context)
         {
             _userManager = userManager;
             _roleManager = roleManager;
             _logger = logger;
+            _context = context;
+        }
+
+        /// <summary>
+        /// Every "Permission"-type claim across ALL of `roleNames`, in one
+        /// query — the shared fix for the FindByNameAsync + GetClaimsAsync
+        /// round trip PER ROLE that <see cref="GetUserPermissions"/>,
+        /// <see cref="CheckPermission"/> and <see cref="GetMyPermissions"/>
+        /// each ran independently.
+        /// </summary>
+        private async Task<HashSet<string>> GetPermissionsForRolesAsync(IList<string> roleNames)
+        {
+            var values = await _context.Roles
+                .Where(r => roleNames.Contains(r.Name))
+                .Join(_context.RoleClaims.Where(rc => rc.ClaimType == "Permission"),
+                    r => r.Id, rc => rc.RoleId, (r, rc) => rc.ClaimValue)
+                .ToListAsync();
+            return new HashSet<string>(values);
         }
 
         // GET: api/PermissionManagement/roles/{roleId}/permissions
@@ -36,8 +58,8 @@ namespace UserManagementAPI.Controllers
         {
             try
             {
-                _logger.LogInformation("GetRolePermissions called for roleId: {RoleId}", roleId);
-                _logger.LogInformation("User: {User}, Authenticated: {Auth}",
+                _logger.LogDebug("GetRolePermissions called for roleId: {RoleId}", roleId);
+                _logger.LogDebug("User: {User}, Authenticated: {Auth}",
                     User.Identity?.Name ?? "Anonymous",
                     User.Identity?.IsAuthenticated);
 
@@ -52,8 +74,8 @@ namespace UserManagementAPI.Controllers
                 var roleClaims = await _roleManager.GetClaimsAsync(role);
                 var allPermissions = UserManagementAPI.Contants.Permissions.GenerateAllPermissions();
 
-                _logger.LogInformation("Role {RoleName} has {ClaimCount} claims", role.Name, roleClaims.Count);
-                _logger.LogInformation("Total available permissions: {PermCount}", allPermissions.Count);
+                _logger.LogDebug("Role {RoleName} has {ClaimCount} claims", role.Name, roleClaims.Count);
+                _logger.LogDebug("Total available permissions: {PermCount}", allPermissions.Count);
 
                 var permissionDtos = allPermissions.Select(permission => new PermissionDto
                 {
@@ -65,7 +87,7 @@ namespace UserManagementAPI.Controllers
                 }).ToList();
 
                 var assignedCount = permissionDtos.Count(p => p.IsAssigned);
-                _logger.LogInformation("Assigned permissions: {AssignedCount}/{TotalCount}", assignedCount, permissionDtos.Count);
+                _logger.LogDebug("Assigned permissions: {AssignedCount}/{TotalCount}", assignedCount, permissionDtos.Count);
 
                 var response = new RolePermissionsDto
                 {
@@ -79,17 +101,22 @@ namespace UserManagementAPI.Controllers
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Error in GetRolePermissions for roleId: {RoleId}", roleId);
-                return StatusCode(500, new { Status = "Error", Message = ex.Message });
+                return StatusCode(500, new { Status = "Error", Message = "An error occurred." });
             }
         }
 
         // PUT: api/PermissionManagement/roles/{roleId}/permissions
+        //
+        // Admin-only: this writes the claims that the whole permission system
+        // is evaluated against, so leaving it at plain [Authorize] let any
+        // signed-in user grant themselves anything.
+        [Authorize(Roles = "Admin")]
         [HttpPut("roles/{roleId}/permissions")]
         public async Task<IActionResult> UpdateRolePermissions(string roleId, [FromBody] UpdateRolePermissionsRequest request)
         {
             try
             {
-                _logger.LogInformation("UpdateRolePermissions called for roleId: {RoleId}", roleId);
+                _logger.LogDebug("UpdateRolePermissions called for roleId: {RoleId}", roleId);
 
                 if (roleId != request.RoleId)
                 {
@@ -111,39 +138,39 @@ namespace UserManagementAPI.Controllers
                     .Select(c => c.Value)
                     .ToList();
 
-                _logger.LogInformation("Existing permissions: {Count}", existingPermissions.Count);
-                _logger.LogInformation("New permissions: {Count}", request.Permissions.Count);
+                _logger.LogDebug("Existing permissions: {Count}", existingPermissions.Count);
+                _logger.LogDebug("New permissions: {Count}", request.Permissions.Count);
 
-                // Remove permissions that are no longer selected
+                // Diff-based (only touches what actually changed), but as ONE
+                // save instead of one RemoveClaimAsync/AddClaimAsync round trip
+                // PER CHANGED PERMISSION — each of those calls its own
+                // SaveChangesAsync internally.
                 var permissionsToRemove = existingPermissions.Except(request.Permissions).ToList();
-                foreach (var permission in permissionsToRemove)
+                var permissionsToAdd = request.Permissions.Except(existingPermissions).ToList();
+
+                if (permissionsToRemove.Count > 0)
                 {
-                    var claim = existingClaims.First(c => c.Type == "Permission" && c.Value == permission);
-                    var result = await _roleManager.RemoveClaimAsync(role, claim);
-                    if (result.Succeeded)
-                    {
-                        _logger.LogInformation("Removed permission: {Permission}", permission);
-                    }
-                    else
-                    {
-                        _logger.LogWarning("Failed to remove permission: {Permission}", permission);
-                    }
+                    var claimsToRemove = await _context.RoleClaims
+                        .Where(rc => rc.RoleId == role.Id && rc.ClaimType == "Permission"
+                            && permissionsToRemove.Contains(rc.ClaimValue))
+                        .ToListAsync();
+                    _context.RoleClaims.RemoveRange(claimsToRemove);
                 }
 
-                // Add new permissions
-                var permissionsToAdd = request.Permissions.Except(existingPermissions).ToList();
-                foreach (var permission in permissionsToAdd)
+                if (permissionsToAdd.Count > 0)
                 {
-                    var result = await _roleManager.AddClaimAsync(role, new Claim("Permission", permission));
-                    if (result.Succeeded)
-                    {
-                        _logger.LogInformation("Added permission: {Permission}", permission);
-                    }
-                    else
-                    {
-                        _logger.LogWarning("Failed to add permission: {Permission}", permission);
-                    }
+                    _context.RoleClaims.AddRange(permissionsToAdd.Select(permission =>
+                        new IdentityRoleClaim<string>
+                        {
+                            RoleId = role.Id,
+                            ClaimType = "Permission",
+                            ClaimValue = permission
+                        }));
                 }
+
+                await _context.SaveChangesAsync();
+                _logger.LogDebug("Removed {Removed} permission(s), added {Added} permission(s)",
+                    permissionsToRemove.Count, permissionsToAdd.Count);
 
                 _logger.LogInformation("Permissions updated for role '{RoleName}': Added={Added}, Removed={Removed}",
                     role.Name, permissionsToAdd.Count, permissionsToRemove.Count);
@@ -164,7 +191,7 @@ namespace UserManagementAPI.Controllers
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Error in UpdateRolePermissions for roleId: {RoleId}", roleId);
-                return StatusCode(500, new { Status = "Error", Message = ex.Message });
+                return StatusCode(500, new { Status = "Error", Message = "An error occurred." });
             }
         }
 
@@ -174,11 +201,14 @@ namespace UserManagementAPI.Controllers
         {
             try
             {
-                _logger.LogInformation("GetUserPermissions called for userId: {UserId}", userId);
+                _logger.LogDebug("GetUserPermissions called for userId: {UserId}", userId);
 
-                // Allow users to view their own permissions, or admins to view any user
+                // Allow users to view their own permissions, or admins to view any user.
+                // Checks SuperAdmin too — a SuperAdmin who does not ALSO hold
+                // the separate "Admin" role was previously denied here, and at
+                // least one real seeded account holds SuperAdmin only.
                 var currentUserId = User.FindFirstValue(ClaimTypes.NameIdentifier);
-                if (currentUserId != userId && !User.IsInRole("Admin"))
+                if (currentUserId != userId && !User.IsInRole("Admin") && !User.IsInRole("SuperAdmin"))
                 {
                     _logger.LogWarning("Access denied: User {CurrentUser} tried to view permissions of {UserId}",
                         currentUserId, userId);
@@ -193,21 +223,7 @@ namespace UserManagementAPI.Controllers
                 }
 
                 var userRoles = await _userManager.GetRolesAsync(user);
-                var permissions = new HashSet<string>();
-
-                // Collect permissions from all user roles
-                foreach (var roleName in userRoles)
-                {
-                    var role = await _roleManager.FindByNameAsync(roleName);
-                    if (role != null)
-                    {
-                        var roleClaims = await _roleManager.GetClaimsAsync(role);
-                        foreach (var claim in roleClaims.Where(c => c.Type == "Permission"))
-                        {
-                            permissions.Add(claim.Value);
-                        }
-                    }
-                }
+                var permissions = await GetPermissionsForRolesAsync(userRoles);
 
                 _logger.LogInformation("User {UserName} has {PermCount} permissions from {RoleCount} roles",
                     user.UserName, permissions.Count, userRoles.Count);
@@ -234,7 +250,7 @@ namespace UserManagementAPI.Controllers
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Error in GetUserPermissions for userId: {UserId}", userId);
-                return StatusCode(500, new { Status = "Error", Message = ex.Message });
+                return StatusCode(500, new { Status = "Error", Message = "An error occurred." });
             }
         }
 
@@ -247,9 +263,10 @@ namespace UserManagementAPI.Controllers
                 _logger.LogInformation("CheckPermission called: UserId={UserId}, Permission={Permission}",
                     request.UserId, request.Permission);
 
-                // Allow users to check their own permissions, or admins to check any user
+                // Allow users to check their own permissions, or admins to
+                // check any user — see the same SuperAdmin note in GetUserPermissions above.
                 var currentUserId = User.FindFirstValue(ClaimTypes.NameIdentifier);
-                if (currentUserId != request.UserId && !User.IsInRole("Admin"))
+                if (currentUserId != request.UserId && !User.IsInRole("Admin") && !User.IsInRole("SuperAdmin"))
                 {
                     _logger.LogWarning("Access denied: User {CurrentUser} tried to check permissions of {UserId}",
                         currentUserId, request.UserId);
@@ -264,23 +281,12 @@ namespace UserManagementAPI.Controllers
                 }
 
                 var userRoles = await _userManager.GetRolesAsync(user);
-                bool hasPermission = false;
-
-                // Check if user has the permission through any of their roles
-                foreach (var roleName in userRoles)
+                var permissions = await GetPermissionsForRolesAsync(userRoles);
+                bool hasPermission = permissions.Contains(request.Permission);
+                if (hasPermission)
                 {
-                    var role = await _roleManager.FindByNameAsync(roleName);
-                    if (role != null)
-                    {
-                        var roleClaims = await _roleManager.GetClaimsAsync(role);
-                        if (roleClaims.Any(c => c.Type == "Permission" && c.Value == request.Permission))
-                        {
-                            hasPermission = true;
-                            _logger.LogInformation("Permission {Permission} found in role {Role}",
-                                request.Permission, roleName);
-                            break;
-                        }
-                    }
+                    _logger.LogInformation("Permission {Permission} found for user {UserId}",
+                        request.Permission, request.UserId);
                 }
 
                 var response = new PermissionCheckResponse
@@ -295,7 +301,7 @@ namespace UserManagementAPI.Controllers
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Error in CheckPermission");
-                return StatusCode(500, new { Status = "Error", Message = ex.Message });
+                return StatusCode(500, new { Status = "Error", Message = "An error occurred." });
             }
         }
 
@@ -306,7 +312,7 @@ namespace UserManagementAPI.Controllers
             try
             {
                 _logger.LogInformation("✅ GetAllModulePermissions called");
-                _logger.LogInformation("User: {User}, Authenticated: {Auth}",
+                _logger.LogDebug("User: {User}, Authenticated: {Auth}",
                     User.Identity?.Name ?? "Anonymous",
                     User.Identity?.IsAuthenticated);
 
@@ -336,7 +342,7 @@ namespace UserManagementAPI.Controllers
             catch (Exception ex)
             {
                 _logger.LogError(ex, "❌ Error in GetAllModulePermissions");
-                return StatusCode(500, new { Status = "Error", Message = ex.Message, Details = ex.StackTrace });
+                return StatusCode(500, new { Status = "Error", Message = "An error occurred." });
             }
         }
 
@@ -363,20 +369,7 @@ namespace UserManagementAPI.Controllers
                 }
 
                 var userRoles = await _userManager.GetRolesAsync(user);
-                var permissions = new HashSet<string>();
-
-                foreach (var roleName in userRoles)
-                {
-                    var role = await _roleManager.FindByNameAsync(roleName);
-                    if (role != null)
-                    {
-                        var roleClaims = await _roleManager.GetClaimsAsync(role);
-                        foreach (var claim in roleClaims.Where(c => c.Type == "Permission"))
-                        {
-                            permissions.Add(claim.Value);
-                        }
-                    }
-                }
+                var permissions = await GetPermissionsForRolesAsync(userRoles);
 
                 _logger.LogInformation("User {UserName} has {PermCount} permissions", user.UserName, permissions.Count);
 
@@ -402,7 +395,7 @@ namespace UserManagementAPI.Controllers
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Error in GetMyPermissions");
-                return StatusCode(500, new { Status = "Error", Message = ex.Message });
+                return StatusCode(500, new { Status = "Error", Message = "An error occurred." });
             }
         }
 

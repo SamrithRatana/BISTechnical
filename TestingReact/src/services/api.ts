@@ -45,6 +45,7 @@ import {
 } from "./mockData";
 
 import { fetchUserMap, enrichTicketUsers } from "./userService";
+import { timeoutAfter, fetchWithRetry } from "@/lib/withTimeout";
 
 // ---------------------------------------------------------------------------
 // Auth helpers
@@ -70,6 +71,29 @@ function getAuthHeaders(): Record<string, string> {
 
 const DEFAULT_TTL_MS = 3 * 60 * 1_000; // 3 minutes TTL
 
+/**
+ * Outer backstop on a cached read. See `fetchWithRetry`'s own 20s per-attempt
+ * default, which is the one that normally fires.
+ *
+ * This 30s bound is also what sizes `fetchWithRetry`'s 25s retry budget: the
+ * retries have to finish inside it, because this backstop RETHROWS instead of
+ * falling back to `mockData`, so a retry that overran it would turn a
+ * recoverable read into a hard error.
+ *
+ * Longer than the per-attempt timeout on purpose. The timeout that matters is the one on the
+ * `fetch` itself, because every fetcher in this file wraps its request in a
+ * `try/catch` whose `catch` returns `mockData` — the designed offline
+ * behaviour. A hanging `fetch` never rejects, so that `catch` never ran and
+ * the fallback was unreachable for the exact failure it exists to cover;
+ * aborting the request from inside makes it run normally.
+ *
+ * This outer bound only catches a fetcher that hangs for some OTHER reason —
+ * a JSON body that never finishes streaming, an enrichment step that stalls.
+ * It rethrows rather than falling back, because at that point there is no
+ * fallback to reach.
+ */
+const READ_TIMEOUT_MS = 30_000;
+
 /** Maximum number of entries before LRU eviction kicks in */
 const MAX_CACHE_ENTRIES = 200;
 /** Number of oldest entries to evict when the limit is hit */
@@ -83,7 +107,6 @@ interface CacheEntry<T> {
 
 const cacheStore = new Map<string, CacheEntry<unknown>>();
 const inflightRequests = new Map<string, Promise<unknown>>();
-const cacheSubscribers = new Map<string, Set<(data: unknown) => void>>();
 
 /**
  * LRU eviction: removes the oldest EVICT_COUNT entries when the cache
@@ -153,12 +176,6 @@ export function setCached<T>(key: string, data: T, ttlMs = DEFAULT_TTL_MS): void
       sessionStorage.setItem(`cache:${key}`, JSON.stringify(entry));
     } catch { /* storage quota exceeded */ }
   }
-
-  // Notify subscribers if background revalidation finished
-  const subs = cacheSubscribers.get(key);
-  if (subs) {
-    subs.forEach((cb) => cb(data));
-  }
 }
 
 /** Removes exact cache keys */
@@ -212,7 +229,24 @@ async function cachedFetch<T>(
     return existingInflight as Promise<T>;
   }
 
-  const fetchPromise = fetcher()
+  /*
+    Bounded wait.
+
+    Every cached read in this file funnels through here, so one wrapper puts a
+    ceiling on all of them. `fetch` has no default timeout: a connection that
+    is accepted and then goes quiet never rejects, so the promise never
+    settles, `inflightRequests` never clears the key, and every later caller
+    for that key joins a promise that will never resolve. The page holds its
+    spinner until someone reloads the browser.
+
+    On timeout the `.catch` below already does the right thing — serve the
+    stale entry if there is one, otherwise let the caller's own `catch` fall
+    back to `mockData`. Both are better than waiting forever.
+
+    This bounds the WAIT, not the request; see `lib/withTimeout`. The fetcher
+    is an opaque closure here, so there is no signal to abort.
+  */
+  const fetchPromise = timeoutAfter(fetcher(), READ_TIMEOUT_MS, key)
     .then((freshData) => {
       setCached(key, freshData, ttlMs);
       inflightRequests.delete(key);
@@ -272,7 +306,7 @@ export function getDbStatusMapping(filter: string): { id: number; name: string }
  */
 export async function loginUser(userName: string, password: string): Promise<LoginResponse> {
   try {
-    const res = await fetch("/api/auth/login", {
+    const res = await fetchWithRetry("/api/auth/login", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ userName, password })
@@ -385,7 +419,7 @@ export async function updateServiceStatus(
   if (statusRequest) {
     // Use the dedicated BIS endpoint for this status
     try {
-      const res = await fetch(statusRequest.endpoint, {
+      const res = await fetchWithRetry(statusRequest.endpoint, {
         method: "POST",
         headers: getAuthHeaders(),
         body: JSON.stringify(statusRequest.payload)
@@ -425,7 +459,7 @@ export async function updateServiceStatus(
     statusId: matched?.id ?? item.statusId
   };
   try {
-    const res = await fetch(`/api/proxy/technicalservices`, {
+    const res = await fetchWithRetry(`/api/proxy/technicalservices`, {
       method: "PUT",
       headers: getAuthHeaders(),
       body: JSON.stringify(updated)
@@ -446,12 +480,12 @@ export async function deleteTechnicalService(id: string): Promise<boolean> {
   invalidateCachePrefix("repairservices");
   invalidateCachePrefix("dashboard");
   try {
-    let res = await fetch(`/api/proxy/receiveitem/${id}`, {
+    let res = await fetchWithRetry(`/api/proxy/receiveitem/${id}`, {
       method: "DELETE",
       headers: getAuthHeaders()
     });
     if (!res.ok) {
-      res = await fetch(`/api/proxy/technicalservices/${id}`, {
+      res = await fetchWithRetry(`/api/proxy/technicalservices/${id}`, {
         method: "DELETE",
         headers: getAuthHeaders()
       });
@@ -505,6 +539,12 @@ export interface ServiceSearchExtras {
   statusesForProcessFiltering?: string[];
   userIds?: string[];
   userFilterStatuses?: string[];
+  /**
+   * Ask the backend for a narrower row. `"summary"` returns only id, status
+   * and the two dates — for callers that render a chart rather than a table.
+   * Omit it for the full ticket.
+   */
+  projection?: "summary";
 }
 
 /**
@@ -563,8 +603,9 @@ async function fetchSingleStatusServices(
   if (extras?.userFilterStatuses && extras.userFilterStatuses.length > 0) {
     extras.userFilterStatuses.forEach((st) => params.append("userFilterStatuses", st));
   }
+  if (extras?.projection) params.set("projection", extras.projection);
 
-  const res = await fetch(
+  const res = await fetchWithRetry(
     `/api/proxy/technicalservices/search?${params.toString()}`,
     { headers: getAuthHeaders() }
   );
@@ -641,7 +682,7 @@ export async function fetchItemsInventory(
 
       const endpoint = searchTerm ? "/api/proxy/items/search" : "/api/proxy/items";
 
-      const res = await fetch(
+      const res = await fetchWithRetry(
         `${endpoint}?${params.toString()}`,
         { headers: getAuthHeaders() }
       );
@@ -693,30 +734,44 @@ export async function fetchItemsInventory(
  * fields (ItemName, UseFor, PictureUrl, stock Quantity) live on the separate
  * Spareparts table and must be resolved per id, same as the Blazor dialog's
  * LoadSelectedSparePartsOnly.
+ *
+ * Cached, because the call site is a loop. `ServiceDetailModal` and
+ * `InspectItemDialog` both resolve one catalogue row per spare-part line on
+ * the ticket, so opening a ticket costs N of these (measured over the 400
+ * most recent tickets: 1.8 on average for a ticket that has parts, 7 at
+ * worst). Uncached, that N was paid again on every reopen, and again for
+ * every other ticket using the same part — and a workshop reuses the same
+ * toner and fuser rows constantly, so the hit rate here is high. The
+ * catalogue row is slow-changing (name, picture, stock level), and the
+ * mutation paths already call `invalidateCachePrefix("spareparts")`, so the
+ * existing invalidation covers this key too.
  */
 export async function fetchSparePartById(id: string): Promise<SparePartItem | null> {
   if (!id) return null;
-  try {
-    const res = await fetch(`/api/proxy/spareparts/${id}`, { headers: getAuthHeaders() });
-    if (!res.ok) return null;
-    const p = (await res.json()) as Record<string, unknown>;
-    if (!p || typeof p !== "object") return null;
-    return {
-      id:           String(p.id ?? id),
-      partNumber:   String(p.serialNumber ?? p.SerialNumber ?? p.partNumber ?? ""),
-      serialNumber: String(p.serialNumber ?? p.SerialNumber ?? ""),
-      itemName:     String(p.itemName ?? p.ItemName ?? p.name ?? ""),
-      useFor:       String(p.useFor ?? p.UseFor ?? p.modelCompatible ?? ""),
-      pictureUrl:   String(p.pictureUrl ?? p.PictureUrl ?? ""),
-      quantity:     Number(p.quantity ?? p.Quantity ?? 0),
-      defaultPrice: Number(p.defaultPrice ?? p.DefaultPrice ?? p.unitPrice ?? 0),
-      description:  String(p.description ?? p.Description ?? ""),
-      status:       String(p.status ?? "")
-    };
-  } catch (err: unknown) {
-    console.error("Failed to fetch spare part by id:", err);
-    return null;
-  }
+
+  return cachedFetch(`spareparts:id:${id}`, async () => {
+    try {
+      const res = await fetchWithRetry(`/api/proxy/spareparts/${id}`, { headers: getAuthHeaders() });
+      if (!res.ok) return null;
+      const p = (await res.json()) as Record<string, unknown>;
+      if (!p || typeof p !== "object") return null;
+      return {
+        id:           String(p.id ?? id),
+        partNumber:   String(p.serialNumber ?? p.SerialNumber ?? p.partNumber ?? ""),
+        serialNumber: String(p.serialNumber ?? p.SerialNumber ?? ""),
+        itemName:     String(p.itemName ?? p.ItemName ?? p.name ?? ""),
+        useFor:       String(p.useFor ?? p.UseFor ?? p.modelCompatible ?? ""),
+        pictureUrl:   String(p.pictureUrl ?? p.PictureUrl ?? ""),
+        quantity:     Number(p.quantity ?? p.Quantity ?? 0),
+        defaultPrice: Number(p.defaultPrice ?? p.DefaultPrice ?? p.unitPrice ?? 0),
+        description:  String(p.description ?? p.Description ?? ""),
+        status:       String(p.status ?? "")
+      };
+    } catch (err: unknown) {
+      console.error("Failed to fetch spare part by id:", err);
+      return null;
+    }
+  });
 }
 
 export async function fetchSparePartsInventory(
@@ -734,7 +789,7 @@ export async function fetchSparePartsInventory(
       if (searchTerm) params.set("searchTerm", searchTerm);
       const endpoint = searchTerm ? "/api/proxy/spareparts/search" : "/api/proxy/spareparts";
 
-      const res = await fetch(
+      const res = await fetchWithRetry(
         `${endpoint}?${params.toString()}`,
         { headers: getAuthHeaders() }
       );
@@ -797,7 +852,7 @@ export async function createSparePart(part: SparePartItem): Promise<boolean> {
       quantity:     part.quantity ?? 0,
       defaultPrice: part.defaultPrice ?? 0
     };
-    const res = await fetch("/api/proxy/spareparts", {
+    const res = await fetchWithRetry("/api/proxy/spareparts", {
       method:  "POST",
       headers: getAuthHeaders(),
       body:    JSON.stringify(payload)
@@ -830,7 +885,7 @@ export async function updateSparePart(
       defaultPrice: part.defaultPrice ?? 0,
       performedBy
     };
-    const res = await fetch("/api/proxy/spareparts", {
+    const res = await fetchWithRetry("/api/proxy/spareparts", {
       method:  "PUT",
       headers: getAuthHeaders(),
       body:    JSON.stringify(payload)
@@ -849,7 +904,7 @@ export async function updateSparePart(
 export async function deleteSparePart(id: string): Promise<boolean> {
   invalidateCachePrefix("spareparts");
   try {
-    const res = await fetch(`/api/proxy/spareparts/${id}`, {
+    const res = await fetchWithRetry(`/api/proxy/spareparts/${id}`, {
       method:  "DELETE",
       headers: getAuthHeaders()
     });
@@ -872,7 +927,7 @@ export async function insertManualStockOut(
 ): Promise<boolean> {
   invalidateCachePrefix("spareparts");
   try {
-    const res = await fetch("/api/proxy/spareparts/manual-stockout", {
+    const res = await fetchWithRetry("/api/proxy/spareparts/manual-stockout", {
       method:  "POST",
       headers: getAuthHeaders(),
       body:    JSON.stringify({ sparepartId, quantity, reason, performedBy })
@@ -903,7 +958,7 @@ export async function fetchCustomerCenter(
       });
       if (searchTerm) params.set("searchTerm", searchTerm);
 
-      const res = await fetch(`/api/proxy/Customer?${params.toString()}`, {
+      const res = await fetchWithRetry(`/api/proxy/Customer?${params.toString()}`, {
         headers: getAuthHeaders()
       });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -948,7 +1003,7 @@ export async function fetchCustomerCenter(
 export async function createCustomer(customer: Partial<CustomerItem>): Promise<boolean> {
   invalidateCachePrefix("customers");
   try {
-    const res = await fetch("/api/proxy/Customer?service=customer", {
+    const res = await fetchWithRetry("/api/proxy/Customer?service=customer", {
       method: "POST",
       headers: getAuthHeaders(),
       body: JSON.stringify(customer)
@@ -964,10 +1019,39 @@ export async function createCustomer(customer: Partial<CustomerItem>): Promise<b
  * Updates an existing customer in Customer Center.
  * Calls `PUT /api/proxy/Customer/{id}?service=customer`.
  */
+/**
+ * Persists a profile picture URL already uploaded via the shared R2 upload
+ * route (`services/upload.ts`) onto the current user's account.
+ * Calls `PUT /api/proxy/Auth/update-profile-picture-url?service=jwt`, which
+ * reaches `UserManagementAPI`'s `AuthController.UpdateProfilePictureUrl` —
+ * an additive endpoint that just sets `ApplicationUser.ProfilePictureUrl`
+ * from an already-hosted URL, distinct from that controller's existing
+ * `upload-profile-picture` (which receives the raw file itself).
+ *
+ * Note: this goes through the generic proxy, which broadcasts a
+ * `ticket_updated` SSE event on every successful PUT regardless of path —
+ * there's no "no resource" case in `RealtimeResource`. A profile-picture
+ * update is rare enough that the one harmless extra table refetch it causes
+ * elsewhere isn't worth widening that shared route's logic to special-case.
+ */
+export async function updateProfilePictureUrl(url: string): Promise<boolean> {
+  try {
+    const res = await fetchWithRetry(`/api/proxy/Auth/update-profile-picture-url?service=jwt`, {
+      method: "PUT",
+      headers: getAuthHeaders(),
+      body: JSON.stringify({ profilePictureUrl: url })
+    });
+    return res.ok;
+  } catch (err: unknown) {
+    console.error("Failed to update profile picture URL:", err);
+    return false;
+  }
+}
+
 export async function updateCustomer(id: string, customer: Partial<CustomerItem>): Promise<boolean> {
   invalidateCachePrefix("customers");
   try {
-    const res = await fetch(`/api/proxy/Customer/${id}?service=customer`, {
+    const res = await fetchWithRetry(`/api/proxy/Customer/${id}?service=customer`, {
       method: "PUT",
       headers: getAuthHeaders(),
       body: JSON.stringify({ ...customer, id })
@@ -986,7 +1070,7 @@ export async function updateCustomer(id: string, customer: Partial<CustomerItem>
 export async function deleteCustomer(id: string): Promise<boolean> {
   invalidateCachePrefix("customers");
   try {
-    const res = await fetch(`/api/proxy/Customer/${id}?service=customer`, {
+    const res = await fetchWithRetry(`/api/proxy/Customer/${id}?service=customer`, {
       method: "DELETE",
       headers: getAuthHeaders()
     });
@@ -995,6 +1079,26 @@ export async function deleteCustomer(id: string): Promise<boolean> {
     console.error("Failed to delete customer:", err);
     return false;
   }
+}
+
+/**
+ * Stable, order-independent string for a filter object, for use in a cache key.
+ *
+ * `JSON.stringify` alone is not safe here: it preserves insertion order, so
+ * `{fromDate, toDate}` and `{toDate, fromDate}` — the same filter — would key
+ * two separate cache entries and double every request. Keys are sorted, arrays
+ * are sorted, and empty/undefined values are dropped so that "field absent"
+ * and "field explicitly empty" collapse to one entry rather than two.
+ */
+function stableKey<T extends object>(obj: T): string {
+  const record = obj as Record<string, unknown>;
+  const parts: string[] = [];
+  for (const k of Object.keys(record).sort()) {
+    const v = record[k];
+    if (v === undefined || v === null || v === "") continue;
+    parts.push(`${k}=${Array.isArray(v) ? [...v].map(String).sort().join("|") : String(v)}`);
+  }
+  return parts.join(";");
 }
 
 /**
@@ -1012,9 +1116,17 @@ export async function fetchRepairServices(
   // `extras` is part of the cache key: without it, an AI-filtered query
   // ("finished last week") would read back the unfiltered result cached
   // under the same status + search term.
-  const extraKey = extras
-    ? `:from${extras.fromDate ?? ""}:to${extras.toDate ?? ""}:type${extras.serviceType ?? ""}`
-    : "";
+  //
+  // Every field is included, not a hand-picked three. The key used to name
+  // only fromDate/toDate/serviceType, so two searches differing solely in
+  // `serviceLocation` — or in `userIds`, the engineer-report filter — hashed
+  // to the same entry and the second silently read back the first one's rows.
+  // No client call site passes those fields *today*, which is exactly why it
+  // was invisible: the bug would have arrived with the next filter someone
+  // added to a queue page, as a wrong table rather than a slow one. Derived
+  // from the object so a new field cannot be forgotten again; arrays are
+  // sorted so member order never splits one filter across two entries.
+  const extraKey = extras ? `:x${stableKey(extras)}` : "";
   const cacheKey = `repairservices:${filter}:page${pageNumber}:size${pageSize}:search${searchTerm}${extraKey}`;
 
   return cachedFetch(cacheKey, async () => {
@@ -1050,34 +1162,54 @@ export async function fetchRepairServices(
     // Approve Repairing page merges three statuses (RepairItemList.razor)
     if (filterUpper === "REPAIRING" || filterUpper === "APPROVE REPAIRING") {
       try {
-        const statuses = ["Sent Spareparts", "Inspection", "Sale Confirmed"];
-        const results  = await Promise.all(
-          statuses.map((st) => fetchSingleStatusServices(pageNumber, pageSize, st, searchTerm, extras))
-        );
-
-        // Deduplicate by ID and sort descending by reportNo
-        const uniqueMap = new Map<string, RepairServiceItem>();
-        let total = 0;
-        results.forEach((r) => {
-          r.items.forEach((i) => uniqueMap.set(i.id, i));
-          total += r.totalCount;
-        });
-        const combinedItems = Array.from(uniqueMap.values()).sort((a, b) =>
-          (b.reportNo ?? "").localeCompare(a.reportNo ?? "")
+        const multiStatus = "Sent Spareparts,Inspection,Sale Confirmed";
+        const { items, totalCount } = await fetchSingleStatusServices(
+          pageNumber,
+          pageSize,
+          multiStatus,
+          searchTerm,
+          extras
         );
 
         const userMap = await fetchUserMap().catch(() => new Map());
-        const enrichedCombined = combinedItems.map((item) => enrichTicketUsers(item, userMap));
+        const enrichedCombined = items.map((item) => enrichTicketUsers(item, userMap));
 
         return {
           items:      enrichedCombined,
-          totalCount: total,
+          totalCount,
           pageNumber,
           pageSize,
-          totalPages: Math.max(Math.ceil(total / pageSize), 1)
+          totalPages: Math.max(Math.ceil(totalCount / pageSize), 1)
         };
       } catch (err: unknown) {
         console.warn("Multi-status fetch failed, using fallback:", err);
+
+        // Offline fallback
+        const statuses = ["Sent Spareparts", "Inspection", "Sale Confirmed"];
+        let filtered = MOCK_SERVICE_TICKETS.filter((i) =>
+          statuses.some((st) => i.status.toLowerCase() === st.toLowerCase())
+        );
+
+        if (searchTerm) {
+          const term = searchTerm.toLowerCase();
+          filtered = filtered.filter(
+            (i) =>
+              i.companyName.toLowerCase().includes(term) ||
+              i.itemName.toLowerCase().includes(term) ||
+              i.serialNumber.toLowerCase().includes(term) ||
+              (i.reportNo ?? "").toLowerCase().includes(term)
+          );
+        }
+
+        const start = (pageNumber - 1) * pageSize;
+        const page  = filtered.slice(start, start + pageSize);
+        return {
+          items:      page,
+          totalCount: filtered.length,
+          pageNumber,
+          pageSize,
+          totalPages: Math.max(Math.ceil(filtered.length / pageSize), 1)
+        };
       }
     }
 
@@ -1161,30 +1293,23 @@ export async function fetchApproveVerifyServices(
 
   return cachedFetch(cacheKey, async () => {
     try {
-      const results = await Promise.all(
-        statuses.map((st) => fetchSingleStatusServices(pageNumber, pageSize, st, term))
-      );
-
-      // Deduplicate by ID and sort descending by reportNo
-      const uniqueMap = new Map<string, RepairServiceItem>();
-      let total = 0;
-      results.forEach((r) => {
-        r.items.forEach((i) => uniqueMap.set(i.id, i));
-        total += r.totalCount;
-      });
-      const combinedItems = Array.from(uniqueMap.values()).sort((a, b) =>
-        (b.reportNo ?? "").localeCompare(a.reportNo ?? "")
+      const statusParam = term ? "Repairing,Finished" : "Repairing";
+      const { items, totalCount } = await fetchSingleStatusServices(
+        pageNumber,
+        pageSize,
+        statusParam,
+        term
       );
 
       const userMap = await fetchUserMap().catch(() => new Map());
-      const enrichedCombined = combinedItems.map((item) => enrichTicketUsers(item, userMap));
+      const enrichedCombined = items.map((item) => enrichTicketUsers(item, userMap));
 
       return {
         items:      enrichedCombined,
-        totalCount: total,
+        totalCount,
         pageNumber,
         pageSize,
-        totalPages: Math.max(Math.ceil(total / pageSize), 1)
+        totalPages: Math.max(Math.ceil(totalCount / pageSize), 1)
       };
     } catch (err: unknown) {
       console.warn("Approve Verify fetch failed, using fallback:", err);
@@ -1233,7 +1358,7 @@ export async function fetchApproveVerifyServices(
 export async function fetchServiceById(id: string): Promise<RepairServiceItem | null> {
   if (!id || id.startsWith("new-")) return null;
   try {
-    const res = await fetch(`/api/proxy/technicalservices/${id}`, {
+    const res = await fetchWithRetry(`/api/proxy/technicalservices/${id}`, {
       headers: getAuthHeaders()
     });
     if (!res.ok) return null;
@@ -1276,7 +1401,7 @@ export async function fetchDashboardStats(): Promise<DashboardStats> {
     "dashboard:statistics",
     async () => {
       try {
-        const res = await fetch(
+        const res = await fetchWithRetry(
           "/api/proxy/technicalservices/dashboard-stats",
           { headers: getAuthHeaders() }
         );
@@ -1304,7 +1429,7 @@ export async function createInspectItem(payload: {
 }): Promise<boolean> {
   invalidateCachePrefix('repairservices');
   try {
-    const res = await fetch('/api/proxy/inspectitem', {
+    const res = await fetchWithRetry('/api/proxy/inspectitem', {
       method:  'POST',
       headers: getAuthHeaders(),
       body:    JSON.stringify(payload)
@@ -1331,7 +1456,7 @@ export async function deleteInspectItemSparePart(
 ): Promise<boolean> {
   invalidateCachePrefix('repairservices');
   try {
-    const res = await fetch(
+    const res = await fetchWithRetry(
       `/api/proxy/inspectitem/${serviceId}/spareparts/${sparepartItemId}`,
       { method: 'DELETE', headers: getAuthHeaders() }
     );
@@ -1353,7 +1478,7 @@ export async function setFinishedRepair(payload: {
   invalidateCachePrefix('repairservices');
   invalidateCachePrefix('dashboard');
   try {
-    const res = await fetch('/api/proxy/finishedrepair', {
+    const res = await fetchWithRetry('/api/proxy/finishedrepair', {
       method:  'POST',
       headers: getAuthHeaders(),
       body:    JSON.stringify(payload)
@@ -1378,7 +1503,7 @@ export async function searchCustomers(searchTerm: string): Promise<CustomerItem[
       pageNumber: '1',
       pageSize:   '10'
     });
-    const res = await fetch(`/api/proxy/customercenter/customers?${params}`, {
+    const res = await fetchWithRetry(`/api/proxy/customercenter/customers?${params}`, {
       headers: getAuthHeaders()
     });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -1412,7 +1537,7 @@ export async function createItem(
   const finalSerial = (serialNumber ?? "").trim() || `GEN-${Date.now().toString(36).toUpperCase()}`;
 
   try {
-    const res = await fetch("/api/proxy/items", {
+    const res = await fetchWithRetry("/api/proxy/items", {
       method: "POST",
       headers: getAuthHeaders(),
       body: JSON.stringify({
@@ -1446,7 +1571,7 @@ export async function searchItems(searchTerm: string): Promise<ItemModel[]> {
   if (!searchTerm.trim()) return [];
   try {
     const params = new URLSearchParams({ searchTerm, pageNumber: '1', pageSize: '15' });
-    const res = await fetch(`/api/proxy/items?${params}`, { headers: getAuthHeaders() });
+    const res = await fetchWithRetry(`/api/proxy/items?${params}`, { headers: getAuthHeaders() });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const data = (await res.json()) as Record<string, unknown>;
     const list = (data.items ?? data.Data ?? (Array.isArray(data) ? data : [])) as ItemModel[];

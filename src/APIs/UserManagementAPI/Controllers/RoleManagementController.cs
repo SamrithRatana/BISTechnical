@@ -4,30 +4,45 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using System.ComponentModel.DataAnnotations;
 using System.Security.Claims;
+using UserManagementAPI.Data;
 using UserManagementAPI.Models;
 
 namespace UserManagementAPI.Controllers
 {
     /// <summary>
-    /// Role Management API - Handles role CRUD and permissions/claims
-    /// Add this controller to your JWT API project
+    /// Role Management API - Handles role CRUD and permissions/claims.
     /// </summary>
+    /// <remarks>
+    /// Like UserManagementController, this carried no authorization attribute
+    /// at all, so anonymous callers could create and delete roles and, through
+    /// PUT {id}/permissions and the claims endpoints, grant any permission in
+    /// the system to any role. Roles are the mechanism the rest of the app
+    /// authorises against, so this was the other half of the same
+    /// privilege-escalation hole.
+    ///
+    /// Reads require a signed-in caller; everything that changes a role or its
+    /// permissions requires the Admin role.
+    /// </remarks>
     [Route("api/[controller]")]
     [ApiController]
+    [Authorize]
     public class RoleManagementController : ControllerBase
     {
         private readonly RoleManager<IdentityRole> _roleManager;
         private readonly UserManager<ApplicationUser> _userManager;
         private readonly ILogger<RoleManagementController> _logger;
+        private readonly UserManagementContext _context;
 
         public RoleManagementController(
             RoleManager<IdentityRole> roleManager,
             UserManager<ApplicationUser> userManager,
-            ILogger<RoleManagementController> logger)
+            ILogger<RoleManagementController> logger,
+            UserManagementContext context)
         {
             _roleManager = roleManager;
             _userManager = userManager;
             _logger = logger;
+            _context = context;
         }
 
         // GET: api/RoleManagement
@@ -38,6 +53,7 @@ namespace UserManagementAPI.Controllers
             try
             {
                 var roles = await _roleManager.Roles
+                    .AsNoTracking()
                     .OrderBy(r => r.Name)
                     .ToListAsync();
 
@@ -99,6 +115,7 @@ namespace UserManagementAPI.Controllers
         }
 
         // POST: api/RoleManagement
+        [Authorize(Roles = "Admin")]
         [HttpPost]
         [ProducesResponseType(typeof(object), StatusCodes.Status201Created)]
         [ProducesResponseType(StatusCodes.Status400BadRequest)]
@@ -162,6 +179,7 @@ namespace UserManagementAPI.Controllers
         }
 
         // PUT: api/RoleManagement/{id}
+        [Authorize(Roles = "Admin")]
         [HttpPut("{id}")]
         [ProducesResponseType(typeof(object), StatusCodes.Status200OK)]
         [ProducesResponseType(StatusCodes.Status400BadRequest)]
@@ -223,6 +241,7 @@ namespace UserManagementAPI.Controllers
         }
 
         // DELETE: api/RoleManagement/{id}
+        [Authorize(Roles = "Admin")]
         [HttpDelete("{id}")]
         [ProducesResponseType(typeof(object), StatusCodes.Status200OK)]
         [ProducesResponseType(StatusCodes.Status400BadRequest)]
@@ -318,6 +337,7 @@ namespace UserManagementAPI.Controllers
         }
 
         // POST: api/RoleManagement/{id}/claims
+        [Authorize(Roles = "Admin")]
         [HttpPost("{id}/claims")]
         [ProducesResponseType(typeof(object), StatusCodes.Status200OK)]
         [ProducesResponseType(StatusCodes.Status400BadRequest)]
@@ -366,6 +386,7 @@ namespace UserManagementAPI.Controllers
         }
 
         // DELETE: api/RoleManagement/{id}/claims
+        [Authorize(Roles = "Admin")]
         [HttpDelete("{id}/claims")]
         [ProducesResponseType(typeof(object), StatusCodes.Status200OK)]
         [ProducesResponseType(StatusCodes.Status400BadRequest)]
@@ -415,6 +436,7 @@ namespace UserManagementAPI.Controllers
 
         // PUT: api/RoleManagement/{id}/permissions
         // Update all permissions for a role at once
+        [Authorize(Roles = "Admin")]
         [HttpPut("{id}/permissions")]
         [ProducesResponseType(typeof(object), StatusCodes.Status200OK)]
         public async Task<IActionResult> UpdateRolePermissions(string id, [FromBody] UpdatePermissionsDto model)
@@ -432,22 +454,29 @@ namespace UserManagementAPI.Controllers
                     return NotFound(new { Status = "Error", Message = "Role not found!" });
                 }
 
-                // Remove all existing claims
-                var existingClaims = await _roleManager.GetClaimsAsync(role);
-                foreach (var claim in existingClaims)
-                {
-                    await _roleManager.RemoveClaimAsync(role, claim);
-                }
+                // Wipe-and-replace, but as ONE save instead of one
+                // RemoveClaimAsync/AddClaimAsync round trip per claim —
+                // each of those calls its own SaveChangesAsync internally, and
+                // a role with ~20 modules x up to 7 permission types can carry
+                // 100+ claims, meaning the old loop was 100-200+ round trips
+                // to update a single role's permissions.
+                var existingClaims = await _context.RoleClaims
+                    .Where(rc => rc.RoleId == role.Id)
+                    .ToListAsync();
+                _context.RoleClaims.RemoveRange(existingClaims);
 
-                // Add new claims
                 if (model.Permissions != null && model.Permissions.Any())
                 {
-                    foreach (var permission in model.Permissions)
-                    {
-                        var claim = new Claim("Permission", permission);
-                        await _roleManager.AddClaimAsync(role, claim);
-                    }
+                    _context.RoleClaims.AddRange(model.Permissions.Select(permission =>
+                        new IdentityRoleClaim<string>
+                        {
+                            RoleId = role.Id,
+                            ClaimType = "Permission",
+                            ClaimValue = permission
+                        }));
                 }
+
+                await _context.SaveChangesAsync();
 
                 _logger.LogInformation("Permissions updated for role {RoleName}: {Count} permissions",
                     role.Name, model.Permissions?.Count ?? 0);

@@ -11,7 +11,6 @@ public class TechnicalServiceContextSeed : IDbSeeder<TechnicalServiceContext>
         if (!context.ServiceTypes.Any())
         {
             context.ServiceTypes.AddRange(GetPredefinedServiceTypes());
-            //await context.SaveChangesAsync();
         }
 
         if (!context.ServicePriorities.Any())

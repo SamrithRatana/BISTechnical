@@ -1,16 +1,15 @@
 ﻿using TechnicalService.Domain.AggregatesModel.TechnicalAggregate;
+using TechnicalService.API.Extensions;
 namespace TechnicalService.API.Application.Commands;
 public class UpdateInspectItemCommandHandler : IRequestHandler<UpdateInspectItemCommand, bool>
 {
     private readonly ITechnicalServiceRepository _technicalServiceRepository;
-    private readonly IMediator _mediator;
     private readonly ILogger<UpdateInspectItemCommandHandler> _logger;
-    public UpdateInspectItemCommandHandler(IMediator mediator,
+    public UpdateInspectItemCommandHandler(
         ITechnicalServiceRepository technicalServiceRepository,
         ILogger<UpdateInspectItemCommandHandler> logger)
     {
         _technicalServiceRepository = technicalServiceRepository ?? throw new ArgumentNullException(nameof(technicalServiceRepository));
-        _mediator = mediator ?? throw new ArgumentNullException(nameof(mediator));
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
     }
     public async Task<bool> Handle(UpdateInspectItemCommand command, CancellationToken cancellationToken)
@@ -22,7 +21,10 @@ public class UpdateInspectItemCommandHandler : IRequestHandler<UpdateInspectItem
             return false;
         }
 
-        serviceToUpdate.SetInspection(command.InspectBy, DateTime.UtcNow,
+        // Business-local, matching the create path (CreateInspectItemAsync
+        // passes BusinessClock.Now). As UtcNow, editing an inspection rewrote
+        // its date seven hours earlier than creating one.
+        serviceToUpdate.SetInspection(command.InspectBy, BusinessClock.Now,
             command.Inspection, command.Solution);
         serviceToUpdate.SetServiceType(command.ServiceTypeId);
 
@@ -32,17 +34,17 @@ public class UpdateInspectItemCommandHandler : IRequestHandler<UpdateInspectItem
             .Select(s => s.SparepartId)
             .ToList();
 
-        _logger.LogInformation("📊 Existing spare part items: {Count}", existingItems.Count);
-        _logger.LogInformation("📊 Command spare part IDs: {Count}", commandSparepartIds.Count);
+        _logger.LogDebug("Existing spare part items: {Count}", existingItems.Count);
+        _logger.LogDebug("Command spare part IDs: {Count}", commandSparepartIds.Count);
 
         var itemsToRemove = existingItems
             .Where(e => !commandSparepartIds.Contains(e.SparepartId))
             .ToList();
 
-        _logger.LogInformation("🗑️ Items to remove: {Count}", itemsToRemove.Count);
+        _logger.LogDebug("Items to remove: {Count}", itemsToRemove.Count);
         foreach (var item in itemsToRemove)
         {
-            _logger.LogInformation("🗑️ Removing SparepartItem - Id: {Id}, SparepartId: {SparepartId}, Quantity: {Quantity}",
+            _logger.LogDebug("Removing SparepartItem - Id: {Id}, SparepartId: {SparepartId}, Quantity: {Quantity}",
                 item.Id, item.SparepartId, item.Quantity);
             serviceToUpdate.RemoveSparepartItem(item.Id);
         }
@@ -53,28 +55,26 @@ public class UpdateInspectItemCommandHandler : IRequestHandler<UpdateInspectItem
 
             if (existingItem != null && !itemsToRemove.Contains(existingItem))
             {
-                _logger.LogInformation("✏️ Updating existing item - SparepartId: {SparepartId}", part.SparepartId);
+                _logger.LogDebug("Updating existing item - SparepartId: {SparepartId}", part.SparepartId);
                 existingItem.UpdateDetails(
                     part.Description,
                     part.Quantity,
-                    Enum.Parse<SparepartCondition>(part.Condition),
-                    part.IsHoldStatus); // ✅ NEW
-            }
+                    EnumParsing.Parse<SparepartCondition>(part.Condition, "Condition"),
+                    part.IsHoldStatus);            }
             else if (existingItem == null)
             {
-                _logger.LogInformation("➕ Adding new item - SparepartId: {SparepartId}", part.SparepartId);
+                _logger.LogDebug("Adding new item - SparepartId: {SparepartId}", part.SparepartId);
                 serviceToUpdate.AddSparepartItem(
                     part.SparepartId,
                     part.Description,
                     part.Quantity,
-                    Enum.Parse<SparepartCondition>(part.Condition),
-                    part.IsHoldStatus); // ✅ NEW
-            }
+                    EnumParsing.Parse<SparepartCondition>(part.Condition, "Condition"),
+                    part.IsHoldStatus);            }
         }
 
-        _logger.LogInformation("Updating Service - UpdateInspectItem: {@Service}", serviceToUpdate);
+        _logger.LogInformation("Updating Service - UpdateInspectItem: {ServiceId}", serviceToUpdate.Id);
         var result = await _technicalServiceRepository.UnitOfWork.SaveEntitiesAsync(cancellationToken);
-        _logger.LogInformation("💾 SaveEntitiesAsync result: {Result}", result);
+        _logger.LogDebug("SaveEntitiesAsync result: {Result}", result);
         return result;
     }
 }

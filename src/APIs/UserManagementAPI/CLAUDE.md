@@ -9,6 +9,70 @@ Note: `Constants/Modules.cs`, `Constants/PermissionIcons.cs`, and `Constants/Per
 declare namespace `UserManagementAPI.Contants` (typo, missing "s") even though the folder is
 `Constants/` — watch for this when searching/importing.
 
+## Data-access + logic audit (2026-08-18)
+
+A full pass over `Controllers/` for the same class of bug as the `GetAllUsers` N+1
+(documented under `AppSettingsController`/`AuthController` below), plus a logic-correctness
+pass. All measured/verified against the real (remote) database, not assumed. Fixed:
+
+- **N+1 query loops**, same shape everywhere: a `foreach` over a page of rows doing an
+  `await` DB call per row instead of one batched query. Fixed in `UserManagementController`
+  (`GetAllUsers`, `SearchUsers`, `CreateUser`/`UpdateUserRoles` role validation, `GetUserRoles`'s
+  cached role list now `AsNoTracking`), `AuthController.GenerateJwtTokenWithPermissions` (runs
+  on **every** login and token refresh — the highest-traffic instance of this bug),
+  `PermissionManagementController` (`GetUserPermissions`, `CheckPermission`, `GetMyPermissions`,
+  now sharing one `GetPermissionsForRolesAsync` helper), and `RoleManagementController.GetAllRoles`.
+- **N+1 WRITE loops**: `RoleManagementController.UpdateRolePermissions` (wiped and re-added
+  every claim on a role via `RemoveClaimAsync`/`AddClaimAsync` — each call is its own
+  `SaveChangesAsync`; 100+ round trips for a role with ~100 permission claims) and
+  `PermissionManagementController.UpdateRolePermissions` (same shape, diff-based). Both now
+  operate on `_context.RoleClaims` directly and save once.
+- **Broken account lockout**: `AuthController.Login` checked `IsLockedOutAsync` but never called
+  `AccessFailedAsync` on a wrong password or `ResetAccessFailedCountAsync` on success — this
+  controller calls `UserManager` directly rather than `SignInManager`, which is what normally
+  wires that bookkeeping up. The configured policy ("lockout 5 min after 5 failed attempts",
+  see `Program.cs` below) could never actually engage; `[EnableRateLimiting("login")]` (10
+  req/min, IP-scoped) was the only real brake on password guessing. Fixed.
+- **Last-Admin delete protection was bypassable**: `UserManagementController.DeleteUser` only
+  ran the "can't delete the last Admin" check when `userRoles.Count == 1` — an Admin who also
+  held any second role skipped the check entirely and was deletable. Fixed (drop the count
+  condition; whether SuperAdmin needs the same protection is a separate product question, not
+  addressed here).
+- **SuperAdmin-only accounts were denied their own admin views**:
+  `PermissionManagementController.GetUserPermissions`/`CheckPermission` gated the "view another
+  user" path on `IsInRole("Admin")` only. At least one real seeded account holds `SuperAdmin`
+  without also holding `Admin` (verified against live data) and was blocked from viewing anyone
+  else's permissions. Fixed to check both roles, matching `ADMIN_ROLES` in the frontend's
+  `authSession.ts` and this file's own `AppSettingsController` gate.
+- **Flagged, not changed**: `AuthController.RegisterAdmin` (creates new admins) is
+  `[Authorize(Roles="Admin")]` only, excluding SuperAdmin — unlike the two fixes above, this
+  reads as a plausible deliberate privilege-escalation boundary rather than an oversight, so it
+  was left alone pending a real decision on intended SuperAdmin scope.
+
+Same pass extended to `Services/` (2026-08-18) — this project has no `Middleware/` folder at
+all (only `src/Apps/ServiceMaintenance/Middleware/`, a different project). Found and fixed:
+
+- **`RefreshTokenCleanupService`'s 2 AM scheduling had an off-by-one-day bug.**
+  `now.Date.AddDays(1).AddHours(2)` always targets TOMORROW's 2 AM regardless of whether
+  today's has already passed — so a service that starts between midnight and 2 AM skips the
+  cleanup that's only minutes away and waits ~25 hours instead. Fixed to target today's 2 AM
+  when it hasn't passed yet.
+- **`LocalFileStorageService.DeleteProfilePictureAsync` was missing the Docker
+  `WebRootPath`-null fallback** that `SaveProfilePictureAsync` already had (explicitly, with a
+  `✅ FIX` comment) — meaning in that same deployment, a picture could be uploaded but never
+  later deleted: `Path.Combine(null, ...)` throws, the method's own catch swallows it, and
+  cleanup silently no-ops every time. Extracted into one shared `GetWebRootPath()` both methods
+  now call.
+- **`IsValidImageFile`'s stream "reset" was dead code**: `file.OpenReadStream().Position = 0;`
+  calls `OpenReadStream()` a SECOND time, so it reset a brand-new (and then never-disposed)
+  stream instance, not the one `reader` had actually just read 8 bytes from. Currently harmless
+  only because `IFormFile.OpenReadStream()`/`CopyToAsync()` are independently rewindable — the
+  save path never depended on this line doing anything — but it did not do what its own comment
+  claimed, and leaked a stream. Removed.
+- **Not a bug, checked**: `EmailService`/`IEmailService` are confirmed still unused — zero
+  references in `Program.cs` or any controller (grepped, not assumed). Dead code, but inert;
+  matches the existing note that `IEmailService` isn't registered in DI.
+
 ## Program.cs
 
 `src/APIs/UserManagementAPI/Program.cs` — app composition root (top-level statements).
@@ -61,6 +125,14 @@ at class level; per-action.
   5MB limit — validates via `IFileStorageService`, deletes old picture, saves new, updates
   `ApplicationUser.ProfilePictureUrl` (stores relative path only).
 - `DeleteProfilePicture()` — DELETE `delete-profile-picture`, `[Authorize]`.
+- `UpdateProfilePictureUrl(UpdateProfilePictureUrlViewModel)` — PUT
+  `update-profile-picture-url`, `[Authorize]` — sets `ProfilePictureUrl` to an
+  already-hosted URL as-is (no `GetFullImageUrl` rebasing, unlike
+  `upload-profile-picture` above). Added for `TestingReact`'s shared R2 upload
+  route (`api/upload/route.ts`): the frontend uploads the file itself, then
+  calls this to persist the resulting URL. Binds the
+  `UpdateProfilePictureUrlViewModel` that had sat unused in `ViewModel/` since
+  before this endpoint existed.
 - `GetProfile()` — GET `profile`, `[Authorize]` — returns current user + roles + full
   profile picture URL.
 - `UpdateProfile(UpdateProfileViewModel)` — PUT `update-profile`, `[Authorize]` — does NOT
@@ -78,6 +150,14 @@ at class level; per-action.
 `src/APIs/UserManagementAPI/Controllers/UserManagementController.cs` — route `api/UserManagement`.
 Admin-facing user CRUD (no class-level `[Authorize]` — check individual actions/frontend gating).
 - `GetAllUsers(page, pageSize)` — GET `` — paginated list with roles + full profile picture URLs.
+  Roles are one batched `UserRoles ⋈ Roles` query for the whole page (fixed 2026-08-18) — it used to
+  `FindByIdAsync` + `GetRolesAsync` PER user (up to 200 extra round trips for a 100-row page,
+  re-fetching a user already in hand for the first of the two). Measured against this API's real
+  remote DB: 5.3s → 0.64s for a 100-row page. This endpoint runs right after every login
+  (`TestingReact`'s `/api/auth/login` route enriches the login response from it), so the old
+  version made every login pay that cost — mostly invisible against production, where the DB sits
+  close to the API, but very visible running this API locally against the same remote DB, where
+  each of those 200 round trips crosses the public internet instead of a rack-local network.
 - `GetUserById(string id)` — GET `{id}`.
 - `CreateUser(CreateUserDto)` — POST `` — admin-created user, `EmailConfirmed = true`
   auto-set; assigns given roles or defaults to `User`.
@@ -92,6 +172,18 @@ Admin-facing user CRUD (no class-level `[Authorize]` — check individual action
 - `LockUser(string id)` — PUT `{id}/lock` — locks out for 1 year.
 - `UnlockUser(string id)` — PUT `{id}/unlock` — clears lockout + resets failed-attempt count.
 - `GetFullImageUrl(string)` (private helper, duplicated from `AuthController`).
+
+`src/APIs/UserManagementAPI/Controllers/AppSettingsController.cs` — route
+`api/AppSettings`. System-wide settings every signed-in user shares —
+currently just the sidebar logo. The one place this app persists a setting
+server-side rather than per-browser in `localStorage` (contrast Settings →
+Theme & Branding in `TestingReact`, which is deliberately per-device).
+- `GetLogo()` — GET `logo`, `[Authorize]` — `{ logoUrl }` from the single
+  `AppSettings` row (seeded at `Id = 1` by the `AddAppSettings` migration).
+- `UpdateLogo(UpdateAppLogoViewModel)` — PUT `logo`,
+  `[Authorize(Roles="Admin,SuperAdmin")]` — any signed-in user could
+  otherwise overwrite the logo everyone else sees, since this setting has no
+  per-user scope to fall back on.
 
 `src/APIs/UserManagementAPI/Controllers/RoleManagementController.cs` — route
 `api/RoleManagement`. Role CRUD + role claims/permissions (no class-level `[Authorize]`).
@@ -183,6 +275,8 @@ DbSets (→ DB tables):
 - `LeaveRequests` (`LeaveRequest`) → table (default schema, no explicit `ToTable`)
 - `LeaveApprovals` (`LeaveApproval`) → table (default schema, no explicit `ToTable`)
 - `LeaveBalances` (`LeaveBalance`) → table (default schema, no explicit `ToTable`)
+- `AppSettings` (`AppSetting`) → table `dbo.AppSettings` — single fixed row (`Id = 1`),
+  seeded by the `AddAppSettings` migration.
 - Inherited from `IdentityDbContext<ApplicationUser>`: Identity's `Users`, `Roles`,
   `UserRoles`, `UserClaims`, `UserLogins`, `RoleClaims`, `UserTokens` — all remapped in
   `OnModelCreating` to schema `security` (e.g. `security.Users`, `security.Roles`).
@@ -207,6 +301,10 @@ Leave* endpoints — leave-management models/DbSets exist but the API surface is
 in `Controllers/`.
 
 ## Models/
+
+`src/APIs/UserManagementAPI/Models/AppSetting.cs` — `AppSetting`: `Id`, `LogoUrl`
+(nullable), `UpdatedAt`, `UpdatedByUserId`. Single-row settings table — see
+`AppSettingsController`.
 
 `src/APIs/UserManagementAPI/Models/ApplicationUser.cs` — `ApplicationUser : IdentityUser`.
 Adds `FirstName`, `LastName` (required), `ProfilePictureUrl` (relative path, max 500),
@@ -357,8 +455,13 @@ namespace — global) — `RoleId`, `RoleName`, `DisplayValue`, `IsSelected`; us
 `src/APIs/UserManagementAPI/ViewModel/RefreshTokenRequest.cs` — `RefreshTokenRequest`
 (`RefreshToken` string) — actually used by `AuthController` refresh/revoke endpoints.
 
-`src/APIs/UserManagementAPI/ViewModel/UpdateProfilePictureUrlViewModel.cs` — declared but not
-referenced by any controller found in this index (grep before assuming dead code).
+`src/APIs/UserManagementAPI/ViewModel/UpdateProfilePictureUrlViewModel.cs` — now bound by
+`AuthController.UpdateProfilePictureUrl` (added 2026-08-18). Was declared but unused before
+that — grep before assuming any "unused" ViewModel in this index still is.
+
+`src/APIs/UserManagementAPI/ViewModel/UpdateAppLogoViewModel.cs` — `LogoUrl` (nullable,
+max 500). Bound by `AppSettingsController.UpdateLogo`; an empty/null value clears the
+logo back to the sidebar's default mark.
 
 `src/APIs/UserManagementAPI/ViewModel/UploadProfilePictureViewModel.cs` — declared but
 `AuthController.UploadProfilePicture` actually binds `[FromForm] IFormFile profilePicture`
@@ -380,6 +483,34 @@ directly, not this view model — likely unused.
 
 ## Migrations/
 
-`src/APIs/UserManagementAPI/Migrations/` — EF Core migration history (2 migrations:
-`AddRefreshTokenTable`, `AddLeaveManagement`, plus `UserManagementContextModelSnapshot.cs`).
-Skip Designer/snapshot files — regenerate from `Data/UserManagementContext.cs` if needed.
+`src/APIs/UserManagementAPI/Migrations/` — EF Core migration history (3 migrations:
+`AddRefreshTokenTable`, `AddLeaveManagement`, `AddAppSettings`, plus
+`UserManagementContextModelSnapshot.cs`). Skip Designer/snapshot files — regenerate
+from `Data/UserManagementContext.cs` if needed.
+
+**`dotnet ef database update` cannot be run blindly against the real remote DB
+(verified 2026-08-18).** `AddLeaveManagement`'s tables (`LeaveTypes`,
+`LeaveRequests`, `LeaveApprovals`, `LeaveBalances`) already exist in the
+database, but that migration is NOT recorded in `__EFMigrationsHistory` —
+someone applied that schema out-of-band (a raw script, a different
+environment) without going through EF's migration bookkeeping. Running
+`database update` normally tries to replay every pending migration in order
+starting from `AddLeaveManagement`, hits `CREATE TABLE` on a table that
+already exists, and fails with `There is already an object named 'LeaveTypes'
+in the database` — before it ever reaches a genuinely new migration behind it.
+
+This was NOT fixed (retroactively marking `AddLeaveManagement` "applied"
+without verifying every column/index of the out-of-band version matches the
+migration exactly would risk hiding real drift — a judgement call, not a
+mechanical one). The workaround used for `AddAppSettings`: generate an
+isolated script for just the new migration and run it directly —
+
+```bash
+dotnet-ef migrations script 20260421022411_AddLeaveManagement <new-migration-id> \
+  --idempotent -o migration.sql
+sqlcmd -S <host> -U SA -P '<password>' -d EngineerUserDB -C -i migration.sql
+```
+
+— which both applies the new migration and correctly records it in
+`__EFMigrationsHistory`, without touching `AddLeaveManagement` at all. Do the
+same for the next migration rather than running a plain `database update`.

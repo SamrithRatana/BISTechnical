@@ -33,16 +33,39 @@ which is the single place the design system is defined.
   `pointermove` → nearest index), not N DOM listeners.
 
 Design-system notes:
-- **Light only.** The seven presets, six accents and dark palette were removed.
-  `globals.css` keeps the `dark` custom-variant deliberately (see the comment
-  there) so any stray `dark:` utility stays permanently inert rather than
-  reactivating via `prefers-color-scheme`.
-- `useTheme()` still exists but now carries **ergonomics only** — radius,
-  density, font scale, motion. No colour.
+- **Dark mode is back**, as `.dark` token overrides in `globals.css` and
+  nothing else — no component changed colour, because none names one. *(This
+  section previously said "Light only"; that was true only for the window
+  between the old palette being deleted and the rebuild. See the root
+  `CLAUDE.md` for why the clock-driven `auto` mode is the one piece that must
+  not come back.)*
+- `useTheme()` carries ergonomics **and** colour: radius, density, font scale,
+  motion, plus `mode`, a resolved `isDark`, `accentColor` and `surfaceStyle`.
+  *(It carried ergonomics only, briefly.)*
+- **`prefs.lite`** is the newest member — Lite Mode, stamped as
+  `html[data-lite]` and consumed by one block in `globals.css`. It is
+  deliberately NOT the same switch as `motion`: that one collapses animation,
+  this one drops `backdrop-filter`, layered shadows and 3D transforms, which
+  cost on every paint whether anything is moving or not. Read it through
+  `usePerformance().isLiteMode` (which also folds in the OS reduced-motion
+  setting), never `prefs.lite` directly.
 - Use the semantic utilities (`bg-surface`, `text-ink-secondary`,
   `border-subtle`, `bg-success-soft`, …) rather than raw palette numbers.
   There are currently **zero** `bg-slate-*`-style utilities left in `src/`;
   keep it that way.
+- **Shadow tokens are `--av-shadow-{sm,md,lg,xl,inner,cushion,cushion-hover}`.**
+  There is no `--av-shadow-soft-*` — `shadow-soft-sm` is the *Tailwind utility*,
+  mapped through `@theme inline` to `var(--av-shadow-sm)`. Overriding the
+  `--av-*` token is what reaches all 22 utility call sites; inventing a
+  `--av-shadow-soft-*` name silently does nothing.
+
+> **This file is partially stale.** It predates `av/ModalWrapper`,
+> `av/Skeleton`, `av/EmptyState`, `av/ErrorState`, `av/ConfirmDialog`,
+> `av/AreaChart`, `MotionPreference`, `PageTransition`, `PerformanceProvider`,
+> `LiteModePrompt`, `ThemeToggle`, `SystemStatus`, `ReportFilterBar`,
+> `TemplateReportView`, `ExcelViewer`, `MediaLightbox`, `RequireRole`,
+> `InfiniteScrollStatus`, `DashboardChart` and the `ai/` subfolder. Line counts
+> quoted below have drifted too. Trust the source over this index.
 
 ## Components (alphabetical)
 

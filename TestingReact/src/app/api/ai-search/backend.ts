@@ -481,3 +481,108 @@ export async function getDashboardStats(authorization: string | null, signal?: A
   );
   return data;
 }
+
+export interface SparepartTransactionQueryInput {
+  searchTerm?: string;
+  direction?: "In" | "Out" | "All";
+  source?: "Service" | "Manual" | "Adjustment" | "All";
+  fromDate?: string;
+  toDate?: string;
+  pageSize?: number;
+}
+
+export async function querySparepartTransactions(
+  q: SparepartTransactionQueryInput,
+  authorization: string | null,
+  signal?: AbortSignal
+) {
+  const params = new URLSearchParams({
+    pageNumber: "1",
+    pageSize: String(Math.min(q.pageSize || MAX_ROWS, 100)),
+  });
+  if (q.searchTerm) params.set("searchTerm", q.searchTerm);
+  if (q.direction && q.direction !== "All") params.set("direction", q.direction);
+  if (q.source && q.source !== "All") params.set("source", q.source);
+  if (q.fromDate) params.set("fromDate", q.fromDate);
+  if (q.toDate) params.set("toDate", q.toDate);
+
+  const data = await getJson(
+    TECHNICAL_API_BASE,
+    "spareparts/transactions",
+    params,
+    authorization,
+    signal
+  );
+  const { rows, totalCount } = unwrap(data);
+  return {
+    totalCount,
+    returned: rows.length,
+    transactions: rows.map((r) =>
+      compact({
+        date: day(r, "timestamp"),
+        itemName: str(r, "itemName"),
+        serialNumber: str(r, "serialNumber"),
+        quantity: num(r, "quantity"),
+        quantityChange: num(r, "quantityChange"),
+        direction: str(r, "direction"),
+        source: str(r, "source"),
+        operationType: str(r, "operationType"),
+        balanceBefore: num(r, "balanceBefore"),
+        balanceAfter: num(r, "balanceAfter"),
+        reportNo: str(r, "reportNo"),
+        company: str(r, "companyName"),
+        serviceStatus: str(r, "serviceStatus"),
+        reason: str(r, "reason"),
+      })
+    ),
+  };
+}
+
+export interface SparepartUsageQueryInput {
+  searchTerm?: string;
+  fromDate?: string;
+  toDate?: string;
+  condition?: string;
+  serviceType?: string;
+  sourceFilter?: "Service" | "Manual" | "All";
+  pageSize?: number;
+}
+
+export async function querySparepartUsage(
+  q: SparepartUsageQueryInput,
+  authorization: string | null,
+  signal?: AbortSignal
+) {
+  const params = new URLSearchParams({
+    pageNumber: "1",
+    pageSize: String(Math.min(q.pageSize || MAX_ROWS, 100)),
+  });
+  if (q.searchTerm) params.set("searchTerm", q.searchTerm);
+  if (q.fromDate) params.set("fromDate", q.fromDate);
+  if (q.toDate) params.set("toDate", q.toDate);
+  if (q.condition) params.set("condition", q.condition);
+  if (q.serviceType) params.set("serviceType", q.serviceType);
+  if (q.sourceFilter && q.sourceFilter !== "All") params.set("sourceFilter", q.sourceFilter);
+
+  const data = await getJson(
+    TECHNICAL_API_BASE,
+    "spareparts/usage",
+    params,
+    authorization,
+    signal
+  );
+  const { rows, totalCount } = unwrap(data);
+  return {
+    totalCount,
+    returned: rows.length,
+    usageSummary: rows.map((r) =>
+      compact({
+        itemName: str(r, "itemName"),
+        partNumber: str(r, "serialNumber", "partNumber"),
+        totalUsedQuantity: num(r, "totalQuantity", "quantity"),
+        totalCost: num(r, "totalCost", "totalAmount"),
+      })
+    ),
+  };
+}
+

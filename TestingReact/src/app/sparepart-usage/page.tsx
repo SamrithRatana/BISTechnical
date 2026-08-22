@@ -12,6 +12,7 @@
 import { useCallback, useMemo } from "react";
 import PageWrapper from "@/components/PageWrapper";
 import TemplateReportView, { type ReportData } from "@/components/TemplateReportView";
+import { type ReportFilterValues } from "@/components/ReportFilterBar";
 import { useI18n } from "@/i18n/LanguageProvider";
 import { fetchSparepartUsage } from "@/services/reports";
 import { flat, formatDay } from "@/services/reportShaping";
@@ -28,8 +29,8 @@ export default function SparepartUsageReportPage() {
   }, []);
 
   const load = useCallback(
-    async (from: Date, to: Date): Promise<ReportData> => {
-      const rows = await fetchSparepartUsage(from, to);
+    async (from: Date, to: Date, filters: ReportFilterValues): Promise<ReportData> => {
+      const rows = await fetchSparepartUsage(from, to, filters.dateMode);
 
       const totalUsed = rows.reduce((sum, r) => sum + (r.usedQuantity ?? 0), 0);
       const fromService = rows.reduce((sum, r) => sum + (r.serviceUsedQty ?? 0), 0);
@@ -64,6 +65,7 @@ export default function SparepartUsageReportPage() {
         subtitle={subtitle}
         load={load}
         fileName="sparepart-usage-report"
+        filters={["dateMode"]}
         initialFrom={bounds.from}
         initialTo={bounds.to}
       />

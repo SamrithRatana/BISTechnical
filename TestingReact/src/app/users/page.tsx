@@ -6,11 +6,19 @@
  * UserManagementAPI via Next.js proxy (/api/proxy/UserManagement?service=jwt).
  */
 
-import React, { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect, useCallback, useSyncExternalStore } from "react";
 import Sidebar from "@/components/Sidebar";
 import Header from "@/components/Header";
 import RequireRole, { useHasRole } from "@/components/RequireRole";
 import { ADMIN_ROLES } from "@/services/authSession";
+import {
+  readSidebarOpen,
+  readSidebarOpenOnServer,
+  setSidebarOpen,
+  subscribeToSidebar,
+} from "@/services/sidebarPreference";
+import { sidebarMarginClass } from "@/lib/sidebarMetrics";
+import { useTheme } from "@/theme/ThemeProvider";
 import { useI18n } from "@/i18n/LanguageProvider";
 import {
   Users,
@@ -27,6 +35,7 @@ import {
   Phone,
   User
   } from "lucide-react";
+import { ModalWrapper } from "@/components/av/ModalWrapper";
 
 interface SystemUser {
   id: string;
@@ -81,12 +90,25 @@ export default function UsersPage() {
   const [creatingUser, setCreatingUser] = useState(false);
 
   // Fetch Users & Roles
+  // The User/Role Management controllers now require a signed-in caller (they
+  // previously had no [Authorize] at all, so create-user and role assignment
+  // were open to anyone). The proxy route only forwards an Authorization header
+  // when the browser sent one, so these calls have to attach the token.
+  const authHeaders = useCallback((extra: Record<string, string> = {}) => {
+    const headers: Record<string, string> = { Accept: "application/json", ...extra };
+    if (typeof window !== "undefined") {
+      const token = localStorage.getItem("jwt_token");
+      if (token) headers["Authorization"] = `Bearer ${token}`;
+    }
+    return headers;
+  }, []);
+
   const loadData = useCallback(async () => {
     setLoading(true);
     try {
       // 1. Fetch Users
       const usersRes = await fetch("/api/proxy/UserManagement?service=jwt&page=1&pageSize=100", {
-        headers: { Accept: "application/json" }
+        headers: authHeaders()
       });
       if (usersRes.ok) {
         const uData = await usersRes.json();
@@ -107,7 +129,7 @@ export default function UsersPage() {
 
       // 2. Fetch Roles
       const rolesRes = await fetch("/api/proxy/RoleManagement?service=jwt", {
-        headers: { Accept: "application/json" }
+        headers: authHeaders()
       });
       if (rolesRes.ok) {
         const rData = await rolesRes.json();
@@ -124,7 +146,7 @@ export default function UsersPage() {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [authHeaders]);
 
   // Don't fetch the staff directory for someone who isn't allowed to see it.
   // `null` means the role check hasn't resolved yet, so wait rather than
@@ -141,7 +163,9 @@ export default function UsersPage() {
     setSelectedUser(user);
     setShowEditRolesModal(true);
     try {
-      const res = await fetch(`/api/proxy/UserManagement/${user.id}/roles?service=jwt`);
+      const res = await fetch(`/api/proxy/UserManagement/${user.id}/roles?service=jwt`, {
+        headers: authHeaders()
+      });
       if (res.ok) {
         const data = await res.json();
         const rawRoles: any[] = data.Data?.Roles || data.Roles || data.roles || [];
@@ -172,7 +196,7 @@ export default function UsersPage() {
       const assignedNames = userRoles.filter((r) => r.isAssigned).map((r) => r.name);
       const res = await fetch(`/api/proxy/UserManagement/${selectedUser.id}/roles?service=jwt`, {
         method: "PUT",
-        headers: { "Content-Type": "application/json" },
+        headers: authHeaders({ "Content-Type": "application/json" }),
         body: JSON.stringify({
           UserId: selectedUser.id,
           Roles: assignedNames
@@ -197,7 +221,7 @@ export default function UsersPage() {
     try {
       const res = await fetch("/api/proxy/UserManagement?service=jwt", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: authHeaders({ "Content-Type": "application/json" }),
         body: JSON.stringify({
           UserName: newUserName,
           Email: newEmail,
@@ -225,7 +249,21 @@ export default function UsersPage() {
     }
   };
 
-  const [sidebarOpen, setSidebarOpen] = useState(true);
+  /*
+    Same module store `PageWrapper` reads, not a local `useState`.
+
+    This page renders the shell itself rather than going through `PageWrapper`,
+    and a `useState(true)` here meant the rail arrived expanded no matter what
+    the user had collapsed it to elsewhere — and toggling it here persisted
+    nothing, so navigating away snapped it back. See `services/sidebarPreference`
+    for why this lives outside React.
+  */
+  const sidebarOpen = useSyncExternalStore(
+    subscribeToSidebar,
+    readSidebarOpen,
+    readSidebarOpenOnServer
+  );
+  const { prefs } = useTheme();
 
   // Filtered users by query
   const filteredUsers = usersList.filter((u) => {
@@ -243,10 +281,25 @@ export default function UsersPage() {
   return (
     <div className="h-screen overflow-hidden bg-sunken/70 text-ink font-sans flex">
       <Sidebar isOpen={sidebarOpen} setIsOpen={setSidebarOpen} />
+      {/* The margin comes from `sidebarMarginClass` so this page cannot drift
+          from `PageWrapper` again: the hardcoded `lg:ml-64` here knew nothing
+          about sidebar styles, so a dual-column rail (320px) painted 64px over
+          this column and an enterprise rail 48px over it.
+
+          The `lg:` prefixes inside that helper are load-bearing. The aside is
+          `position: fixed`, and below `lg` it is an off-canvas drawer occupying
+          no layout space — so an unprefixed `ml-64` indented this column by
+          256px on every phone and small tablet with nothing in the gap, leaving
+          ~134px of usable width at 390px. Only the desktop rail earns a margin.
+
+          `transition-[margin]` rather than `transition-all`: the latter also
+          animated `background-color`, so every theme change dragged a 300ms
+          cross-fade through this full-height container for no reason. */}
       <div
-        className={`flex-1 flex flex-col h-screen overflow-hidden min-w-0 transition-all duration-300 ${
-          sidebarOpen ? "ml-64" : "ml-20"
-        }`}
+        className={`flex-1 flex flex-col h-screen overflow-hidden min-w-0 transition-[margin] duration-300 ease-out ${sidebarMarginClass(
+          prefs.sidebarStyle || "classic",
+          sidebarOpen
+        )}`}
       >
         <Header sidebarOpen={sidebarOpen} setSidebarOpen={setSidebarOpen} />
         <main className="flex-1 flex flex-col p-4 lg:p-6 w-full mx-auto overflow-y-auto min-h-0 space-y-6">
@@ -283,7 +336,7 @@ export default function UsersPage() {
 
             <button
               onClick={() => setShowCreateUserModal(true)}
-              className="flex items-center gap-2 px-4 py-2.5 bg-gradient-to-r from-accent to-accent-hover hover:from-accent hover:to-accent-hover text-white rounded-xl font-medium shadow-md transition-all text-sm"
+              className="flex items-center gap-2 px-4 py-2.5 bg-gradient-to-r from-accent to-accent-hover hover:from-accent hover:to-accent-hover text-white rounded-xl font-medium shadow-md transition-[color,background-color,border-color,box-shadow,opacity,transform,filter] text-sm"
             >
               <UserPlus className="w-4 h-4" />
               <span>{isKhmer ? "បន្ថែមអ្នកប្រើប្រាស់" : "Add New User"}</span>
@@ -296,7 +349,7 @@ export default function UsersPage() {
           <div className="flex items-center bg-sunken p-1.5 rounded-xl border border-subtle w-full sm:w-auto">
             <button
               onClick={() => setActiveTab("users")}
-              className={`flex items-center gap-2 px-4 py-2 rounded-lg font-medium text-sm transition-all ${
+              className={`flex items-center gap-2 px-4 py-2 rounded-lg font-medium text-sm transition-[color,background-color,border-color,box-shadow,opacity,transform,filter] ${
                 activeTab === "users"
                   ? "bg-surface text-accent shadow-sm"
                   : "text-ink-secondary hover:text-ink "
@@ -311,7 +364,7 @@ export default function UsersPage() {
 
             <button
               onClick={() => setActiveTab("roles")}
-              className={`flex items-center gap-2 px-4 py-2 rounded-lg font-medium text-sm transition-all ${
+              className={`flex items-center gap-2 px-4 py-2 rounded-lg font-medium text-sm transition-[color,background-color,border-color,box-shadow,opacity,transform,filter] ${
                 activeTab === "roles"
                   ? "bg-surface text-accent shadow-sm"
                   : "text-ink-secondary hover:text-ink "
@@ -461,7 +514,7 @@ export default function UsersPage() {
             {rolesList.map((r) => (
               <div
                 key={r.id}
-                className="bg-surface p-6 rounded-2xl border border-subtle shadow-sm hover:shadow-md transition-all space-y-4"
+                className="bg-surface p-6 rounded-2xl border border-subtle shadow-sm hover:shadow-md transition-[color,background-color,border-color,box-shadow,opacity,transform,filter] space-y-4"
               >
                 <div className="flex items-center justify-between">
                   <div className="p-3 bg-accent-soft text-accent rounded-xl border border-accent ">
@@ -488,201 +541,178 @@ export default function UsersPage() {
         )}
 
       {/* Edit Roles Modal */}
-      {showEditRolesModal && selectedUser && (
-        <div className="enter-fade fixed inset-0 z-50 flex items-center justify-center p-4 bg-ink/60 backdrop-blur-sm">
-          <div className="enter-pop bg-surface rounded-2xl border border-subtle max-w-md w-full p-6 shadow-xl space-y-6">
-            <div className="flex items-center justify-between border-b border-subtle pb-4">
-              <div className="flex items-center gap-3">
-                <div className="p-2.5 bg-accent-soft text-accent rounded-xl">
-                  <ShieldCheck className="w-5 h-5" />
-                </div>
-                <div>
-                  <h3 className="font-bold text-ink ">
-                    {isKhmer ? "កំណត់ Roles ជូនអ្នកប្រើប្រាស់" : "Manage User Roles"}
-                  </h3>
-                  <p className="text-xs text-ink-muted">
-                    {selectedUser.firstName} {selectedUser.lastName} (@{selectedUser.userName})
-                  </p>
-                </div>
+      <ModalWrapper
+        open={showEditRolesModal && !!selectedUser}
+        onClose={() => setShowEditRolesModal(false)}
+        maxWidth="max-w-md"
+        zIndex={50}
+        placement="center"
+        backdropVariant="heavy"
+      >
+        <div className="bg-surface rounded-2xl border border-subtle p-6 space-y-6">
+          <div className="flex items-center justify-between border-b border-subtle pb-4">
+            <div className="flex items-center gap-3">
+              <div className="p-2.5 bg-accent-soft text-accent rounded-xl">
+                <ShieldCheck className="w-5 h-5" />
               </div>
-              <button
-                onClick={() => setShowEditRolesModal(false)}
-                className="text-ink-muted hover:text-ink-secondary "
-              >
-                <XCircle className="w-5 h-5" />
-              </button>
+              <div>
+                <h3 className="font-bold text-ink">
+                  {isKhmer ? "កំណត់ Roles ជូនអ្នកប្រើប្រាស់" : "Manage User Roles"}
+                </h3>
+                <p className="text-xs text-ink-muted">
+                  {selectedUser?.firstName} {selectedUser?.lastName} (@{selectedUser?.userName})
+                </p>
+              </div>
             </div>
+            <button onClick={() => setShowEditRolesModal(false)} className="text-ink-muted hover:text-ink-secondary">
+              <XCircle className="w-5 h-5" />
+            </button>
+          </div>
 
-            <div className="space-y-3">
-              {userRoles.map((r) => (
-                <label
-                  key={r.id}
-                  className={`flex items-center justify-between p-3.5 rounded-xl border cursor-pointer transition-all ${
-                    r.isAssigned
-                      ? "bg-accent-soft border-accent text-accent "
-                      : "bg-cushion border-subtle text-ink "
-                  }`}
-                >
-                  <div className="flex items-center gap-3">
-                    <input
-                      type="checkbox"
-                      checked={r.isAssigned}
-                      onChange={() => toggleRoleAssignment(r.id)}
-                      className="w-4 h-4 text-accent rounded focus:ring-accent"
-                    />
-                    <span className="font-semibold text-sm">{r.name}</span>
-                  </div>
-                  {r.isAssigned && <CheckCircle2 className="w-4 h-4 text-accent " />}
-                </label>
-              ))}
-            </div>
+          <div className="space-y-3">
+            {userRoles.map((r) => (
+              <label
+                key={r.id}
+                className={`flex items-center justify-between p-3.5 rounded-xl border cursor-pointer transition-[color,background-color,border-color,box-shadow,opacity,transform,filter] ${
+                  r.isAssigned
+                    ? "bg-accent-soft border-accent text-accent"
+                    : "bg-cushion border-subtle text-ink"
+                }`}
+              >
+                <div className="flex items-center gap-3">
+                  <input
+                    type="checkbox"
+                    checked={r.isAssigned}
+                    onChange={() => toggleRoleAssignment(r.id)}
+                    className="w-4 h-4 text-accent rounded focus:ring-accent"
+                  />
+                  <span className="font-semibold text-sm">{r.name}</span>
+                </div>
+                {r.isAssigned && <CheckCircle2 className="w-4 h-4 text-accent" />}
+              </label>
+            ))}
+          </div>
 
-            <div className="flex items-center justify-end gap-3 pt-2">
-              <button
-                onClick={() => setShowEditRolesModal(false)}
-                className="px-4 py-2 text-sm text-ink-secondary hover:bg-sunken rounded-xl"
-              >
-                {isKhmer ? "បោះបង់" : "Cancel"}
-              </button>
-              <button
-                onClick={() => void handleSaveUserRoles()}
-                disabled={savingRoles}
-                className="flex items-center gap-2 px-4 py-2 text-sm font-medium bg-gradient-to-r from-accent to-accent-hover text-white rounded-xl shadow-md hover:from-accent hover:to-accent-hover"
-              >
-                {savingRoles && <Loader2 className="w-4 h-4 animate-spin" />}
-                <span>{isKhmer ? "រក្សាទុក" : "Save Changes"}</span>
-              </button>
-            </div>
+          <div className="flex items-center justify-end gap-3 pt-2">
+            <button
+              onClick={() => setShowEditRolesModal(false)}
+              className="px-4 py-2 text-sm text-ink-secondary hover:bg-sunken rounded-xl"
+            >
+              {isKhmer ? "បោះបង់" : "Cancel"}
+            </button>
+            <button
+              onClick={() => void handleSaveUserRoles()}
+              disabled={savingRoles}
+              className="flex items-center gap-2 px-4 py-2 text-sm font-medium bg-gradient-to-r from-accent to-accent-hover text-white rounded-xl shadow-md"
+            >
+              {savingRoles && <Loader2 className="w-4 h-4 animate-spin" />}
+              <span>{isKhmer ? "រក្សាទុក" : "Save Changes"}</span>
+            </button>
           </div>
         </div>
-      )}
+      </ModalWrapper>
 
       {/* Create User Modal */}
-      {showCreateUserModal && (
-        <div className="enter-fade fixed inset-0 z-50 flex items-center justify-center p-4 bg-ink/60 backdrop-blur-sm">
-          <form
-            onSubmit={(e) => void handleCreateUser(e)}
-            className="enter-pop bg-surface rounded-2xl border border-subtle max-w-lg w-full p-6 shadow-xl space-y-4"
-          >
-            <div className="flex items-center justify-between border-b border-subtle pb-3">
-              <div className="flex items-center gap-3">
-                <div className="p-2.5 bg-gradient-to-tr from-accent to-accent-hover text-white rounded-xl">
-                  <UserPlus className="w-5 h-5" />
-                </div>
-                <h3 className="font-bold text-ink ">
-                  {isKhmer ? "បង្កើតគណនីអ្នកប្រើប្រាស់ថ្មី" : "Create New User Account"}
-                </h3>
+      <ModalWrapper
+        open={showCreateUserModal}
+        onClose={() => setShowCreateUserModal(false)}
+        maxWidth="max-w-lg"
+        zIndex={50}
+        placement="center"
+        backdropVariant="heavy"
+      >
+        <form
+          onSubmit={(e) => void handleCreateUser(e)}
+          className="bg-surface rounded-2xl border border-subtle p-6 space-y-4"
+        >
+          <div className="flex items-center justify-between border-b border-subtle pb-3">
+            <div className="flex items-center gap-3">
+              <div className="p-2.5 bg-gradient-to-tr from-accent to-accent-hover text-white rounded-xl">
+                <UserPlus className="w-5 h-5" />
               </div>
-              <button
-                type="button"
-                onClick={() => setShowCreateUserModal(false)}
-                className="text-ink-muted hover:text-ink-secondary "
-              >
-                <XCircle className="w-5 h-5" />
-              </button>
+              <h3 className="font-bold text-ink">
+                {isKhmer ? "បង្កើតគណនីអ្នកប្រើប្រាស់ថ្មី" : "Create New User Account"}
+              </h3>
             </div>
+            <button
+              type="button"
+              onClick={() => setShowCreateUserModal(false)}
+              className="text-ink-muted hover:text-ink-secondary"
+            >
+              <XCircle className="w-5 h-5" />
+            </button>
+          </div>
 
-            <div className="grid grid-cols-2 gap-4">
-              <div>
-                <label className="text-xs font-semibold text-ink-secondary mb-1 block">
-                  {isKhmer ? "ឈ្មោះ (First Name)" : "First Name"}
-                </label>
-                <input
-                  type="text"
-                  value={newFirstName}
-                  onChange={(e) => setNewFirstName(e.target.value)}
-                  className="w-full px-3.5 py-2 bg-cushion border border-subtle rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-accent "
-                />
-              </div>
-
-              <div>
-                <label className="text-xs font-semibold text-ink-secondary mb-1 block">
-                  {isKhmer ? "ត្រកូល (Last Name)" : "Last Name"}
-                </label>
-                <input
-                  type="text"
-                  value={newLastName}
-                  onChange={(e) => setNewLastName(e.target.value)}
-                  className="w-full px-3.5 py-2 bg-cushion border border-subtle rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-accent "
-                />
-              </div>
-            </div>
-
+          <div className="grid grid-cols-2 gap-4">
             <div>
               <label className="text-xs font-semibold text-ink-secondary mb-1 block">
-                {isKhmer ? "ឈ្មោះគណនី (Username) *" : "Username *"}
+                {isKhmer ? "ឈ្មោះ (First Name)" : "First Name"}
               </label>
               <input
                 type="text"
-                required
-                value={newUserName}
-                onChange={(e) => setNewUserName(e.target.value)}
-                placeholder="e.g. sophy"
-                className="w-full px-3.5 py-2 bg-cushion border border-subtle rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-accent "
+                value={newFirstName}
+                onChange={(e) => setNewFirstName(e.target.value)}
+                className="w-full px-3.5 py-2 bg-cushion border border-subtle rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-accent"
               />
             </div>
-
             <div>
               <label className="text-xs font-semibold text-ink-secondary mb-1 block">
-                {isKhmer ? "អ៊ីម៉ែល (Email) *" : "Email Address *"}
-              </label>
-              <input
-                type="email"
-                required
-                value={newEmail}
-                onChange={(e) => setNewEmail(e.target.value)}
-                placeholder="sophy@camprotec.com.kh"
-                className="w-full px-3.5 py-2 bg-cushion border border-subtle rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-accent "
-              />
-            </div>
-
-            <div>
-              <label className="text-xs font-semibold text-ink-secondary mb-1 block">
-                {isKhmer ? "លេខទូរស័ព្ទ" : "Phone Number"}
+                {isKhmer ? "ត្រកូល (Last Name)" : "Last Name"}
               </label>
               <input
                 type="text"
-                value={newPhone}
-                onChange={(e) => setNewPhone(e.target.value)}
-                placeholder="+855 12 345 678"
-                className="w-full px-3.5 py-2 bg-cushion border border-subtle rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-accent "
+                value={newLastName}
+                onChange={(e) => setNewLastName(e.target.value)}
+                className="w-full px-3.5 py-2 bg-cushion border border-subtle rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-accent"
               />
             </div>
+          </div>
 
-            <div>
-              <label className="text-xs font-semibold text-ink-secondary mb-1 block">
-                {isKhmer ? "ពាក្យសម្ងាត់ (Password) *" : "Password *"}
-              </label>
-              <input
-                type="password"
-                required
-                value={newPassword}
-                onChange={(e) => setNewPassword(e.target.value)}
-                placeholder="••••••••"
-                className="w-full px-3.5 py-2 bg-cushion border border-subtle rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-accent "
-              />
-            </div>
+          <div>
+            <label className="text-xs font-semibold text-ink-secondary mb-1 block">
+              {isKhmer ? "ឈ្មោះគណនី (Username) *" : "Username *"}
+            </label>
+            <input type="text" required value={newUserName} onChange={(e) => setNewUserName(e.target.value)} placeholder="e.g. sophy"
+              className="w-full px-3.5 py-2 bg-cushion border border-subtle rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-accent" />
+          </div>
 
-            <div className="flex items-center justify-end gap-3 pt-3">
-              <button
-                type="button"
-                onClick={() => setShowCreateUserModal(false)}
-                className="px-4 py-2 text-sm text-ink-secondary hover:bg-sunken rounded-xl"
-              >
-                {isKhmer ? "បោះបង់" : "Cancel"}
-              </button>
-              <button
-                type="submit"
-                disabled={creatingUser}
-                className="flex items-center gap-2 px-5 py-2 text-sm font-medium bg-gradient-to-r from-accent to-accent-hover text-white rounded-xl shadow-md hover:from-accent hover:to-accent-hover"
-              >
-                {creatingUser && <Loader2 className="w-4 h-4 animate-spin" />}
-                <span>{isKhmer ? "បង្កើតគណនី" : "Create Account"}</span>
-              </button>
-            </div>
-          </form>
-        </div>
-      )}
+          <div>
+            <label className="text-xs font-semibold text-ink-secondary mb-1 block">
+              {isKhmer ? "អ៊ីម៉ែល (Email) *" : "Email Address *"}
+            </label>
+            <input type="email" required value={newEmail} onChange={(e) => setNewEmail(e.target.value)} placeholder="sophy@camprotec.com.kh"
+              className="w-full px-3.5 py-2 bg-cushion border border-subtle rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-accent" />
+          </div>
+
+          <div>
+            <label className="text-xs font-semibold text-ink-secondary mb-1 block">
+              {isKhmer ? "លេខទូរស័ព្ទ" : "Phone Number"}
+            </label>
+            <input type="text" value={newPhone} onChange={(e) => setNewPhone(e.target.value)} placeholder="+855 12 345 678"
+              className="w-full px-3.5 py-2 bg-cushion border border-subtle rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-accent" />
+          </div>
+
+          <div>
+            <label className="text-xs font-semibold text-ink-secondary mb-1 block">
+              {isKhmer ? "ពាក្យសម្ងាត់ (Password) *" : "Password *"}
+            </label>
+            <input type="password" required value={newPassword} onChange={(e) => setNewPassword(e.target.value)} placeholder="••••••••"
+              className="w-full px-3.5 py-2 bg-cushion border border-subtle rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-accent" />
+          </div>
+
+          <div className="flex items-center justify-end gap-3 pt-3">
+            <button type="button" onClick={() => setShowCreateUserModal(false)}
+              className="px-4 py-2 text-sm text-ink-secondary hover:bg-sunken rounded-xl">
+              {isKhmer ? "បោះបង់" : "Cancel"}
+            </button>
+            <button type="submit" disabled={creatingUser}
+              className="flex items-center gap-2 px-5 py-2 text-sm font-medium bg-gradient-to-r from-accent to-accent-hover text-white rounded-xl shadow-md">
+              {creatingUser && <Loader2 className="w-4 h-4 animate-spin" />}
+              <span>{isKhmer ? "បង្កើតគណនី" : "Create Account"}</span>
+            </button>
+          </div>
+        </form>
+      </ModalWrapper>
         </RequireRole>
         </main>
       </div>

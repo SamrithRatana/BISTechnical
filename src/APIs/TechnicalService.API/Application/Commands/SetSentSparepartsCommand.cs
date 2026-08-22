@@ -10,8 +10,7 @@ public class SetSentSparepartsCommand : IRequest<bool>
     [DataMember]
     public Guid SetSentSparepartsBy { get; private set; }
 
-    public SetSentSparepartsCommand(Guid id, DateTime sentSparepartsDate, Guid setSentSparepartsBy) // ✅ fixed name
-    {
+    public SetSentSparepartsCommand(Guid id, DateTime sentSparepartsDate, Guid setSentSparepartsBy)    {
         Id = id;
         SentSparepartsDate = sentSparepartsDate;
         SetSentSparepartsBy = setSentSparepartsBy;

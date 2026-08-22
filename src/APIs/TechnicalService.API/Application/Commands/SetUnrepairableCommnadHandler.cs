@@ -5,16 +5,14 @@ namespace TechnicalService.API.Application.Commands;
 public class SetUnrepairableCommnadHandler : IRequestHandler<SetUnrepairableCommand, bool>
 {
     private readonly ITechnicalServiceRepository _technicalServiceRepository;
-    private readonly IMediator _mediator;
-    private readonly ILogger<SetRepairCommnadHandler> _logger;
+    private readonly ILogger<SetUnrepairableCommnadHandler> _logger;
 
     // Using DI to inject infrastructure persistence Repositories
-    public SetUnrepairableCommnadHandler(IMediator mediator,
+    public SetUnrepairableCommnadHandler(
         ITechnicalServiceRepository technicalServiceRepository,
-        ILogger<SetRepairCommnadHandler> logger)
+        ILogger<SetUnrepairableCommnadHandler> logger)
     {
         _technicalServiceRepository = technicalServiceRepository ?? throw new ArgumentNullException(nameof(technicalServiceRepository));
-        _mediator = mediator ?? throw new ArgumentNullException(nameof(mediator));
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
     }
 
@@ -29,7 +27,7 @@ public class SetUnrepairableCommnadHandler : IRequestHandler<SetUnrepairableComm
 
         serviceToUpdate.SetUnrepairableStatus(command.UnreparableDate, command.SetUnrepairableBy);
 
-        _logger.LogInformation("Updating Service - SetUnrepairable: {@Service}", serviceToUpdate);
+        _logger.LogInformation("Updating Service - SetUnrepairable: {ServiceId}", serviceToUpdate.Id);
 
         return await _technicalServiceRepository.UnitOfWork.SaveEntitiesAsync(cancellationToken);
     }

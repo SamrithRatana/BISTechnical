@@ -92,6 +92,35 @@ let sharedSource: EventSource | null = null;
 let sharedReconnectTimer: ReturnType<typeof setTimeout> | null = null;
 let sharedReconnectDelay = 1000;
 
+/*
+  Closing the stream is deferred, because "no subscribers" is a state this app
+  passes THROUGH on every route change, not just when it is done.
+
+  Each page renders its own `PageWrapper`/`ServiceTable`, so React unmounts the
+  outgoing subscriber before it mounts the incoming one. The count hits 0 in
+  between, and closing on that tick meant a full teardown and reconnect per
+  navigation. Measured on a production build: 1 connection became 7 across 6
+  navigations, while the server held exactly 1 session throughout — so it was
+  never leaking, just churning, and each cycle costs a fresh request the server
+  holds open plus a subscribe/unsubscribe on its event bus.
+
+  The existing comment here noted the same dip during React's development
+  double-mount and judged the reopen cheap. It is cheap once; it is not cheap
+  on every navigation for the life of the session.
+
+  1.5s comfortably covers an unmount/mount gap — the App Router commits the new
+  route within a frame or two even under a slow transition — while still
+  closing promptly once the user really has left the last subscribing page.
+*/
+let sharedCloseTimer: ReturnType<typeof setTimeout> | null = null;
+const STREAM_CLOSE_GRACE_MS = 1500;
+
+function cancelPendingClose() {
+  if (sharedCloseTimer === null) return;
+  clearTimeout(sharedCloseTimer);
+  sharedCloseTimer = null;
+}
+
 function openSharedStream() {
   if (sharedSource || typeof window === "undefined") return;
 
@@ -140,6 +169,7 @@ function openSharedStream() {
 }
 
 function closeSharedStream() {
+  cancelPendingClose();
   sharedSource?.close();
   sharedSource = null;
   if (sharedReconnectTimer !== null) {
@@ -151,15 +181,22 @@ function closeSharedStream() {
 
 /** Adds a handler, opening the shared stream if it is the first. */
 function subscribeToStream(handler: StreamHandler): () => void {
+  // A new subscriber arriving is what tells us the previous "last one out" was
+  // a navigation, not the end. Cancel the pending close and reuse the socket.
+  cancelPendingClose();
   streamHandlers.add(handler);
   openSharedStream();
 
   return () => {
     streamHandlers.delete(handler);
-    // Last one out closes the connection. In React's development double-mount
-    // the count dips to 0 and back to 1 within a tick; the reopen is cheap and
-    // correctness does not depend on the connection surviving it.
-    if (streamHandlers.size === 0) closeSharedStream();
+    if (streamHandlers.size > 0) return;
+
+    // Last one out — but only provisionally. See STREAM_CLOSE_GRACE_MS.
+    cancelPendingClose();
+    sharedCloseTimer = setTimeout(() => {
+      sharedCloseTimer = null;
+      if (streamHandlers.size === 0) closeSharedStream();
+    }, STREAM_CLOSE_GRACE_MS);
   };
 }
 

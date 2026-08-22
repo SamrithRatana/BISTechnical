@@ -6,7 +6,8 @@ public class DeleteItemCommandHandler : IRequestHandler<DeleteItemCommand, bool>
 {
     private readonly ITechnicalServiceRepository _repairServiceRepository;
 
-    public DeleteItemCommandHandler(ITechnicalServiceRepository repairServiceRepository)
+    public DeleteItemCommandHandler(
+        ITechnicalServiceRepository repairServiceRepository)
     {
         _repairServiceRepository = repairServiceRepository;
     }

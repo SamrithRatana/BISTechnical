@@ -1,5 +1,5 @@
 ﻿using TechnicalService.API.Application.Commands;
-using TechnicalService.API.Application.DTOs;  // ✅ shared DTO
+using TechnicalService.API.Application.DTOs;
 using TechnicalService.API.Application.Queries;
 namespace TechnicalService.API.Extensions;
 public static class SparepartItemExtensions
@@ -20,8 +20,6 @@ public static class SparepartItemExtensions
             Quantity = item.Quantity,
             Condition = item.Condition,
             IsHoldStatus = item.IsHoldStatus,
-            Remarks = item.Remarks, // ✅ NEW
-            RemarksUpdatedAt = item.RemarksUpdatedAt // ✅ NEW
-        };
+            Remarks = item.Remarks,            RemarksUpdatedAt = item.RemarksUpdatedAt        };
     }
 }

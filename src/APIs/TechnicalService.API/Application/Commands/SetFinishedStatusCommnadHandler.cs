@@ -5,16 +5,14 @@ namespace TechnicalService.API.Application.Commands;
 public class SetFinishedStatusCommnadHandler : IRequestHandler<SetFinishedStatusCommand, bool>
 {
     private readonly ITechnicalServiceRepository _technicalServiceRepository;
-    private readonly IMediator _mediator;
     private readonly ILogger<SetFinishedStatusCommnadHandler> _logger;
 
     // Using DI to inject infrastructure persistence Repositories
-    public SetFinishedStatusCommnadHandler(IMediator mediator,
+    public SetFinishedStatusCommnadHandler(
         ITechnicalServiceRepository technicalServiceRepository,
         ILogger<SetFinishedStatusCommnadHandler> logger)
     {
         _technicalServiceRepository = technicalServiceRepository ?? throw new ArgumentNullException(nameof(technicalServiceRepository));
-        _mediator = mediator ?? throw new ArgumentNullException(nameof(mediator));
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
     }
 
@@ -29,7 +27,7 @@ public class SetFinishedStatusCommnadHandler : IRequestHandler<SetFinishedStatus
 
         serviceToUpdate.SetFinishedStatus(command.FinishedDate, command.VerifiedBy);
 
-        _logger.LogInformation("Updating Service - SetFinished: {@Service}", serviceToUpdate);
+        _logger.LogInformation("Updating Service - SetFinished: {ServiceId}", serviceToUpdate.Id);
 
         return await _technicalServiceRepository.UnitOfWork.SaveEntitiesAsync(cancellationToken);
     }
