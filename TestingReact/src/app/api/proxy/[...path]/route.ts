@@ -158,10 +158,8 @@ export async function GET(
     const authHeader = req.headers.get("authorization");
     const reqHeaders: Record<string, string> = {
       Accept: "application/json",
-      // The upstream API now compresses JSON responses; undici decodes this
-      // transparently, so the only visible effect is less data on the wire
-      // between the two services.
       "Accept-Encoding": "br, gzip",
+      "Bypass-Tunnel-Reminder": "true",
     };
     if (authHeader) reqHeaders["Authorization"] = authHeader;
 
@@ -229,6 +227,7 @@ export async function POST(
     const reqHeaders: Record<string, string> = {
       "Content-Type": "application/json",
       Accept: "application/json",
+      "Bypass-Tunnel-Reminder": "true",
     };
     if (authHeader) reqHeaders["Authorization"] = authHeader;
 
@@ -292,6 +291,7 @@ export async function PUT(
     const reqHeaders: Record<string, string> = {
       "Content-Type": "application/json",
       Accept: "application/json",
+      "Bypass-Tunnel-Reminder": "true",
     };
     if (authHeader) reqHeaders["Authorization"] = authHeader;
 
@@ -345,7 +345,10 @@ export async function DELETE(
     logProxy("DELETE", targetUrl);
 
     const authHeader = req.headers.get("authorization");
-    const reqHeaders: Record<string, string> = { Accept: "application/json" };
+    const reqHeaders: Record<string, string> = {
+      Accept: "application/json",
+      "Bypass-Tunnel-Reminder": "true",
+    };
     if (authHeader) reqHeaders["Authorization"] = authHeader;
 
     const res = await fetch(targetUrl, {

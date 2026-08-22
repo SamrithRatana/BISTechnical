@@ -28,7 +28,8 @@ export async function POST(req: NextRequest) {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        Accept: "application/json"
+        Accept: "application/json",
+        "Bypass-Tunnel-Reminder": "true",
       },
       body: JSON.stringify({
         UserName: userName,
