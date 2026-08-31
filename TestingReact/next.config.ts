@@ -1,68 +1,75 @@
 import type { NextConfig } from "next";
-import { withSentryConfig } from "@sentry/nextjs";
 import { EventEmitter } from "events";
 
 // Increase default max listeners for Node.js process to support concurrent API proxy routes & SSE streams
 EventEmitter.defaultMaxListeners = 100;
 
+function r2PublicHostname(): string | null {
+  const raw = process.env.R2_PUBLIC_BASE_URL;
+  if (!raw) return null;
+  try {
+    return new URL(raw).hostname;
+  } catch {
+    return null;
+  }
+}
+
+const R2_HOST = r2PublicHostname();
+
 const nextConfig: NextConfig = {
+  output: "standalone",
+  compress: true,
+  poweredByHeader: false,
+  reactStrictMode: true,
+
+  experimental: {
+    optimizePackageImports: [
+      "lucide-react",
+      "framer-motion",
+      "date-fns",
+      "react-hot-toast",
+    ],
+  },
+
   /**
-   * The on-screen dev badge, turned off.
+   * Keeping this key is what pins the project to webpack.
    *
-   * It sat showing activity indefinitely after every menu navigation, which
-   * read as "the page is stuck" when nothing was: the ticket queues hold an SSE
-   * stream open on `/api/events` for live updates, and a stream that never
-   * ends is a request the dev server never stops counting as in flight (the dev
-   * log records them as `GET /api/events 200 in 75s`). The indicator was
-   * telling the truth and the truth was useless — an alarm that is always on
-   * teaches you to ignore it.
-   *
-   * Dev-only either way: this badge does not exist in a production build, so
-   * nothing users see changes. Compile and runtime errors are still surfaced
-   * with it off — see next/dist/docs/01-app/03-api-reference/05-config/
-   * 01-next-config-js/devIndicators.md. Set to `{ position: "bottom-right" }`
-   * instead of `false` to keep it while moving it out of the way.
+   * Next 16 runs Turbopack by default, and a `webpack` key with no `turbopack`
+   * key beside it is a hard build error ("This build is using Turbopack, with a
+   * `webpack` config..."), not a warning. That is why BOTH `dev` and `build` in
+   * package.json pass `--webpack` explicitly — dropping the flag from either
+   * one breaks that command outright. If you want to move to Turbopack, the two
+   * ignore-warnings rules below have to be migrated to a `turbopack` config
+   * first; removing the flags alone does not do it.
    */
+  webpack: (config) => {
+    config.ignoreWarnings = [
+      ...(config.ignoreWarnings || []),
+      { module: /face-api/ },
+      { message: /Critical dependency: the request of a dependency is an expression/ },
+    ];
+    return config;
+  },
+
+  images: {
+    remotePatterns: R2_HOST
+      ? [{ protocol: "https" as const, hostname: R2_HOST }]
+      : [],
+  },
+
+  env: {
+    NEXT_PUBLIC_R2_PUBLIC_HOST: R2_HOST ?? "",
+  },
+
   devIndicators: false,
 
   allowedDevOrigins: [
-    "192.168.0.222",
-    "192.168.0.222:3000",
-    "localhost:3000",
-    "127.0.0.1:3000",
-    "192.168.*",
+    "localhost",
+    "127.0.0.1",
+    "10.*.*.*",
+    "192.168.*.*",
+    ...Array.from({ length: 16 }, (_, i) => `172.${16 + i}.*.*`),
   ],
 };
 
-/**
- * Sentry's build-time wrapper.
- *
- * It is applied unconditionally, but every part of it that needs credentials
- * is a no-op without them: source maps are only uploaded when SENTRY_AUTH_TOKEN
- * is set, so `npm run build` on a machine that has never seen the Sentry
- * project still succeeds. Runtime reporting is separately gated on
- * NEXT_PUBLIC_SENTRY_DSN — see src/sentry.shared.ts.
- */
-export default withSentryConfig(nextConfig, {
-  org: process.env.SENTRY_ORG ?? "cam-gg",
-  project: process.env.SENTRY_PROJECT ?? "bis-technical",
-  authToken: process.env.SENTRY_AUTH_TOKEN,
-
-  // Keep the build output readable; the upload still logs failures.
-  silent: !process.env.CI,
-
-  // Uploads the source maps that turn a minified production stack trace into
-  // real file/line numbers, then deletes them from the deployed bundle so they
-  // are not served to browsers.
-  sourcemaps: { deleteSourcemapsAfterUpload: true },
-
-  // Routes Sentry's own requests through this origin, so ad blockers (which
-  // block requests to *.sentry.io outright) don't silently discard the error
-  // reports from the browsers that need reporting most.
-  tunnelRoute: "/monitoring",
-
-  // `disableLogger` and `automaticVercelMonitors` are deliberately not set:
-  // both are deprecated in favour of `webpack.*` equivalents, and this app
-  // builds with Turbopack, where neither has any effect. Passing them only
-  // printed a deprecation warning on every dev start.
-});
+export default nextConfig;

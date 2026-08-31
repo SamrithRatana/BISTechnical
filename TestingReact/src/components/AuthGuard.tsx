@@ -13,6 +13,7 @@ import {
   subscribeToSession,
 } from "@/services/authSession";
 import SessionHandshakePipeline from "./SessionHandshakePipeline";
+import { subscribeSharedStream } from "@/hooks/useRealtimeTickets";
 
 /** The server has no localStorage; it renders the checking state. */
 function readTokenOnServer(): string | null {
@@ -47,14 +48,13 @@ function isWorkspaceWarm(): boolean {
     const token = localStorage.getItem("jwt_token");
     if (!token || isTokenExpired(token)) return false;
 
-    if (sessionStorage.getItem("workspace_pipeline_synced") !== "true") return false;
-
-    // Number("") and Number(null) are both 0, so the `<= 0` guard covers a
-    // missing key as well as a corrupt one.
+    const isSyncedInTab = sessionStorage.getItem("workspace_pipeline_synced") === "true";
     const lastSync = Number(localStorage.getItem("last_workspace_sync_time"));
-    if (!Number.isFinite(lastSync) || lastSync <= 0) return false;
 
-    return Date.now() - lastSync < MAX_DATA_FRESHNESS_MS;
+    if (isSyncedInTab && Number.isFinite(lastSync) && lastSync > 0) {
+      return Date.now() - lastSync < MAX_DATA_FRESHNESS_MS;
+    }
+    return false;
   } catch {
     return false;
   }
@@ -83,7 +83,17 @@ export default function AuthGuard({ children }: { children: React.ReactNode }) {
    */
   const token = useSyncExternalStore(subscribeToSession, readToken, readTokenOnServer);
 
-  const isPublicPage = pathname === "/login" || pathname?.startsWith("/scanner");
+  // /face-link is the phone half of face pairing. It must be public for the
+  // login flow to work at all: the whole point is that nobody is signed in on
+  // that browser yet. It carries no data of its own - everything it can do is
+  // gated by a pairing session id that expires in five minutes.
+  const isPublicPage =
+    pathname === "/login" ||
+    pathname?.startsWith("/scanner") ||
+    pathname?.startsWith("/face-link") ||
+    pathname?.startsWith("/download") ||
+    pathname?.startsWith("/docs") ||
+    pathname?.startsWith("/open-app");
   const isExpired = token !== null && isTokenExpired(token);
 
   const isAuthenticated = isPublicPage
@@ -107,7 +117,13 @@ export default function AuthGuard({ children }: { children: React.ReactNode }) {
    * its effect deps, so an inline arrow would restart the whole pipeline (and
    * arm a second fallback timer) on any re-render while it is on screen.
    */
-  const handleHandshakeComplete = useCallback(() => setHandshakeRan(true), []);
+  const handleHandshakeComplete = useCallback(() => {
+    setHandshakeRan(true);
+    if (typeof window !== "undefined") {
+      sessionStorage.setItem("workspace_pipeline_synced", "true");
+      localStorage.setItem("last_workspace_sync_time", Date.now().toString());
+    }
+  }, []);
 
   // Navigation is a real side effect and belongs in an effect
   useEffect(() => {
@@ -139,7 +155,68 @@ export default function AuthGuard({ children }: { children: React.ReactNode }) {
     return () => clearTimeout(timer);
   }, [isPublicPage, isExpired, pathname, router, token, endSession]);
 
-  // Send periodic login heartbeat to track multi-browser & multi-device sessions live
+  // 1. Real-time Remote Kill Switch & Session Revocation, via the SHARED
+  //    /api/events stream. This used to open its own EventSource per tab —
+  //    alongside the ticket stream and the scanner stream that consumed 3 of
+  //    the browser's ~6 connections per origin, and queued data fetches then
+  //    expired on their own 20s abort timers while waiting for a socket.
+  useEffect(() => {
+    if (isPublicPage || !token || isExpired) return;
+
+    const unsubscribe = subscribeSharedStream((data) => {
+      if (data?.type !== "force_logout") return;
+
+      const currentBrowserSessionId = sessionStorage.getItem("browser_login_session_id") || "";
+      let currentUserName = "";
+      try {
+        const stored = localStorage.getItem("user_info");
+        if (stored) {
+          const p = JSON.parse(stored);
+          currentUserName = String(p.userName || p.UserName || "").toLowerCase();
+        }
+      } catch {}
+
+      const targetStatus = String(data.status || "").toLowerCase();
+      const targetId = String(data.id || "");
+      const targetUser = String(data.user || "").toLowerCase();
+
+      // Only an EXPLICIT match may log this browser out. An event with
+      // an empty status used to match everyone — so revoking one other
+      // session signed out every browser of every user, including the
+      // one that clicked, which read as the app breaking mid-test.
+      //   all    -> everyone
+      //   others -> this user's browsers EXCEPT the session in `id`
+      //   id     -> exactly that browser session
+      //   name   -> every browser signed in as that user
+      let shouldLogout = false;
+      if (targetStatus === "all") {
+        shouldLogout = true;
+      } else if (targetStatus === "others") {
+        shouldLogout =
+          targetId !== currentBrowserSessionId &&
+          (targetUser === "" || targetUser === currentUserName);
+      } else if (targetId !== "") {
+        shouldLogout = targetId === currentBrowserSessionId;
+      } else if (targetStatus !== "") {
+        shouldLogout = targetStatus === currentUserName;
+      }
+
+      if (shouldLogout) {
+        console.warn("[AuthGuard] Remote session revocation received. Logging out...");
+        // Retire this browser-session id: the server row was revoked, and a
+        // future sign-in heartbeating under the same id would be bounced.
+        try {
+          sessionStorage.removeItem("browser_login_session_id");
+        } catch {}
+        endSession();
+        router.replace("/login");
+      }
+    });
+
+    return unsubscribe;
+  }, [isPublicPage, token, isExpired, endSession, router]);
+
+  // 2. Periodic login heartbeat to track multi-browser & multi-device sessions live (Deduplicated 60s cadence)
   useEffect(() => {
     if (isPublicPage || !token || isExpired) return;
 
@@ -149,17 +226,33 @@ export default function AuthGuard({ children }: { children: React.ReactNode }) {
       sessionStorage.setItem("browser_login_session_id", browserSessionId);
     }
 
+    let isHeartbeatInFlight = false;
+    let lastHeartbeatTime = 0;
+
     const sendHeartbeat = () => {
+      const now = Date.now();
+      // Throttle: Never fire heartbeats more than once every 30 seconds
+      if (isHeartbeatInFlight || now - lastHeartbeatTime < 30_000) return;
+
+      isHeartbeatInFlight = true;
+      lastHeartbeatTime = now;
+
       let userName = "User";
+      let un = "";
       let role = "Staff";
       let email = "";
       try {
         const stored = localStorage.getItem("user_info");
         if (stored) {
-          const parsed = JSON.parse(stored);
-          userName = `${parsed.firstName || ""} ${parsed.lastName || ""}`.trim() || parsed.userName || "User";
-          role = parsed.roles?.[0] || parsed.role || "Staff";
-          email = parsed.email || "";
+          const parsed = JSON.parse(stored) as Record<string, unknown>;
+          const fn = String(parsed.firstName || parsed.FirstName || "").trim();
+          const ln = String(parsed.lastName || parsed.LastName || "").trim();
+          un = String(parsed.userName || parsed.UserName || "");
+          const rawRoles = parsed.roles || parsed.Roles || (parsed.role ? [parsed.role] : []);
+          const roles = Array.isArray(rawRoles) ? rawRoles : [];
+          userName = `${fn} ${ln}`.trim() || un || "User";
+          role = String(roles[0] || "Staff");
+          email = String(parsed.email || parsed.Email || "");
         }
       } catch {}
 
@@ -168,7 +261,7 @@ export default function AuthGuard({ children }: { children: React.ReactNode }) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           sessionId: browserSessionId,
-          userName,
+          userName: un || userName,
           role,
           email,
         }),
@@ -176,15 +269,22 @@ export default function AuthGuard({ children }: { children: React.ReactNode }) {
         .then((res) => res.json())
         .then((data) => {
           if (data.isRevoked) {
+            console.warn("[AuthGuard] Heartbeat confirmed session is revoked. Logging out...");
+            try {
+              sessionStorage.removeItem("browser_login_session_id");
+            } catch {}
             endSession();
             router.replace("/login");
           }
         })
-        .catch(() => {});
+        .catch(() => {})
+        .finally(() => {
+          isHeartbeatInFlight = false;
+        });
     };
 
     sendHeartbeat();
-    const interval = setInterval(sendHeartbeat, 15000);
+    const interval = setInterval(sendHeartbeat, 60_000);
     return () => clearInterval(interval);
   }, [isPublicPage, token, isExpired, endSession, router]);
 
@@ -217,14 +317,12 @@ export default function AuthGuard({ children }: { children: React.ReactNode }) {
   // Unauthenticated
   if (!isAuthenticated) return null;
 
-  // An already-authenticated session whose workspace is cold (new tab, cleared
-  // storage) or stale (link left open a long time) pre-warms before rendering.
-  // A fresh login never lands here: its own 5-node pipeline already verified
-  // the stack and stamped the markers before pushing to this route.
+  // If authenticated but workspace is cold (tab reopened, idle for > 5 min, or cold cache):
+  // Run the 5-node verification and pre-warm pipeline so the dashboard loads with 100% prepared data!
   if (!isWarm && !handshakeRan) {
     return <SessionHandshakePipeline onComplete={handleHandshakeComplete} />;
   }
 
-  // Authenticated with warm data ready: 0ms instant render!
+  // Authenticated & warm: render workspace seamlessly!
   return <>{children}</>;
 }

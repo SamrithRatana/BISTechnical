@@ -1,6 +1,8 @@
 # TestingReact/src/components
 
-Shared/reusable React components used across the `app/` pages (dashboard, ticket workflow queues, spare parts, customers). One subfolder, `ai/`, for the assistant. All files are `"use client"`.
+Shared/reusable React components used across the `app/` pages (dashboard, ticket workflow queues, spare parts, customers). Subfolders: `ai/` for the assistant, `av/` for the design system, `download/` for the public `/download` landing page (24 files — hooks, 3D phone rig, platform cards, mobile install timeline; indexed in `src/app/CLAUDE.md` under `/download`, since nothing outside that page consumes them), `login/` for the `/login` sign-in stage (20 files — tilt rig, parallax backdrop, card atmosphere, pipeline overlay, curtain + feature spotlight, auth hooks; indexed in `src/app/CLAUDE.md` under `/login`, same nothing-else-consumes-them rule), and `docs/` for the public `/docs` manual (20 components/hooks plus a `content/` subfolder of 21 bilingual catalogue modules — 3D atlas rig, lifecycle rail, expandable topic cards, client-side search, scroll spy; indexed in `src/app/CLAUDE.md` under `/docs`). All files are `"use client"` except where noted — in `docs/` the type, icon-map, accent and content modules are deliberately plain data with no `"use client"` and no React, so a content edit never needs a component import.
+
+**`docs/content/` is the one place in `src/` where user-visible copy does NOT go through `i18n`.** That is deliberate and explained in `docs/docsTypes.ts`: `LanguageProvider` imports `en.ts` statically, so anything added there ships to all 50+ routes, and the manual is several hundred long-form strings read by one public page. It carries both languages inline instead and `useDocsText()` reads the side matching `useI18n().lang`. Do not "fix" this by moving it into the dictionary, and do not copy the pattern for ordinary UI strings.
 
 ## `av/` — the Aura Velvet design system (OS 3.2)
 
@@ -96,13 +98,47 @@ Design-system notes:
 
 - `TestingReact/src/components/HighlightText.tsx` — Wraps substrings of `text` matching `query` in a `<mark>`. Used across table cells (Ref No, Company Name, Item Name, Serial Number, Phone, etc.).
   - Props: `text?: string | null`, `query?: string`, `className?: string`.
-  - Used by: `ServiceTable.tsx`, `InspectItemDialog.tsx`.
+  - Used by: `ServiceTableRow.tsx`, `InspectItemDialog.tsx`.
+  - `React.memo`'d, and the split is `useMemo`'d — it renders ~5x per ticket row
+    across 9 columns, so it is one of the hottest components in the app.
+  - **Matches are identified by position, not by re-testing the regex.**
+    `String.split` with one capture group always yields
+    `[text, capture, text, capture, …]`, so an odd index IS the match.
+    The old `regex.test(part)` on a `g`-flagged regex *looked* like the classic
+    `lastIndex` bug but provably was not — a non-capture chunk can never match,
+    and `.test` resets `lastIndex` to 0 on failure. A 300,000-case randomised
+    differential run found zero divergences between the two. This was a
+    performance and clarity change, **not** a correctness fix.
+
+- `TestingReact/src/components/ServiceTableRow.tsx` — One ticket row (`TicketRow`),
+  plus the per-row controls only it uses: `RenderStatusSelect`, `getStatusBadge`,
+  `getPriorityBadge`. Split out of `ServiceTable` so the row could be `React.memo`'d.
+  - Props (`TicketRowProps`): `row`, `query` (the **debounced** search term),
+    `effectiveFilter`, `requireApproval?`, and the handlers `onView`, `onEdit`,
+    `onPrint`, `onDelete`, `onApprove`, `onStatusChange`.
+  - **Every handler takes the row as an argument and must arrive as a stable
+    `useCallback`.** An inline `() => doThing(row)` prop creates a new function
+    per render and silently turns this back into the unmemoised version — the
+    same rule the spare-parts `PartRow` documents.
+  - Why: rows were inline JSX inside `items.map`, so one keystroke in the search
+    box re-rendered every loaded row (up to `useInfiniteList`'s 2,000-row cap)
+    across nine cells each, including a `RenderStatusSelect` per row.
+  - Used by: `ServiceTable.tsx`.
 
 - `TestingReact/src/components/InspectItemDialog.tsx` — Diagnostic inspection dialog (matches Blazor `InspectItemList.razor` DialogEdit): Inspection/Solution text fields, Service Type (Free/Charge) via `ModernSelect`, spare-parts list (search via `fetchSparePartsInventory`, add/remove, quantity, condition), spec view via `SparePartSpecModal`. Portaled to `document.body`.
   - Props (`InspectItemDialogProps`): `item: RepairServiceItem`, `onClose: () => void`, `onSave: (payload: InspectPayload) => Promise<boolean>`.
   - Exports: default `InspectItemDialog`; type `InspectPayload` (`serviceId, inspection, solution, serviceTypeId, spareParts[]`); internal `SparePartLine` type; `CONDITIONS = ["Fix","Replace","Free"]`.
   - Used by: `app/inspect-item/page.tsx`.
   - 617 lines — read in sections if hunting a specific bug (spare-part search/add logic vs. form/save logic).
+
+- `TestingReact/src/components/LazyMountBoundary.tsx` — Class error boundary that
+  renders `null` when its child fails, so a rejected `next/dynamic` chunk cannot
+  reach `app/global-error.tsx` and take the whole app down. See the
+  "Keeping weight out of the shared layout chunk" section above for why the
+  layout's lazy hosts specifically need this.
+  - Props: `children`, `label` (named in the console warning, so a failure says
+    which chunk died).
+  - Used by: `GlobalCompanionModal.tsx`, `ai/AiAssistantPanelHost.tsx`.
 
 - `TestingReact/src/components/ModernSelect.tsx` — Generic styled replacement for native `<select>` (floating portaled option list via `useFloatingPanel`). Used for simple value-picker selects (priority, service location, customer type, item type, service type, spare-part condition) — NOT the richer spare-part search/pick widget.
   - Props (`ModernSelectProps`): `value: string`, `options: ModernSelectOption[]` (`{value,label}`), `onChange: (value: string) => void`, `placeholder?: string`, `className?: string`, `dense?: boolean`.
@@ -112,6 +148,45 @@ Design-system notes:
 - `TestingReact/src/components/PageWrapper.tsx` — Standard page shell: `Sidebar` + `Header` + title/subtitle + content area. Manages `sidebarOpen` state locally.
   - Props: `titleKey: TranslationKey`, `subtitleKey?: TranslationKey`, `children: React.ReactNode`. Takes i18n keys, not finished strings — it resolves them via `useI18n()` so pages stay plain markup.
   - Used by: 13 pages under `app/*` (e.g. `inspect-item`, `approve-verify`, `customers`, `received-inventory`, `spareparts`, `approve-repair`, `confirmed-sale`, `spare-request`, `inspection`, `waiting-confirm`, `unrepairable`, `rejected`, `receive-item`).
+
+- `TestingReact/src/components/FaceCapture.tsx` — the camera step. Opens the front camera, waits
+  for exactly one face, requires a blink, then captures descriptors. One component for both
+  enrolment (3 samples) and sign-in (1), because they differ only in the count.
+  - Props: `mode: "enroll" | "verify"`, `onComplete(descriptors)`, `onCancel`, `busy?`.
+  - **The blink is asked for BEFORE any capture**, not after: it is what separates a person from a
+    photo held to the lens, and capturing first would mean the descriptor that gets sent was taken
+    while that was still unknown.
+  - More than one face in frame is **refused**, not resolved by picking the largest — on a shared
+    machine the second face is a colleague standing behind you.
+  - Releases the camera on unmount *and* when unmounted mid-permission-prompt; without the latter
+    the light stays on with no UI attached.
+
+- `TestingReact/src/components/FaceLinkQr.tsx` — the DESKTOP half of phone face pairing: draws
+  the QR, holds the session's SSE stream, hands the result to its parent. One component for both
+  `enroll` (Settings) and `login` (login page).
+  - Props: `mode: "enroll" | "login"`, `onDone(payload)`, `onCancel()`.
+  - **The QR carries the session id only.** The `secret` that lets this browser read the stream is
+    returned by the create call and never displayed — on the login path the stream delivers a real
+    session token, so photographing the screen must not be enough to collect it.
+  - The QR points at the LAN IP from `/api/scanner/network-ip`, not localhost: the phone is on the
+    same Wi-Fi, not on this machine. Same approach the barcode scanner takes.
+
+- `TestingReact/src/components/FaceVerificationManager.tsx` — the Settings panel: turn face
+  verification on, re-capture, or delete everything stored. Rendered by `app/settings/page.tsx`.
+  - Props: none. Enrolment is `[Authorize]`-gated server-side; this is the matching shape in the UI.
+  - "Turn off" is one click plus a confirm, with nothing that can fail on the way.
+
+- `TestingReact/src/components/PasskeyManager.tsx` — Settings panel for face / passkey sign-in:
+  lists the devices enrolled against the account, adds the current one, removes one. Rendered by
+  `app/settings/page.tsx` inside a `<Section titleKey="passkey.sectionTitle">`.
+  - Props: none.
+  - **Enrolment lives here, not on the login screen**, and that is the security model rather than a
+    layout choice: adding a passkey binds a new device to an account, so it has to be authorised by
+    an existing session. `WebAuthnController.RegisterOptions` is `[Authorize]` for the same reason.
+  - A cancelled browser prompt is deliberately **silent** — dismissing it is a decision, not a
+    fault, and a red toast there reads as a malfunction.
+  - Shows whether each passkey `isBackedUp`, because that answers the question people actually
+    have: "if I lose this phone, am I locked out?"
 
 - `TestingReact/src/components/PrintPreviewSidebar.tsx` — Pixel-replica of the old DevExpress "Report2" printable ticket report. Fetches full ticket detail + enriches spare-part rows against inventory (`fetchSparePartsInventory`, per-id fallback fetch), renders an A4-styled printable document, `window.print()` on demand.
   - Props: `isOpen: boolean`, `onClose: () => void`, `item: RepairServiceItem | null`.
@@ -153,6 +228,51 @@ Design-system notes:
   - Props (`StatusUpdateDropdownProps`): `currentLabel: string`, `options: StatusOption[]` (`{value,label}`), `color: StatusDropdownColor` ("slate"|"blue"|"amber"|"cyan"|"emerald"|"purple"), `onSelect: (value: string) => void`.
   - Exports: default `StatusUpdateDropdown`; type `StatusDropdownColor`.
   - Used by: `ServiceTable.tsx` (`RenderStatusSelect`).
+
+## Keeping weight out of the shared layout chunk
+
+`app/layout.tsx` mounts `GlobalCompanionModal`, `AiLauncher` and
+`AiAssistantPanelHost`, so **anything they import statically lands in the chunk
+every one of the 55 routes downloads before it can paint**. Two of them
+therefore load their payload through `next/dynamic` with `ssr: false`:
+
+- `ai/AiAssistantPanelHost.tsx` — mount point for `AiAssistantPanel` (~490
+  lines plus its lucide set and `react-hot-toast`), which renders nothing until
+  the assistant is opened.
+- `GlobalCompanionModal.tsx` — loads `CompanionScannerModal`, which reaches the
+  `qrcode` package through `QRCodeSvg`, for a pairing dialog most sessions
+  never open.
+
+**Both are wrapped in `LazyMountBoundary.tsx`, and that is not optional
+either.** `next/dynamic` is `React.lazy` + `Suspense`, so a rejected `import()`
+is re-thrown during render — and these two are rendered by `app/layout.tsx` as
+siblings of `<AuthGuard>`, which puts them *outside* `app/error.tsx`. The only
+boundary above them is `app/global-error.tsx`, which replaces `<html>` and
+`<body>` wholesale. So without the boundary, a single chunk that 404s after a
+deploy replaces the whole application with the global error page and discards
+whatever the user had open in a ticket dialog — on an app explicitly built for
+week-long sessions (§14). The boundary renders `null` instead, and
+`AiAssistantPanelHost` also passes a `loading` component to `dynamic()` so the
+launcher click is not a dead one while the chunk downloads.
+
+**Both also gate the dynamic component behind a latched `hasOpened` flag, and
+that gate is load-bearing rather than an optimisation.** `ssr: false` makes the
+server emit no markup while the client immediately renders a `<Suspense>`
+boundary; React then finds the next sibling where it expected that boundary and
+reports *"Hydration failed because the server rendered HTML didn't match the
+client"*, throwing away and re-rendering the whole tree. That was reproduced in
+a browser against both files. `GlobalCompanionModal` is the worse case because
+`sessionId` comes from `useState(() => getOrCreateSessionId())`, which returns
+`""` on the server and a real id in the browser — a latent mismatch that only
+became visible once a Suspense boundary appeared there.
+
+Gating on a flag that is `false` on the server AND on the first client render
+makes the two agree by construction. The flag **latches** (rather than tracking
+`open`) so closing does not unmount and discard a half-typed message, or cut
+off `ModalWrapper`'s exit animation. It is set during render — React's
+documented pattern for deriving from a changing input — deliberately not in an
+effect, which would cost a second render pass and trip this project's
+`set-state-in-effect` rule.
 
 ## Notes
 

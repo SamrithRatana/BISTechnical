@@ -18,10 +18,55 @@ Next.js App Router tree for a repair/service-item workflow tracker (item intake,
 ## `/login` and `/login` layout
 
 - Route: `/login`
-- Files: `login/page.tsx`, `login/layout.tsx`
-- Client component.
+- Files: `login/page.tsx` (thin orchestrator), `login/layout.tsx`
+- Client component. Public dark marketing look, deliberately NOT on the `--av-*`
+  token system — same zone as `/download`.
 - `LoginLayout({ children })` (layout.tsx, server) — sets page metadata only, no auth guard override.
-- `LoginPage()` — form with username/password; `handleLogin(e)` calls `loginUser()` from `@/services/api`, stores `jwt_token` + `user_info` in localStorage, redirects to `/` via `useRouter().push`.
+- `LoginPage()` — orchestration only: mode state (sign-in vs method selector),
+  credentials state, and composition. Everything else lives in
+  `src/components/login/` (23 files, each < 300 lines — this page was a
+  1,700-line monolith before 2026-08-30): **"Prismwell"** design (2026-08-30,
+  replacing "Depth Stage"'s look while keeping its architecture) — one
+  user accent split into a hue-shifted triad (`color.ts`, chroma-guarded for
+  gray accents) drives every chromatic surface. Pointer tilt rig
+  (`useLoginTilt`, frozen while a QR/camera is on screen), triad backdrop
+  with three parallax depth rings + tiered particles (`LoginBackdrop`,
+  memoised; ONE aurora drift — the right orb is deliberately static, and a
+  `frozen` prop pauses ambient loops behind a live camera), translateZ
+  strata on the rig (`LoginStage`: echo plane −160px, lagging glow plane
+  −90px, two front glass shards +56/+96px that extrude on load),
+  pointer-steered chromatic card rim (`CardRim`: two pre-painted conic
+  underlays crossfading opacity from the tilt springs — rotating rim light
+  with zero repaint, symmetric ring at rest so the frozen state is designed),
+  dual-lobe interference interior (`CardAtmosphere`: two companion-hue lobes
+  counter-roaming; rim beam gated off while frozen — v1 swept it over live
+  QRs), CSS-only input focus chrome (`FocusChrome`: gradient rim +
+  target-lock corner ticks + pre-painted elevation shadow, all
+  `group-focus-within` + `motion-reduce:transition-none`), and the signature
+  **prismatic shear**: three triad-hued blades riding the curtain sweep's
+  leading edge with relative x-offsets (`ShowcaseCurtain` — children of the
+  translating panel must NOT re-animate its keyframes or they
+  double-translate), converging into the resting light seam, plus a one-shot
+  rim refraction flash on settle. The curtain hinge projects through
+  `[perspective:1200px]` on the sliding body (without it rotateY renders
+  orthographic). Spotlight tab dock glides a `layoutId` pill; its
+  auto-advance interval keys on `active` so a manual click resets bar and
+  timer together.
+- Auth logic: `useLoginPipeline` (the five-stage handshake overlay + storage
+  writes + soft `router.push("/")`) and `useAuthFlows` (password via
+  `faceLoginStart` with the face second-factor branch, passkey, phone-QR).
+  Both ported unchanged from v1; only presentation moved. The mobile
+  header's "Switch Method" toggle must open via `openSelector()` — it
+  releases an active face-capture camera; a bare `setMode` leaves the
+  camera light on behind `display:none` (fixed 2026-08-30).
+- `PipelineOverlay` takes the `holo` triad and delays its entrance
+  `OVERLAY_SUMMON_DELAY` (120ms) behind the submit button's pulse, so the
+  overlay reads as summoned by the press; it fully collapses in static mode
+  (framer's `useReducedMotion` does NOT cover Lite Mode alone).
+- Motion collapses to a static composition under reduced-motion / Lite Mode
+  via `useLoginMotionMode` (same merge as `useDownloadMotionMode`).
+- The remembered auth-method tab is a hydration-safe `useSyncExternalStore`
+  sessionStorage store (`components/login/authMethodStore.ts`).
 
 ## `/receive-item` — Received Items queue
 
@@ -125,6 +170,86 @@ Next.js App Router tree for a repair/service-item workflow tracker (item intake,
   - `handleOpenAdd()` / `handleOpenEdit(customer)` / `handleOpenDelete(customer)` — modal openers.
   - `handleSubmitForm(e)` — `createCustomer()` / `updateCustomer()`, optimistic fallback.
   - `handleDeleteConfirm()` — `deleteCustomer(id)`, optimistic fallback.
+
+## `/download` — public CAM ID mobile download hub ("Aperture Stage")
+
+- Files: `download/page.tsx` (thin orchestrator), plus `download/android/page.tsx` and
+  `download/ios/page.tsx` (dedicated per-OS install pages the QR codes point at).
+- Public (AuthGuard + AppShell both allowlist `/download`), standalone dark marketing look —
+  deliberately NOT on the `--av-*` token system, same zone as `/login`.
+- Every section, hook and constant lives in `src/components/download/` (24 files, each < 300
+  lines — this page was a 1,060-line monolith before 2026-08-29). The page only holds device
+  branching, the lifted per-platform QR-open state, and section order.
+- Desktop: 3D phone hero with a one-shot scan sequence → statement divider → Android/iOS
+  platform duet (in-place QR reveal, details accordion, copy link) → proof pipeline → closing
+  CTA. Phones: guided 3-step install timeline with sticky action bar.
+- QR codes resolve the LAN host from `/api/scanner/network-ip` when viewed on localhost
+  (the old hardcoded `172.25.222.22` fallback is gone).
+- All copy is `download.*` keys in `i18n/translations.ts` (en + km), except sanctioned
+  English-only telemetry micro-labels (see `components/download/ScanScreen.tsx` header note).
+- Motion collapses to a static premium layout under reduced-motion / Lite Mode via
+  `useDownloadMotionMode()`; 3D-transform safety rules live in `PhoneRig.tsx`'s header comment.
+
+## `/docs` — public documentation hub ("Codex Atlas")
+
+- Files: `docs/page.tsx` (thin orchestrator), `docs/layout.tsx` (metadata only).
+- Public (AuthGuard, AppShell and AiLauncher all allowlist `/docs`), standalone dark look —
+  deliberately NOT on the `--av-*` token system, same zone as `/login` and `/download`.
+- Every section, hook and string lives in `src/components/docs/` (20 components/hooks + 21
+  content modules, each < 300 lines). The page holds only the search term, the scroll-spy
+  wiring and section order.
+- Layout: 3D "Atlas" hero (an exploded stack of five chapter planes on Z, pointer tilt, orbit
+  chips) → the repair **lifecycle rail** (all 11 statuses end to end, horizontally scrollable,
+  each stop clickable through to its topic) → five chapters of expandable topic cards beside a
+  sticky scroll-spy chapter nav → footer.
+- **The copy is NOT in `i18n/en.ts` / `km.ts`.** It carries both languages inline in
+  `components/docs/content/` and travels in this route's own chunk. `LanguageProvider` imports
+  `en.ts` statically, so every key there lands in the chunk all 50+ routes download before they
+  can paint — several hundred strings of long-form manual, read by one public page, would be a
+  bundle regression against §4 for no one's benefit. `useDocsText()` picks the side to render
+  from `useI18n().lang`, so the language toggle still drives it; only the payload is local.
+  See `components/docs/docsTypes.ts` for the full reasoning.
+- The catalogue is plain data (no React, no icons) for the same reason `config/navigation.ts`
+  is: `docsIcons.ts` maps icon *names* to lucide components on the rendering side.
+  `config/navigation.ts` is the source the page purposes were written from, so the manual and
+  the sidebar cannot drift.
+- **Topic ids mirror route slugs** (`/receive-item` → `receive-item`) — that is what lets a
+  click on the lifecycle rail land on the instructions, and what makes `/docs#stock-health` a
+  working deep link. The open topic lives in the URL (`useDocsHash`, a `useSyncExternalStore`
+  over `location.hash`), not in page state, so links are shareable. Writes use `replaceState`,
+  deliberately: opening topics does not stack history, so Back leaves the page instead of
+  stepping back through every card the reader opened.
+- Search (`useDocsSearch`) is entirely client-side over a memoised haystack built ONCE per
+  catalogue, and indexes **both** languages plus the route — a Khmer reader finds a screen by
+  typing `/spare-request`, an English one finds it by typing "ស្តុក". Matching is
+  whitespace-tokenised AND. `/` focuses the box from anywhere.
+- Motion collapses to a static premium composition under reduced-motion / Lite Mode via
+  `useDocsMotionMode()` (same merge as `useDownloadMotionMode`). Lite Mode forces
+  `transform-style: flat`, which collapses the atlas's Z separation — `STATIC_PLANE_SPREAD`
+  fans the planes further apart in that mode so the static version stays legible rather than
+  becoming one card with four shadows behind it.
+- **The forever-loops stop when nobody is looking**, which is where this page departs from
+  `/download`: `useAmbientMotion` gates the atlas float, the yaw drift, the orbit chips, the
+  scroll cue and the lifecycle pulse on `useInView` **and** `usePageInView`. A manual is read
+  for minutes and left open for hours, so a loop driving a hero ten screens up — or a
+  backgrounded tab — is pure cost (§14). Measured: the rig produces 14 distinct transforms
+  over 14 samples while on screen and **1** while scrolled away or while the tab is hidden,
+  resuming on return. The one-shot load choreography still answers to `mode` alone; it is over
+  before any of this can matter.
+- `content/index.ts` runs a **dev-only integrity check** (dead-code-eliminated in production):
+  duplicate topic ids, and lifecycle stages whose `topicId` matches no topic. Both failures are
+  otherwise silent — a duplicate id sends every deep link to whichever card rendered first, and
+  an orphaned stage turns its stop on the rail into a dead click. There is no test runner in
+  this project (§15), so this is the substitute for the test that would otherwise catch them.
+- 3D-transform safety rules are inherited verbatim from `download/PhoneRig.tsx` and restated in
+  `AtlasCore.tsx`'s header: no `backdrop-filter`, no `filter`, no `overflow-hidden` on any
+  `preserve-3d` ancestor. The atlas spine and floor grid are `lg:`-only because they are taller
+  than the rig and would otherwise escape a stacked mobile hero — the hero cannot clip them
+  without flattening the whole subtree.
+- Entry points: the **centred Docs pill** in `/login`'s top bar (`login/LoginChrome.tsx`), and
+  cross-links in both `/download`'s header and its footer (`download.docsLink`, en + km). The
+  three public pages point at each other: `/docs`'s own header carries the mirror-image link
+  back to `/download`.
 
 ## `api/` — Next.js backend routes (proxy + auth + realtime)
 

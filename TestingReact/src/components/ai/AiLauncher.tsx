@@ -80,9 +80,11 @@ export default function AiLauncher() {
 
     // On Login page: Robot stays inside button, no pop-out greeting
     if (pathname === "/login") {
-      setRobotState("hidden");
-      setShowGreeting(false);
-      return;
+      later(() => {
+        setRobotState("hidden");
+        setShowGreeting(false);
+      }, 0);
+      return cancelTimers;
     }
 
     const token = localStorage.getItem("jwt_token");
@@ -90,8 +92,10 @@ export default function AiLauncher() {
 
     // Only greet if user is logged in AND hasn't been greeted in this login session
     if (token && hasGreeted !== "true") {
-      setRobotState("poppedOut");
-      setShowGreeting(true);
+      later(() => {
+        setRobotState("poppedOut");
+        setShowGreeting(true);
+      }, 0);
 
       // Exactly 6 seconds duration for greeting & waving
       later(() => {
@@ -104,13 +108,10 @@ export default function AiLauncher() {
         }, 500); // match animate-robot-pop-in duration
       }, 6000);
     } else {
-      // Not greeting on this page — settle at rest rather than inheriting
-      // whatever the previous page left behind. Without this, navigating away
-      // while the robot was retracting stranded it in "retracting" for the
-      // rest of the session: invisible (the pop-in animation ends at opacity
-      // 0) but still mounted and still holding its subtree.
-      setRobotState("hidden");
-      setShowGreeting(false);
+      later(() => {
+        setRobotState("hidden");
+        setShowGreeting(false);
+      }, 0);
     }
 
     // Runs on unmount *and* on every navigation. Navigating mid-greeting used
@@ -122,7 +123,17 @@ export default function AiLauncher() {
     return cancelTimers;
   }, [pathname, later, cancelTimers]);
 
-  if (!ai || !enabled || ai.open || typeof document === "undefined") {
+  if (
+    pathname === "/login" ||
+    pathname?.startsWith("/scanner") ||
+    pathname?.startsWith("/download") ||
+    pathname?.startsWith("/docs") ||
+    pathname?.startsWith("/open-app") ||
+    !ai ||
+    !enabled ||
+    ai.open ||
+    typeof document === "undefined"
+  ) {
     return null;
   }
 
@@ -139,8 +150,6 @@ export default function AiLauncher() {
       setRobotState("hidden");
     }, 500);
   };
-
-  if (pathname === "/login" || pathname?.startsWith("/scanner")) return null;
 
   return createPortal(
     <div
