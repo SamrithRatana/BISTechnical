@@ -1,6 +1,6 @@
 "use client";
 
-import React, { memo, useState, useEffect, useCallback, useRef } from "react";
+import React, { memo, useMemo, useState, useEffect, useCallback, useRef } from "react";
 import toast from "react-hot-toast";
 import PageWrapper from "@/components/PageWrapper";
 import HighlightText from "@/components/HighlightText";
@@ -20,6 +20,7 @@ import {
   Loader2,
   Image as ImageIcon,
   Smartphone,
+  Printer,
 } from "lucide-react";
 import { useCompanionScanner } from "@/context/CompanionScannerContext";
 import {
@@ -29,7 +30,8 @@ import {
   deleteSparePart,
   insertManualStockOut,
   invalidateCachePrefix,
-  SparePartItem
+  SparePartItem,
+  fetchSparePartById,
 } from "@/services/api";
 import { uploadImage, UploadError } from "@/services/upload";
 import { uploadErrorTranslationKey } from "@/lib/uploadErrorMessage";
@@ -39,6 +41,12 @@ import { useSearchQueryParam } from "@/hooks/useSearchQueryParam";
 import { useInfiniteList } from "@/hooks/useInfiniteList";
 import { useSearchAction } from "@/hooks/useSearchAction";
 import { useI18n } from "@/i18n/LanguageProvider";
+import { firstValidationMessage } from "@/i18n/validationMessage";
+import { validateSparePart, validateStockIn, validateStockOut } from "@/validation";
+import { sendTelegramNotification } from "@/services/telegramService";
+import { buildStockTelegramMessage } from "@/services/telegramMessageBuilder";
+import { getCurrentUserFullName, getCurrentUserGuid } from "@/services/userService";
+import { clearListCache } from "@/hooks/useInfiniteList";
 import type { TranslationKey } from "@/i18n/translations";
 import InfiniteScrollStatus from "@/components/InfiniteScrollStatus";
 import { useActionHandler, type ActionValues } from "@/components/ActionBus";
@@ -47,6 +55,32 @@ import { ModalWrapper } from "@/components/av/ModalWrapper";
 import MediaLightbox from "@/components/MediaLightbox";
 import { useVirtualRows } from "@/hooks/useVirtualRows";
 import { cn } from "@/lib/utils";
+import type { SparePartFilters } from "@/services/api";
+import type { SparePartClassification } from "@/services/types";
+import { SparePartFilterBar } from "@/components/spareparts/SparePartFilterBar";
+import { SparePartClassificationFields } from "@/components/spareparts/SparePartClassificationFields";
+import { useSparePartTaxonomyOptions } from "@/components/spareparts/useSparePartTaxonomyOptions";
+import { useSparePartFilterParams } from "@/components/spareparts/useSparePartFilterParams";
+import { TableHeaderFilterPopover } from "@/components/spareparts/TableHeaderFilterPopover";
+import ModernSelect from "@/components/ModernSelect";
+import { useTheme } from "@/theme/ThemeProvider";
+import EnterpriseRibbonToolbar from "@/components/crud/EnterpriseRibbonToolbar";
+import ColumnVisibilityDropdown, { type ColumnDefinition } from "@/components/crud/ColumnVisibilityDropdown";
+
+interface ColumnFilters {
+  itemName?: string;
+  partNumber?: string;
+  useFor?: string;
+  hasImage?: "all" | "yes" | "no";
+  minPrice?: number | null;
+  maxPrice?: number | null;
+  unclassifiedOnly?: boolean;
+}
+
+interface ColumnSort {
+  column: "itemName" | "partNumber" | "price" | "quantity" | null;
+  direction: "asc" | "desc" | null;
+}
 
 /**
  * Stock bands, derived from quantity. One definition, read by the badge, the
@@ -165,8 +199,14 @@ const PartRow = memo(function PartRow({
   onPreviewBarcode,
   onStockIn,
   onStockOut,
+  onSetStock,
   onEdit,
   onDelete,
+  onPrint,
+  isRibbonMode,
+  isSelected,
+  onToggleSelect,
+  isColVisible,
 }: {
   part: SparePartItem;
   idx: number;
@@ -176,8 +216,14 @@ const PartRow = memo(function PartRow({
   onPreviewBarcode: (part: SparePartItem) => void;
   onStockIn: (part: SparePartItem) => void;
   onStockOut: (part: SparePartItem) => void;
+  onSetStock: (part: SparePartItem) => void;
   onEdit: (part: SparePartItem) => void;
   onDelete: (part: SparePartItem) => void;
+  onPrint: (part: SparePartItem) => void;
+  isRibbonMode?: boolean;
+  isSelected?: boolean;
+  onToggleSelect?: (part: SparePartItem) => void;
+  isColVisible?: (key: string) => boolean;
 }) {
   const image  = part.pictureUrl;
   const name   = part.itemName ?? "N/A";
@@ -189,166 +235,326 @@ const PartRow = memo(function PartRow({
   const band = stockBand(qty);
 
   return (
-    <tr key={part.id || idx} className="hover:bg-cushion/80 transition-colors">
+    <tr
+      key={part.id || idx}
+      onClick={() => onToggleSelect?.(part)}
+      onDoubleClick={() => onEdit(part)}
+      className={cn(
+        "transition-colors cursor-pointer border-b border-subtle/60",
+        isSelected ? "bg-accent-soft/30 ring-1 ring-accent/30" : "hover:bg-cushion/80"
+      )}
+    >
+      {/* Ribbon Checkbox Selection Column */}
+      {isRibbonMode && (
+        <td className="py-2 px-2 text-center w-10 min-w-[40px]" onClick={(e) => e.stopPropagation()}>
+          <input
+            type="checkbox"
+            checked={isSelected}
+            onChange={() => onToggleSelect?.(part)}
+            className="w-4 h-4 rounded text-accent focus:ring-accent border-subtle cursor-pointer accent-accent transition-transform hover:scale-105"
+            aria-label="Select row"
+          />
+        </td>
+      )}
+
       {/* Image Column */}
-      <td className="py-2.5 px-3.5 text-center">
-        <button
-          type="button"
-          onClick={() => onPreviewImage(part)}
-          aria-label={`${t("sp.viewImage")} — ${name}`}
-          className="group w-14 h-14 mx-auto rounded-lg border border-subtle bg-cushion flex items-center justify-center overflow-hidden shadow-2xs transition-colors hover:border-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-ring"
-        >
-          {image ? (
-            // arbitrary URL from the parts database; next/image would need every
-            // possible host whitelisted in next.config and throws on any that
-            // isn't, which would break real product photos.
-            <img
-              src={getImageUrl(image)}
-              alt={name}
-              width={56}
-              height={56}
-              loading="lazy"
-              decoding="async"
-              /* Zoom on the IMAGE inside a clipped box, never on
-                 the box: scaling the cell's own container would
-                 push the row's neighbours around on hover. */
-              className="w-full h-full object-cover transition-transform duration-200 ease-out group-hover:scale-110"
-            />
-          ) : (
-            <Box className="w-6 h-6 text-ink-muted" />
-          )}
-        </button>
-      </td>
+      {(!isColVisible || isColVisible("image")) && (
+        <td className="py-2 px-2.5 sm:px-3 text-center" onClick={(e) => e.stopPropagation()}>
+          <button
+            type="button"
+            onClick={() => onPreviewImage(part)}
+            aria-label={`${t("sp.viewImage")} — ${name}`}
+            className="group w-11 h-11 sm:w-12 sm:h-12 mx-auto rounded-lg border border-subtle bg-cushion flex items-center justify-center overflow-hidden shadow-2xs transition-colors hover:border-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-ring cursor-pointer"
+          >
+            {image ? (
+              <img
+                src={getImageUrl(image)}
+                alt={name}
+                width={48}
+                height={48}
+                loading="lazy"
+                decoding="async"
+                className="w-full h-full object-cover transition-transform duration-200 ease-out group-hover:scale-110"
+              />
+            ) : (
+              <Box className="w-5 h-5 text-ink-muted" />
+            )}
+          </button>
+        </td>
+      )}
 
       {/* Item Name */}
-      <td className="py-3 px-3.5 font-semibold text-ink max-w-[220px] truncate" title={name}>
-        <HighlightText text={name} query={search} />
-      </td>
+      {(!isColVisible || isColVisible("itemName")) && (
+        <td className="py-2 px-2.5 sm:px-3 font-semibold text-ink max-w-[170px] xl:max-w-[210px] truncate" title={name}>
+          <HighlightText text={name} query={search} />
+        </td>
+      )}
 
       {/* Part Number */}
-      <td className="py-3 px-3.5 whitespace-nowrap">
-        <code className="px-2 py-0.5 rounded bg-sunken border border-subtle text-[11px] font-mono text-ink font-semibold">
-          <HighlightText text={partNo} query={search} />
-        </code>
-      </td>
+      {(!isColVisible || isColVisible("partNumber")) && (
+        <td className="py-2 px-2.5 sm:px-3 whitespace-nowrap">
+          <code className="px-1.5 py-0.5 rounded bg-sunken border border-subtle text-[11px] font-mono text-ink font-semibold">
+            <HighlightText text={partNo} query={search} />
+          </code>
+        </td>
+      )}
 
       {/* Use For */}
-      <td className="py-3 px-3.5 text-ink-secondary max-w-[200px] truncate" title={useFor}>
-        <HighlightText text={useFor} query={search} />
-      </td>
+      {(!isColVisible || isColVisible("useFor")) && (
+        <td className="py-2 px-2.5 sm:px-3 text-ink-secondary max-w-[140px] xl:max-w-[190px] truncate" title={useFor}>
+          <HighlightText text={useFor} query={search} />
+        </td>
+      )}
+
+      {/* Classification: brand chip over "Category › Type" */}
+      {(!isColVisible || isColVisible("classification")) && (
+        <td className="py-2 px-2.5 sm:px-3 max-w-[140px] xl:max-w-[180px]">
+          {part.brandName || part.categoryName ? (
+            <div className="flex flex-col gap-0.5 min-w-0">
+              {part.brandName && (
+                <span className="inline-flex items-center gap-1.5 max-w-full">
+                  {part.brandLogoUrl && (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img
+                      src={getImageUrl(part.brandLogoUrl ?? undefined)}
+                      alt=""
+                      width={22}
+                      height={22}
+                      loading="lazy"
+                      decoding="async"
+                      className="w-5 h-5 object-contain shrink-0"
+                    />
+                  )}
+                  <span className="text-xs font-bold text-ink tracking-wide truncate">
+                    <HighlightText text={part.brandName} query={search} />
+                  </span>
+                </span>
+              )}
+              {part.categoryName && (
+                <span className="text-[11px] text-ink-secondary truncate" title={`${part.categoryName}${part.typeName ? ` › ${part.typeName}` : ""}`}>
+                  <HighlightText text={part.categoryName} query={search} />
+                  {part.typeName && (
+                    <>
+                      {" › "}
+                      <HighlightText text={part.typeName} query={search} />
+                    </>
+                  )}
+                </span>
+              )}
+            </div>
+          ) : (
+            <span className="text-[11px] text-ink-muted">{t("sp.unclassified")}</span>
+          )}
+        </td>
+      )}
 
       {/* Default Price */}
-      <td className="py-3 px-3.5 text-right font-mono font-semibold text-success whitespace-nowrap">
-        ${Number(price).toFixed(2)}
-      </td>
+      {(!isColVisible || isColVisible("price")) && (
+        <td className="py-2 px-2.5 sm:px-3 text-right font-mono font-semibold text-success whitespace-nowrap">
+          ${Number(price).toFixed(2)}
+        </td>
+      )}
 
-      {/* Quantity & Stock Level Bar */}
-      <td className="py-3 px-3.5 text-center whitespace-nowrap">
-        <div
-          className="flex flex-col items-center justify-center gap-1 min-w-[100px]"
-          /* Native tooltip rather than a custom one: it is the
-             only kind that survives this cell being inside a
-             scrolling container, costs no DOM, and is read by
-             screen readers. */
-          title={t("sp.stockLevel", { qty: String(qty) })}
-        >
-          <span className="font-mono text-sm font-extrabold text-ink tabular-nums">
-            {qty}
-          </span>
-          <Badge tone={BAND_TONE[band]} dot>
-            {t(BAND_LABEL[band])}
-          </Badge>
-          {/* `av/ProgressBar` animates transform: scaleX, so a
-              stock change after a Stock In/Out eases instead of
-              jumping — and never triggers layout the way an
-              animated `width` did. */}
-          <ProgressBar
-            value={(Math.min(qty, STOCK_BAR_FULL) / STOCK_BAR_FULL) * 100}
-            tone={BAND_TONE[band]}
-            className="w-16 mt-0.5"
-          />
-        </div>
-      </td>
+      {/* Quantity & Stock Level Bar (Clickable to Update Quantity) */}
+      {(!isColVisible || isColVisible("quantity")) && (
+        <td className="py-2 px-2.5 sm:px-3 text-center whitespace-nowrap" onClick={(e) => e.stopPropagation()}>
+          <button
+            type="button"
+            onClick={() => onSetStock(part)}
+            className="group/qty mx-auto flex flex-col items-center justify-center gap-0.5 min-w-[85px] px-1.5 py-0.5 rounded-xl hover:bg-cushion active:scale-95 transition-all cursor-pointer select-none focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-ring"
+            title={`${t("sp.stockLevel", { qty: String(qty) })} — Click to update`}
+          >
+            <div className="flex items-center gap-1">
+              <span className="font-mono text-xs font-extrabold text-ink tabular-nums group-hover/qty:text-accent transition-colors">
+                {qty}
+              </span>
+              <Edit className="w-2.5 h-2.5 text-ink-muted opacity-0 group-hover/qty:opacity-100 group-hover/qty:text-accent transition-all shrink-0" />
+            </div>
+            <Badge tone={BAND_TONE[band]} dot>
+              {t(BAND_LABEL[band])}
+            </Badge>
+            <ProgressBar
+              value={(Math.min(qty, STOCK_BAR_FULL) / STOCK_BAR_FULL) * 100}
+              tone={BAND_TONE[band]}
+              className="w-14 mt-0.5"
+            />
+          </button>
+        </td>
+      )}
 
       {/* Barcode Graphic */}
-      <td className="py-2.5 px-3.5 text-center whitespace-nowrap">
-        <button
-          type="button"
-          onClick={() => onPreviewBarcode(part)}
-          aria-label={`${t("sp.viewBarcode")} — ${partNo}`}
-          /* Fixed white, in both themes. A barcode is read by
-             reflectance: on the dark surface the row otherwise
-             uses, it would look right and fail to scan. */
-          className="inline-flex items-center justify-center px-2 py-1 rounded-lg bg-[#FFFFFF] border border-subtle shadow-2xs transition-colors hover:border-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-ring"
-        >
-          <BarcodeSvg value={partNo} />
-        </button>
-      </td>
+      {(!isColVisible || isColVisible("barcode")) && (
+        <td className="py-2 px-2 sm:px-3 text-center whitespace-nowrap" onClick={(e) => e.stopPropagation()}>
+          <button
+            type="button"
+            onClick={() => onPreviewBarcode(part)}
+            aria-label={`${t("sp.viewBarcode")} — ${partNo}`}
+            className="inline-flex items-center justify-center px-1.5 py-0.5 rounded-lg bg-[#FFFFFF] border border-subtle shadow-2xs transition-colors hover:border-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-ring cursor-pointer"
+          >
+            <BarcodeSvg value={partNo} />
+          </button>
+        </td>
+      )}
 
       {/* Set Stock (Stock In) */}
-      <td className="py-3 px-3.5 text-center whitespace-nowrap">
-        <button
-          onClick={() => onStockIn(part)}
-          className="inline-flex items-center gap-1 px-3 py-1.5 text-[11px] font-semibold text-ink bg-surface border border-subtle rounded-xl hover:bg-success-soft hover:text-success-fg hover:border-success transition-[color,background-color,border-color,box-shadow,opacity,transform,filter] shadow-2xs "
-        >
-          <PackageCheck className="w-3.5 h-3.5 text-success " />
-          <span>{t("action.stockIn")}</span>
-        </button>
-      </td>
+      {(!isColVisible || isColVisible("stockIn")) && (
+        <td className="py-2 px-2 sm:px-2.5 text-center whitespace-nowrap" onClick={(e) => e.stopPropagation()}>
+          <button
+            type="button"
+            onClick={() => onStockIn(part)}
+            className="inline-flex items-center gap-1 px-2.5 py-1 text-[11px] font-semibold text-ink bg-surface border border-subtle rounded-xl hover:bg-success-soft hover:text-success-fg hover:border-success transition-colors shadow-2xs cursor-pointer"
+          >
+            <PackageCheck className="w-3.5 h-3.5 text-success" />
+            <span>{t("action.stockIn")}</span>
+          </button>
+        </td>
+      )}
 
       {/* Stock Out */}
-      <td className="py-3 px-3.5 text-center whitespace-nowrap">
-        <button
-          disabled={qty <= 0}
-          onClick={() => onStockOut(part)}
-          className="inline-flex items-center gap-1 px-3 py-1.5 text-[11px] font-semibold text-danger bg-surface border border-danger rounded-xl hover:bg-danger-soft hover:border-danger transition-[color,background-color,border-color,box-shadow,opacity,transform,filter] shadow-2xs disabled:opacity-40 disabled:cursor-not-allowed "
-        >
-          <MinusCircle className="w-3.5 h-3.5" />
-          <span>{t("action.stockOut")}</span>
-        </button>
-      </td>
+      {(!isColVisible || isColVisible("stockOut")) && (
+        <td className="py-2 px-2 sm:px-2.5 text-center whitespace-nowrap" onClick={(e) => e.stopPropagation()}>
+          <button
+            type="button"
+            disabled={qty <= 0}
+            onClick={() => onStockOut(part)}
+            className="inline-flex items-center gap-1 px-2.5 py-1 text-[11px] font-semibold text-danger bg-surface border border-danger rounded-xl hover:bg-danger-soft hover:border-danger transition-colors shadow-2xs disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
+          >
+            <MinusCircle className="w-3.5 h-3.5" />
+            <span>{t("action.stockOut")}</span>
+          </button>
+        </td>
+      )}
 
-      {/* Edit / Delete Actions */}
-      <td className="py-3 px-3.5 text-center whitespace-nowrap">
-        <div className="flex items-center justify-center gap-2">
-          <button
-            onClick={() => onEdit(part)}
-            /* A hover circle, not just a colour change: these
-               are the only icon-only controls in the row, and
-               a bare icon gives no indication of where the
-               click target actually starts and ends. */
-            className="grid place-items-center w-8 h-8 rounded-full text-ink-secondary transition-colors hover:bg-accent-soft hover:text-accent-soft-fg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-ring"
-            title={t("sp.edit")}
-            aria-label={`${t("sp.edit")} — ${name}`}
-          >
-            <Edit className="w-4 h-4" />
-          </button>
-          <button
-            onClick={() => onDelete(part)}
-            /* Red on hover, unlike Edit's accent: this one is
-               destructive and should read as such before the
-               click, not only in the confirmation after it. */
-            className="grid place-items-center w-8 h-8 rounded-full text-ink-secondary transition-colors hover:bg-danger-soft hover:text-danger focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-ring"
-            title={t("sp.delete")}
-            aria-label={`${t("sp.delete")} — ${name}`}
-          >
-            <Trash2 className="w-4 h-4" />
-          </button>
-        </div>
-      </td>
+      {/* Edit / Delete / Print Actions */}
+      {(!isColVisible || isColVisible("actions")) && (
+        <td className="py-2 px-2 sm:px-2.5 text-center whitespace-nowrap" onClick={(e) => e.stopPropagation()}>
+          <div className="flex items-center justify-center gap-1.5">
+            {isRibbonMode ? (
+              <button
+                type="button"
+                onClick={() => onPrint(part)}
+                className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-xs font-semibold text-accent hover:bg-accent-soft border border-accent/30 transition-colors shadow-2xs cursor-pointer"
+                title={t("crud.print")}
+                aria-label={`${t("crud.print")} — ${name}`}
+              >
+                <Printer className="w-3.5 h-3.5" />
+                <span>{t("crud.print")}</span>
+              </button>
+            ) : (
+              <>
+                <button
+                  type="button"
+                  onClick={() => onEdit(part)}
+                  className="grid place-items-center w-7 h-7 rounded-full text-ink-secondary transition-colors hover:bg-accent-soft hover:text-accent-soft-fg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-ring cursor-pointer"
+                  title={t("sp.edit")}
+                  aria-label={`${t("sp.edit")} — ${name}`}
+                >
+                  <Edit className="w-3.5 h-3.5" />
+                </button>
+                <button
+                  type="button"
+                  onClick={() => onDelete(part)}
+                  className="grid place-items-center w-7 h-7 rounded-full text-ink-secondary transition-colors hover:bg-danger-soft hover:text-danger focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-ring cursor-pointer"
+                  title={t("sp.delete")}
+                  aria-label={`${t("sp.delete")} — ${name}`}
+                >
+                  <Trash2 className="w-3.5 h-3.5" />
+                </button>
+                <button
+                  type="button"
+                  onClick={() => onPrint(part)}
+                  className="grid place-items-center w-7 h-7 rounded-full text-ink-secondary transition-colors hover:bg-accent-soft hover:text-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-ring cursor-pointer"
+                  title={t("crud.print")}
+                  aria-label={`${t("crud.print")} — ${name}`}
+                >
+                  <Printer className="w-3.5 h-3.5 text-accent" />
+                </button>
+              </>
+            )}
+          </div>
+        </td>
+      )}
     </tr>
   );
 });
 
 export default function SparePartsPage() {
-  const { t } = useI18n();
+  const { t, lang } = useI18n();
+  const isKhmer = lang === "km";
+  const { prefs } = useTheme();
+  const crudStyle = prefs.crudStyle || "enterprise-ribbon";
+  const isRibbonMode = crudStyle === "enterprise-ribbon";
+  const [checkedRow, setCheckedRow] = useState<SparePartItem | null>(null);
+
+  const [columnsState, setColumnsState] = useState<ColumnDefinition[]>([
+    { key: "image", label: t("field.image"), visible: true },
+    { key: "itemName", label: t("field.itemName"), visible: true, permanent: true },
+    { key: "partNumber", label: t("field.partNumber"), visible: true },
+    { key: "useFor", label: t("field.useFor"), visible: true },
+    { key: "classification", label: t("sp.classification"), visible: true },
+    { key: "price", label: t("field.defaultPrice"), visible: true },
+    { key: "quantity", label: t("field.quantity"), visible: true },
+    { key: "barcode", label: t("field.barcode"), visible: true },
+    { key: "stockIn", label: t("sp.setStock"), visible: true },
+    { key: "stockOut", label: t("action.stockOut"), visible: true },
+    { key: "actions", label: t("field.actions"), visible: true, permanent: true },
+  ]);
+
+  useEffect(() => {
+    setColumnsState((prev) =>
+      prev.map((c) => {
+        if (c.key === "image") return { ...c, label: t("field.image") };
+        if (c.key === "itemName") return { ...c, label: t("field.itemName") };
+        if (c.key === "partNumber") return { ...c, label: t("field.partNumber") };
+        if (c.key === "useFor") return { ...c, label: t("field.useFor") };
+        if (c.key === "classification") return { ...c, label: t("sp.classification") };
+        if (c.key === "price") return { ...c, label: t("field.defaultPrice") };
+        if (c.key === "quantity") return { ...c, label: t("field.quantity") };
+        if (c.key === "barcode") return { ...c, label: t("field.barcode") };
+        if (c.key === "stockIn") return { ...c, label: t("sp.setStock") };
+        if (c.key === "stockOut") return { ...c, label: t("action.stockOut") };
+        if (c.key === "actions") return { ...c, label: t("field.actions") };
+        return c;
+      })
+    );
+  }, [t]);
+
+  const isColVisible = useCallback(
+    (colKey: string) => columnsState.find((c) => c.key === colKey)?.visible ?? true,
+    [columnsState]
+  );
+
+  const handleToggleColumn = useCallback((colKey: string) => {
+    setColumnsState((prev) =>
+      prev.map((col) => (col.key === colKey && !col.permanent ? { ...col, visible: !col.visible } : col))
+    );
+  }, []);
+
+  const handleResetColumns = useCallback(() => {
+    setColumnsState((prev) => prev.map((col) => ({ ...col, visible: true })));
+  }, []);
+
+  const handlePrintPart = useCallback((part?: SparePartItem | null) => {
+    const target = part || checkedRow;
+    if (!target) {
+      toast(
+        lang === "km"
+          ? "សូមជ្រើសរើសទិន្នន័យ (Row) ក្នុងតារាងដើម្បីបោះពុម្ព (Print)"
+          : "Please select a spare part in the table first",
+        { icon: "ℹ️" }
+      );
+      return;
+    }
+    window.print();
+  }, [checkedRow, lang]);
+
   const [search, setSearch] = useState("");
   const pageSize = 25;
 
   const { openPairingModal } = useCompanionScanner();
 
   // Modal states
-  const [activeModal, setActiveModal] = useState<"stockIn" | "stockOut" | "edit" | "delete" | null>(null);
+  const [activeModal, setActiveModal] = useState<"stockIn" | "stockOut" | "setStock" | "edit" | "delete" | null>(null);
   const [selectedPart, setSelectedPart] = useState<SparePartItem | null>(null);
   const [quantityInput, setQuantityInput] = useState(1);
   const [reasonInput, setReasonInput] = useState("");
@@ -385,6 +591,59 @@ export default function SparePartsPage() {
    * the number that exists. A truthful count needs a server-side filter.
    */
   const [band, setBand] = useState<StockBand | "all">("all");
+
+  /**
+   * Category / Type / Brand filters — server-side, unlike the stock-band
+   * chips: the API narrows the catalogue and the counts it returns are true
+   * for the filtered set. Kept in the URL so a filtered view can be shared.
+   */
+  const [rawFilters, setFilters] = useState<SparePartFilters>({});
+  const taxonomy = useSparePartTaxonomyOptions();
+  // An id the lookups no longer know (deleted category, a shared link's
+  // type outside its category) is dropped rather than sent to the API as a
+  // filter that can only ever yield an empty list.
+  const filters = taxonomy.pruneFilters(rawFilters);
+  useSparePartFilterParams(filters, setFilters);
+  const filterKey = `${filters.categoryId ?? ""}:${filters.typeId ?? ""}:${filters.brandId ?? ""}`;
+  const [bandCounts, setBandCounts] = useState<{
+    total: number;
+    good: number;
+    critical: number;
+    out: number;
+  }>({ total: 0, good: 0, critical: 0, out: 0 });
+
+  // Table header column filters & sorting
+  const [columnFilters, setColumnFilters] = useState<ColumnFilters>({
+    hasImage: "all",
+  });
+  const [columnSort, setColumnSort] = useState<ColumnSort>({
+    column: null,
+    direction: null,
+  });
+
+  const hasActiveColumnFilters = useMemo(() => {
+    return Boolean(
+      search.trim() ||
+      columnFilters.itemName ||
+      columnFilters.partNumber ||
+      columnFilters.useFor ||
+      (columnFilters.hasImage && columnFilters.hasImage !== "all") ||
+      columnFilters.minPrice != null ||
+      columnFilters.maxPrice != null ||
+      columnFilters.unclassifiedOnly ||
+      filters.categoryId ||
+      filters.typeId ||
+      filters.brandId ||
+      (columnSort.column && columnSort.direction)
+    );
+  }, [search, columnFilters, columnSort, filters]);
+
+  const handleClearAllColumnFilters = useCallback(() => {
+    setColumnFilters({ hasImage: "all" });
+    setSearch("");
+    setFilters({});
+    setColumnSort({ column: null, direction: null });
+  }, []);
 
   // Edit / Add Form State
   const [formState, setFormState] = useState<Partial<SparePartItem>>({
@@ -452,6 +711,13 @@ export default function SparePartsPage() {
     setActiveModal("stockOut");
   }, []);
 
+  const handleSetStock = useCallback((part: SparePartItem) => {
+    setSelectedPart(part);
+    setQuantityInput(part.quantity ?? 0);
+    setReasonInput(`Direct quantity edit: ${part.itemName || ""}`.trim());
+    setActiveModal("setStock");
+  }, []);
+
   const handleEditPart = useCallback((part: SparePartItem) => {
     setSelectedPart(part);
     setFormState({
@@ -474,7 +740,38 @@ export default function SparePartsPage() {
   useSearchQueryParam(setSearch);
 
   const debouncedSearch = useDebouncedValue(search, 300);
-  const term = debouncedSearch.trim();
+  const debouncedPartNumber = useDebouncedValue(columnFilters.partNumber || "", 300);
+
+  const term = useMemo(() => {
+    const s = debouncedSearch.trim();
+    const p = debouncedPartNumber.trim();
+    if (s && p) return `${s} ${p}`.trim();
+    return s || p;
+  }, [debouncedSearch, debouncedPartNumber]);
+
+  const sortByParam = columnSort.column === "itemName"
+    ? "itemname"
+    : columnSort.column === "partNumber"
+    ? "serialnumber"
+    : columnSort.column === "quantity"
+    ? "quantity"
+    : null;
+  const sortDescParam = columnSort.direction === "desc";
+
+  /**
+   * Which list the counts on screen belong to. `useInfiniteList` drops a
+   * stale page's ROWS by sequence number, but `setBandCounts` runs inside
+   * `fetchPage` before that check — so a response for a previous filter
+   * (a deep link fires the unfiltered request one render before the URL
+   * seeds the filters) could leave the chips describing a different list
+   * than the one shown. The key is updated in an effect declared BEFORE
+   * the list hook, so it is current by the time the hook's reset fetches.
+   */
+  const listKey = `${term}:${band}:${filterKey}:${sortByParam ?? ""}:${sortDescParam}`;
+  const listKeyRef = useRef(listKey);
+  useEffect(() => {
+    listKeyRef.current = listKey;
+  }, [listKey]);
 
   const {
     items,
@@ -489,22 +786,153 @@ export default function SparePartsPage() {
     refresh: loadData,
     setItems,
   } = useInfiniteList<SparePartItem, HTMLDivElement, HTMLTableRowElement>({
-    fetchPage: (pageNumber, size) => fetchSparePartsInventory(pageNumber, size, term),
+    fetchPage: async (pageNumber, size) => {
+      const keyAtCall = listKeyRef.current;
+      const res = await fetchSparePartsInventory(
+        pageNumber,
+        size,
+        term,
+        band,
+        filters,
+        sortByParam,
+        sortDescParam
+      );
+      // Counts only from the list that is still current — see `listKeyRef`.
+      if (res.goodCount !== undefined && keyAtCall === listKeyRef.current) {
+        setBandCounts({
+          total: res.totalAll ?? res.totalCount,
+          good: res.goodCount ?? 0,
+          critical: res.criticalCount ?? 0,
+          out: res.outOfStockCount ?? 0,
+        });
+      }
+      return res;
+    },
     pageSize,
-    resetKey: term,
+    resetKey: `spareparts:${listKey}`,
     getId: (p) => p?.id,
   });
 
-  /**
-   * The rows actually rendered, after the stock-band chip.
-   *
-   * Applied here rather than inside `useInfiniteList` on purpose: the hook owns
-   * paging and the sentinel, and filtering its `items` would make it think it
-   * had fewer rows than it fetched and stop pulling pages. The chip narrows
-   * the view; the list underneath keeps loading.
-   */
-  const visibleItems =
-    band === "all" ? items : items.filter((p) => stockBand(p.quantity ?? 0) === band);
+  // Distinct Item Names present in current table data
+  const visibleItems = useMemo(() => {
+    let list = items;
+
+    // Filter by global search term across all visible attributes (itemName, partNumber, useFor, description, brandName, categoryName, typeName)
+    if (search.trim()) {
+      const q = search.trim().toLowerCase();
+      list = list.filter((p) =>
+        (p.itemName || "").toLowerCase().includes(q) ||
+        (p.serialNumber || p.partNumber || "").toLowerCase().includes(q) ||
+        (p.useFor || p.description || "").toLowerCase().includes(q) ||
+        (p.brandName || "").toLowerCase().includes(q) ||
+        (p.categoryName || "").toLowerCase().includes(q) ||
+        (p.typeName || "").toLowerCase().includes(q)
+      );
+    }
+
+    // Filter by item name (specific column filter)
+    if (columnFilters.itemName?.trim()) {
+      const q = columnFilters.itemName.trim().toLowerCase();
+      list = list.filter((p) => (p.itemName || "").toLowerCase().includes(q));
+    }
+
+    // Filter by part number
+    if (columnFilters.partNumber?.trim()) {
+      const q = columnFilters.partNumber.trim().toLowerCase();
+      list = list.filter((p) =>
+        (p.serialNumber || p.partNumber || "").toLowerCase().includes(q)
+      );
+    }
+
+    // Filter by use for
+    if (columnFilters.useFor?.trim()) {
+      const q = columnFilters.useFor.trim().toLowerCase();
+      list = list.filter((p) => (p.useFor || p.description || "").toLowerCase().includes(q));
+    }
+
+    // Filter by image presence
+    if (columnFilters.hasImage === "yes") {
+      list = list.filter((p) => Boolean(p.pictureUrl));
+    } else if (columnFilters.hasImage === "no") {
+      list = list.filter((p) => !p.pictureUrl);
+    }
+
+    // Filter by price range
+    if (columnFilters.minPrice != null && !isNaN(columnFilters.minPrice)) {
+      list = list.filter((p) => (p.defaultPrice ?? 0) >= columnFilters.minPrice!);
+    }
+    if (columnFilters.maxPrice != null && !isNaN(columnFilters.maxPrice)) {
+      list = list.filter((p) => (p.defaultPrice ?? 0) <= columnFilters.maxPrice!);
+    }
+
+    // Filter unclassified only
+    if (columnFilters.unclassifiedOnly) {
+      list = list.filter((p) => !p.brandName && !p.categoryName);
+    }
+
+    // Sort
+    if (columnSort.column && columnSort.direction) {
+      const dir = columnSort.direction === "asc" ? 1 : -1;
+      list = [...list].sort((a, b) => {
+        if (columnSort.column === "itemName") {
+          return (a.itemName || "").localeCompare(b.itemName || "") * dir;
+        }
+        if (columnSort.column === "partNumber") {
+          const aNo = a.serialNumber || a.partNumber || "";
+          const bNo = b.serialNumber || b.partNumber || "";
+          return aNo.localeCompare(bNo) * dir;
+        }
+        if (columnSort.column === "price") {
+          return ((a.defaultPrice ?? 0) - (b.defaultPrice ?? 0)) * dir;
+        }
+        if (columnSort.column === "quantity") {
+          return ((a.quantity ?? 0) - (b.quantity ?? 0)) * dir;
+        }
+        return 0;
+      });
+    }
+
+    return list;
+  }, [items, columnFilters, columnSort]);
+
+  const handleExportCSV = useCallback(() => {
+    const exportData = visibleItems.length > 0 ? visibleItems : items;
+    if (exportData.length === 0) {
+      toast.error(isKhmer ? "មិនមានទិន្នន័យសម្រាប់ទាញយកទេ" : "No data to export");
+      return;
+    }
+    const headers = [
+      "Item Name",
+      "Part Number",
+      "Use For",
+      "Category",
+      "Type",
+      "Brand",
+      "Price",
+      "Quantity",
+    ];
+    const rows = exportData.map((p) => [
+      `"${(p.itemName || "").replace(/"/g, '""')}"`,
+      `"${(p.serialNumber || p.partNumber || "").replace(/"/g, '""')}"`,
+      `"${(p.useFor || p.description || "").replace(/"/g, '""')}"`,
+      `"${(p.categoryName || "").replace(/"/g, '""')}"`,
+      `"${(p.typeName || "").replace(/"/g, '""')}"`,
+      `"${(p.brandName || "").replace(/"/g, '""')}"`,
+      `"${(p.defaultPrice ?? 0).toFixed(2)}"`,
+      `"${p.quantity ?? 0}"`,
+    ]);
+    const csvContent = [headers.join(","), ...rows.map((r) => r.join(","))].join("\n");
+    const blob = new Blob(["\uFEFF" + csvContent], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.setAttribute("href", url);
+    link.setAttribute("download", `spareparts-inventory-${new Date().toISOString().slice(0, 10)}.csv`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+    toast.success(isKhmer ? "បានទាញយក CSV ដោយជោគជ័យ" : "CSV exported successfully");
+  }, [visibleItems, items, isKhmer]);
 
   /**
    * Only the rows on screen are rendered. See `hooks/useVirtualRows.ts` for the
@@ -538,14 +966,33 @@ export default function SparePartsPage() {
     ? rowWindow.items.map(({ index }) => ({ part: visibleItems[index], idx: index }))
     : visibleItems.map((part, idx) => ({ part, idx }));
 
-  // Live updates so another user's add/edit/delete (or a stock-out) shows up
+  // Live updates so another user's add/edit/delete (or a stock-out / inspection) shows up
   // here without a manual reload.
   const handleRealtimeUpdate = useCallback(() => {
     invalidateCachePrefix("spareparts");
+    clearListCache();
     void loadData();
   }, [loadData]);
 
   useRealtimeResource("sparepart", handleRealtimeUpdate);
+
+  // Instant refresh when user returns to this tab
+  useEffect(() => {
+    const onTabActive = () => {
+      invalidateCachePrefix("spareparts");
+      clearListCache();
+      void loadData();
+    };
+    window.addEventListener("focus", onTabActive);
+    const onVis = () => {
+      if (document.visibilityState === "visible") onTabActive();
+    };
+    document.addEventListener("visibilitychange", onVis);
+    return () => {
+      window.removeEventListener("focus", onTabActive);
+      document.removeEventListener("visibilitychange", onVis);
+    };
+  }, [loadData]);
 
   // ── Actions requested from elsewhere (the AI assistant today) ────────────
   //
@@ -661,83 +1108,265 @@ export default function SparePartsPage() {
 
   const handleCreateOrUpdate = async (e: React.FormEvent) => {
     e.preventDefault();
-    let success = false;
-
-    const userId = "00000000-0000-0000-0000-000000000000";
-
-    if (formState.id) {
-      // Update Mode
-      success = await updateSparePart(formState as SparePartItem, userId);
-    } else {
-      // Create Mode
-      success = await createSparePart(formState as SparePartItem);
+    // One rule, both platforms: `@/validation` is mirrored into the CamID app,
+    // which was already refusing a part with no serial number and a negative
+    // price while this screen accepted both and wrote them to the same rows.
+    const check = validateSparePart({
+      itemName: formState.itemName,
+      serialNumber: formState.serialNumber ?? formState.partNumber,
+      quantity: formState.quantity ?? 0,
+      defaultPrice: formState.defaultPrice ?? 0,
+      categoryId: formState.categoryId,
+      typeId: formState.typeId,
+    });
+    if (!check.isValid) {
+      toast.error(firstValidationMessage(check, t));
+      return;
     }
 
-    if (success) {
+    const userId = getCurrentUserGuid() || "00000000-0000-0000-0000-000000000000";
+
+    // This form owns the classification, so it is always sent — an empty
+    // select clears the field. Stock In / Set Stock go through
+    // `updateSparePart` WITHOUT it and leave the filing untouched.
+    const classification: SparePartClassification = {
+      categoryId: formState.categoryId ?? null,
+      typeId: formState.typeId ?? null,
+      brandId: formState.brandId ?? null,
+    };
+
+    const result = formState.id
+      ? await updateSparePart(formState as SparePartItem, userId, classification)
+      : await createSparePart(formState as SparePartItem, classification);
+
+    if (result.ok) {
+      toast.success(isKhmer ? "រក្សាទុកគ្រឿងបន្លាស់បានជោគជ័យ" : "Spare part saved successfully");
+      invalidateCachePrefix("spareparts");
+      clearListCache();
       void loadData();
       setActiveModal(null);
-    } else {
-      // Optimistic client update fallback
+    } else if (result.code === "network") {
+      // Offline: keep the edit on screen so the work is not lost; the row
+      // reconciles with the server on the next successful load.
       setItems((prev) =>
         formState.id
           ? prev.map((p) => (p.id === formState.id ? { ...p, ...formState } : p))
           : [...prev, { ...formState, id: "temp-" + Date.now() } as SparePartItem]
       );
       setActiveModal(null);
+    } else {
+      // The server refused (400 validation, 409 duplicate / constraint) —
+      // say why and leave the dialog open for the correction.
+      toast.error(t("sp.saveFailed", { detail: result.detail ?? "" }).trim());
     }
   };
 
   const handleDelete = async () => {
     if (!selectedPart?.id) return;
-    const success = await deleteSparePart(selectedPart.id);
-    if (success) {
+    const result = await deleteSparePart(selectedPart.id);
+    if (result.ok) {
+      toast.success(isKhmer ? "លុបគ្រឿងបន្លាស់បានជោគជ័យ" : "Spare part deleted successfully");
+      invalidateCachePrefix("spareparts");
+      clearListCache();
       void loadData();
-    } else {
-      // Optimistic delete
+    } else if (result.code === "inUse") {
+      // The API refuses while the part is on a ticket line or has stock
+      // history (the audit ledger's FK). Removing the row locally would
+      // pretend it worked; say why instead.
+      const name = selectedPart.itemName || selectedPart.serialNumber || "";
+      toast.error(
+        result.count !== undefined
+          ? t("sp.deleteInUse", { name, count: result.count })
+          : t("sp.deleteHasHistory", { name })
+      );
+    } else if (result.code === "network") {
+      // Offline: optimistic delete, reconciled on the next load.
       setItems((prev) => prev.filter((p) => p.id !== selectedPart.id));
+    } else {
+      toast.error(t("sp.saveFailed", { detail: result.detail ?? "" }).trim());
     }
     setActiveModal(null);
   };
 
   const handleStockInSubmit = async () => {
     if (!selectedPart) return;
+    const check = validateStockIn({ quantity: quantityInput });
+    if (!check.isValid) {
+      toast.error(firstValidationMessage(check, t));
+      return;
+    }
+
     const currentQty = selectedPart.quantity ?? 0;
+    const newQty = currentQty + quantityInput;
     const updatedPart: SparePartItem = {
       ...selectedPart,
-      quantity: currentQty + quantityInput,
+      quantity: newQty,
     };
 
-    const success = await updateSparePart(updatedPart);
-    if (success) {
-      void loadData();
-    } else {
-      // Optimistic update
-      setItems((prev) => prev.map((p) => (p.id === selectedPart.id ? updatedPart : p)));
-    }
+    const userGuid = getCurrentUserGuid() || "00000000-0000-0000-0000-000000000000";
+    const userName = getCurrentUserFullName();
+
+    // Optimistic UI update
+    setItems((prev) => prev.map((p) => (p.id === selectedPart.id ? updatedPart : p)));
     setActiveModal(null);
+
+    const result = await updateSparePart(updatedPart, userGuid);
+    if (result.ok) {
+      toast.success(isKhmer ? `បានបញ្ចូលស្តុក +${quantityInput} ជោគជ័យ` : `Stock In +${quantityInput} recorded successfully`);
+      invalidateCachePrefix("spareparts");
+      clearListCache();
+      void loadData();
+
+      // 📨 Telegram Notification Topic 14 (Stock In)
+      try {
+        const msg = buildStockTelegramMessage("StockIn", {
+          id: selectedPart.id,
+          itemName: selectedPart.itemName || "Unknown Part",
+          partNumber: selectedPart.serialNumber || selectedPart.partNumber || "N/A",
+          useFor: selectedPart.useFor,
+          quantity: quantityInput,
+          oldQuantity: currentQty,
+          newQuantity: newQty,
+          performedBy: userName,
+          remarks: `Stock In: +${quantityInput} ${selectedPart.itemName || ""}`.trim(),
+        });
+        void sendTelegramNotification("StockIn", msg);
+      } catch (tgErr) {
+        console.warn("StockIn telegram notification failed:", tgErr);
+      }
+    } else {
+      toast.error("Failed to record stock in");
+      void loadData();
+    }
   };
 
   const handleStockOutSubmit = async () => {
     if (!selectedPart) return;
-    const currentQty = selectedPart.quantity ?? 0;
-    const success = await insertManualStockOut(selectedPart.id, quantityInput, reasonInput);
-    if (success) {
-      void loadData();
-    } else {
-      // Optimistic deduction fallback
-      const updatedPart: SparePartItem = {
-        ...selectedPart,
-        quantity: Math.max(0, currentQty - quantityInput),
-      };
-      setItems((prev) => prev.map((p) => (p.id === selectedPart.id ? updatedPart : p)));
+
+    // The row on screen comes from a cached list page, so its quantity can be
+    // minutes old. Refusing a stock-out against that would block a legitimate
+    // one the moment a colleague stocked in — so the ceiling is checked against
+    // a live read, the same way the ticket transition pre-flight does it. A
+    // failed read falls back to what is on screen rather than blocking.
+    let currentQty = selectedPart.quantity ?? 0;
+    try {
+      const fresh = await fetchSparePartById(selectedPart.id, true);
+      if (fresh && Number.isFinite(fresh.quantity)) currentQty = fresh.quantity ?? currentQty;
+    } catch {
+      // Keep the on-screen figure; the backend still refuses a real shortage.
     }
+
+    const check = validateStockOut({
+      quantity: quantityInput,
+      available: currentQty,
+      reason: reasonInput,
+    });
+    if (!check.isValid) {
+      toast.error(firstValidationMessage(check, t));
+      return;
+    }
+
+    const newQty = Math.max(0, currentQty - quantityInput);
+    const updatedPart: SparePartItem = {
+      ...selectedPart,
+      quantity: newQty,
+    };
+
+    const userGuid = getCurrentUserGuid() || "00000000-0000-0000-0000-000000000000";
+    const userName = getCurrentUserFullName();
+
+    // Optimistic UI update
+    setItems((prev) => prev.map((p) => (p.id === selectedPart.id ? updatedPart : p)));
     setActiveModal(null);
+
+    const success = await insertManualStockOut(selectedPart.id, quantityInput, reasonInput.trim(), userGuid);
+    if (success) {
+      toast.success(isKhmer ? `បានដកស្តុក -${quantityInput} ជោគជ័យ` : `Stock Out -${quantityInput} recorded successfully`);
+      invalidateCachePrefix("spareparts");
+      clearListCache();
+      void loadData();
+
+      // 📨 Telegram Notification Topic 12 (Stock Out)
+      try {
+        const msg = buildStockTelegramMessage("StockOut", {
+          id: selectedPart.id,
+          itemName: selectedPart.itemName || "Unknown Part",
+          partNumber: selectedPart.serialNumber || selectedPart.partNumber || "N/A",
+          useFor: selectedPart.useFor,
+          quantity: quantityInput,
+          oldQuantity: currentQty,
+          newQuantity: newQty,
+          performedBy: userName,
+          remarks: reasonInput.trim(),
+        });
+        void sendTelegramNotification("StockOut", msg);
+      } catch (tgErr) {
+        console.warn("StockOut telegram notification failed:", tgErr);
+      }
+    } else {
+      toast.error("Failed to record stock out");
+      void loadData();
+    }
   };
 
-  // No client-side re-filtering: the backend's /spareparts/search already
-  // matches ItemName, SerialNumber, Description and UserFor. Filtering the
-  // loaded rows again here (against the *undebounced* term) used to hide rows
-  // mid-keystroke and cap results at whatever one page happened to contain.
+  const handleSetStockSubmit = async () => {
+    if (!selectedPart) return;
+    const oldQty = selectedPart.quantity ?? 0;
+    const newQty = Math.max(0, quantityInput);
+    if (oldQty === newQty) {
+      setActiveModal(null);
+      return;
+    }
+
+    const updatedPart: SparePartItem = {
+      ...selectedPart,
+      quantity: newQty,
+    };
+
+    const userGuid = getCurrentUserGuid() || "00000000-0000-0000-0000-000000000000";
+    const userName = getCurrentUserFullName();
+
+    // Optimistic UI update
+    setItems((prev) => prev.map((p) => (p.id === selectedPart.id ? updatedPart : p)));
+    setActiveModal(null);
+
+    const result = await updateSparePart(updatedPart, userGuid);
+    if (result.ok) {
+      toast.success(
+        isKhmer
+          ? `បានកែប្រែចំនួនស្តុកជោគជ័យ៖ ${oldQty} → ${newQty}`
+          : `Stock quantity updated: ${oldQty} → ${newQty}`
+      );
+      invalidateCachePrefix("spareparts");
+      clearListCache();
+      void loadData();
+
+      // 📨 Telegram Notification
+      try {
+        const isIncrease = newQty > oldQty;
+        const delta = Math.abs(newQty - oldQty);
+        const topicType = isIncrease ? "StockIn" : "StockOut";
+        const remarksText = reasonInput?.trim() || `Direct quantity edit: ${selectedPart.itemName || ""}`.trim();
+        const msg = buildStockTelegramMessage(topicType, {
+          id: selectedPart.id,
+          itemName: selectedPart.itemName || "Unknown Part",
+          partNumber: selectedPart.serialNumber || selectedPart.partNumber || "N/A",
+          useFor: selectedPart.useFor,
+          quantity: delta,
+          oldQuantity: oldQty,
+          newQuantity: newQty,
+          performedBy: userName,
+          remarks: remarksText,
+        });
+        void sendTelegramNotification(topicType, msg);
+      } catch (tgErr) {
+        console.warn("SetStock telegram notification failed:", tgErr);
+      }
+    } else {
+      toast.error("Failed to update stock quantity");
+      void loadData();
+    }
+  };
 
   return (
     <PageWrapper
@@ -745,43 +1374,16 @@ export default function SparePartsPage() {
       subtitleKey="sub.spareParts"
     >
       <div className="flex-1 flex flex-col min-h-0 bg-surface border border-subtle/80 rounded-2xl shadow-sm overflow-hidden">
-        {/* Search Header */}
-        <div className="p-4 shrink-0 border-b border-subtle flex flex-wrap items-center justify-between gap-4 bg-cushion/50 ">
-          <div className="flex items-center gap-3">
-            <div className="relative">
-              <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-ink-muted" />
-              <input
-                type="text"
-                placeholder={t("sp.searchPlaceholder")}
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
-                className="pl-9 pr-4 py-2 text-xs border border-subtle rounded-xl bg-surface focus:outline-none focus:ring-2 focus:ring-accent-ring focus:border-accent w-64 md:w-96 transition-shadow"
-              />
-            </div>
-
-            {/* Mobile Companion Barcode Scanner */}
-            <button
-              type="button"
-              onClick={openPairingModal}
-              className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-semibold text-cyan-700 dark:text-cyan-300 bg-cyan-500/10 hover:bg-cyan-500/20 border border-cyan-500/30 rounded-xl transition-all shadow-2xs cursor-pointer active:scale-95"
-              title="Scan Barcode with Phone"
-            >
-              <Smartphone className="w-3.5 h-3.5" />
-              <span className="hidden sm:inline">Phone Scan</span>
-            </button>
-
-            <button
-              onClick={loadData}
-              className="p-2 text-ink-secondary hover:bg-sunken rounded-xl transition-colors "
-              title={t("sp.reload")}
-            >
-              <RefreshCw className={`w-4 h-4 ${isLoading ? "animate-spin" : ""}`} />
-            </button>
-          </div>
-
-          <div className="flex items-center gap-2">
-            <button
-              onClick={() => {
+        {/* Unified Table Toolbar */}
+        {crudStyle === "enterprise-ribbon" ? (
+          <div className="flex flex-col border-b border-subtle">
+            <EnterpriseRibbonToolbar
+              canCreate={true}
+              canEdit={true}
+              canDelete={false}
+              canPrint={true}
+              onCreate={() => {
+                setSelectedPart(null);
                 setFormState({
                   itemName: "",
                   serialNumber: "",
@@ -793,99 +1395,645 @@ export default function SparePartsPage() {
                 });
                 setActiveModal("edit");
               }}
-              className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-semibold text-white bg-accent rounded-xl hover:bg-accent-hover transition-colors shadow-sm shadow-accent/20"
-            >
-              <Plus className="w-3.5 h-3.5" />
-              <span>{t("sp.add")}</span>
-            </button>
-            <button className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-semibold text-ink bg-surface border border-prominent rounded-xl hover:bg-cushion transition-colors shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-ring">
-              <Download className="w-3.5 h-3.5" />
-              <span>{t("action.export")}</span>
-            </button>
-          </div>
+              onEdit={() => {
+                if (checkedRow) {
+                  handleEditPart(checkedRow);
+                } else {
+                  toast(
+                    lang === "km"
+                      ? "សូមជ្រើសរើសទិន្នន័យ (Row) ក្នុងតារាងជាមុនសិន"
+                      : "Please select a record in the table first",
+                    { icon: "ℹ️" }
+                  );
+                }
+              }}
+              onDelete={() => {
+                if (checkedRow) {
+                  handleDeletePart(checkedRow);
+                } else {
+                  toast(
+                    lang === "km"
+                      ? "សូមជ្រើសរើសទិន្នន័យ (Row) ក្នុងតារាងដើម្បីលុប"
+                      : "Please select a record to delete",
+                    { icon: "ℹ️" }
+                  );
+                }
+              }}
+              onPrint={() => handlePrintPart(checkedRow)}
+              onExportCsv={handleExportCSV}
+              onReload={loadData}
+              searchTerm={search}
+              searchPlaceholder={t("sp.searchPlaceholder")}
+              onSearchChange={(val) => {
+                setSearch(val);
+              }}
+              onSearchSubmit={loadData}
+              onSearchClear={() => {
+                setSearch("");
+              }}
+              selectedCount={checkedRow ? 1 : 0}
+              isLoading={isLoading}
+              extraActions={
+                <div className="flex items-center gap-1.5">
+                  <button
+                    type="button"
+                    onClick={openPairingModal}
+                    className="inline-flex items-center gap-1 px-2 py-1 text-xs font-semibold text-cyan-700 dark:text-cyan-300 bg-cyan-500/10 hover:bg-cyan-500/20 border border-cyan-500/30 rounded-lg transition-all shadow-2xs cursor-pointer active:scale-95 whitespace-nowrap"
+                    title="Scan Barcode with Phone"
+                  >
+                    <Smartphone className="w-3.5 h-3.5" />
+                    <span className="hidden sm:inline">Phone Scan</span>
+                  </button>
+                  <ColumnVisibilityDropdown
+                    columns={columnsState}
+                    onToggleColumn={handleToggleColumn}
+                    onResetColumns={handleResetColumns}
+                  />
+                </div>
+              }
+            />
 
-          {/* Stock-band chips. Scoped to the loaded rows — see `band` state. */}
-          <div className="flex items-center gap-1.5 w-full">
-            {(["all", "good", "critical", "out"] as const).map((key) => {
-              const active = band === key;
-              const count =
-                key === "all"
-                  ? items.length
-                  : items.filter((p) => stockBand(p.quantity ?? 0) === key).length;
+            {/* Classification Filters & Stock Band Chips */}
+            <div className="px-2.5 py-1.5 sm:px-3 sm:py-2 border-t border-subtle flex flex-wrap items-center justify-between gap-2 bg-cushion/40">
+              <SparePartFilterBar
+                value={filters}
+                onChange={setFilters}
+                categoryOptions={taxonomy.categoryOptions}
+                brandOptions={taxonomy.brandOptions}
+                typeOptionsFor={taxonomy.typeOptionsFor}
+                loading={taxonomy.loading}
+                error={taxonomy.error}
+                onRetry={taxonomy.retry}
+              />
 
-              return (
-                <button
-                  key={key}
-                  type="button"
-                  aria-pressed={active}
-                  onClick={() => setBand(key)}
-                  className={cn(
-                    "inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-semibold",
-                    "border transition-colors",
-                    "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-ring",
-                    active
-                      ? "bg-accent-soft text-accent-soft-fg border-accent/40"
-                      : "bg-surface text-ink-secondary border-subtle hover:bg-cushion hover:text-ink"
-                  )}
-                >
-                  {key !== "all" && (
-                    <span
-                      aria-hidden
+              {/* Stock-band chips */}
+              <div className="flex items-center gap-1 sm:gap-1.5 flex-wrap">
+                {(["all", "good", "critical", "out"] as const).map((key) => {
+                  const active = band === key;
+                  const count =
+                    key === "all"
+                      ? (bandCounts.total || totalCount)
+                      : key === "good"
+                      ? bandCounts.good
+                      : key === "critical"
+                      ? bandCounts.critical
+                      : bandCounts.out;
+
+                  return (
+                    <button
+                      key={key}
+                      type="button"
+                      aria-pressed={active}
+                      onClick={() => setBand(key)}
                       className={cn(
-                        "w-1.5 h-1.5 rounded-full",
-                        key === "good" ? "bg-success" : key === "critical" ? "bg-warning" : "bg-danger"
+                        "inline-flex items-center gap-1 px-2 py-0.5 sm:px-2.5 sm:py-1 rounded-full text-[11px] font-semibold",
+                        "border transition-colors cursor-pointer",
+                        "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-ring",
+                        active
+                          ? "bg-accent-soft text-accent-soft-fg border-accent/40"
+                          : "bg-surface text-ink-secondary border-subtle hover:bg-cushion hover:text-ink"
                       )}
-                    />
-                  )}
-                  <span>{key === "all" ? t("sp.filterAll") : t(BAND_LABEL[key])}</span>
-                  <span className="tabular-nums opacity-70">{count}</span>
-                </button>
-              );
-            })}
+                    >
+                      {key !== "all" && (
+                        <span
+                          aria-hidden
+                          className={cn(
+                            "w-1.5 h-1.5 rounded-full",
+                            key === "good" ? "bg-success" : key === "critical" ? "bg-warning" : "bg-danger"
+                          )}
+                        />
+                      )}
+                      <span>{key === "all" ? t("sp.filterAll") : t(BAND_LABEL[key])}</span>
+                      <span className="tabular-nums opacity-70">{count}</span>
+                    </button>
+                  );
+                })}
+                {hasActiveColumnFilters && (
+                  <button
+                    type="button"
+                    onClick={handleClearAllColumnFilters}
+                    className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-semibold bg-danger/10 text-danger border border-danger/20 hover:bg-danger/15 transition-colors cursor-pointer select-none ml-auto"
+                    title={t("sp.colFilter.clearAll")}
+                  >
+                    <X className="w-3 h-3" />
+                    <span>{t("sp.colFilter.clearAll")}</span>
+                  </button>
+                )}
+              </div>
+            </div>
           </div>
-        </div>
+        ) : (
+          <div className="p-2.5 sm:p-3 xl:p-3.5 shrink-0 border-b border-subtle flex flex-wrap items-center justify-between gap-2 sm:gap-2.5 bg-cushion/50">
+            <div className="flex items-center gap-2 sm:gap-2.5">
+              <div className="relative">
+                <Search className="w-3.5 h-3.5 absolute left-3 top-1/2 -translate-y-1/2 text-ink-muted" />
+                <input
+                  type="text"
+                  placeholder={t("sp.searchPlaceholder")}
+                  value={search}
+                  onChange={(e) => {
+                    setSearch(e.target.value);
+                  }}
+                  className="pl-8 pr-7 py-1.5 text-xs border border-subtle rounded-xl bg-surface focus:outline-none focus:ring-2 focus:ring-accent-ring focus:border-accent w-44 sm:w-60 xl:w-72 transition-shadow"
+                />
+                {search && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setSearch("");
+                    }}
+                    className="absolute right-2 top-1/2 -translate-y-1/2 text-ink-muted hover:text-ink cursor-pointer"
+                    title="Clear search"
+                  >
+                    <X className="w-3 h-3" />
+                  </button>
+                )}
+              </div>
+
+              {/* Mobile Companion Barcode Scanner */}
+              <button
+                type="button"
+                onClick={openPairingModal}
+                className="inline-flex items-center gap-1 px-2.5 py-1.5 text-xs font-semibold text-cyan-700 dark:text-cyan-300 bg-cyan-500/10 hover:bg-cyan-500/20 border border-cyan-500/30 rounded-xl transition-all shadow-2xs cursor-pointer active:scale-95"
+                title="Scan Barcode with Phone"
+              >
+                <Smartphone className="w-3.5 h-3.5" />
+                <span className="hidden sm:inline">Phone Scan</span>
+              </button>
+
+              <button
+                onClick={loadData}
+                className="p-1.5 text-ink-secondary hover:bg-sunken rounded-xl transition-colors"
+                title={t("sp.reload")}
+              >
+                <RefreshCw className={`w-3.5 h-3.5 ${isLoading ? "animate-spin" : ""}`} />
+              </button>
+            </div>
+
+            <div className="flex items-center gap-1.5 sm:gap-2">
+              <ColumnVisibilityDropdown
+                columns={columnsState}
+                onToggleColumn={handleToggleColumn}
+                onResetColumns={handleResetColumns}
+              />
+
+              <button
+                onClick={() => {
+                  setSelectedPart(null);
+                  setFormState({
+                    itemName: "",
+                    serialNumber: "",
+                    description: "",
+                    useFor: "",
+                    pictureUrl: "",
+                    quantity: 1,
+                    defaultPrice: 0.0,
+                  });
+                  setActiveModal("edit");
+                }}
+                className="inline-flex items-center gap-1 px-2.5 py-1.5 text-xs font-semibold text-white bg-accent rounded-xl hover:bg-accent-hover transition-colors shadow-sm shadow-accent/20 cursor-pointer"
+              >
+                <Plus className="w-3.5 h-3.5" />
+                <span>{t("sp.add")}</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => handlePrintPart(checkedRow)}
+                className="inline-flex items-center gap-1 px-2.5 py-1.5 text-xs font-semibold rounded-xl transition-colors shadow-sm text-ink bg-surface border border-subtle hover:bg-cushion cursor-pointer"
+                title={t("crud.print")}
+              >
+                <Printer className="w-3.5 h-3.5 text-accent" />
+                <span>{t("crud.print")}</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={handleExportCSV}
+                className="inline-flex items-center gap-1 px-2.5 py-1.5 text-xs font-semibold text-ink bg-surface border border-prominent rounded-xl hover:bg-cushion transition-colors shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-ring cursor-pointer"
+              >
+                <Download className="w-3.5 h-3.5" />
+                <span>{t("action.export")}</span>
+              </button>
+            </div>
+
+            {/* Category → Type → Brand. Server-side filters; the counts on the
+                chips below are for the filtered set. */}
+            <SparePartFilterBar
+              value={filters}
+              onChange={setFilters}
+              categoryOptions={taxonomy.categoryOptions}
+              brandOptions={taxonomy.brandOptions}
+              typeOptionsFor={taxonomy.typeOptionsFor}
+              loading={taxonomy.loading}
+              error={taxonomy.error}
+              onRetry={taxonomy.retry}
+            />
+
+            {/* Stock-band chips. Reflects true catalogue / search breakdown counts. */}
+            <div className="flex items-center gap-1 sm:gap-1.5 w-full">
+              {(["all", "good", "critical", "out"] as const).map((key) => {
+                const active = band === key;
+                const count =
+                  key === "all"
+                    ? (bandCounts.total || totalCount)
+                    : key === "good"
+                    ? bandCounts.good
+                    : key === "critical"
+                    ? bandCounts.critical
+                    : bandCounts.out;
+
+                return (
+                  <button
+                    key={key}
+                    type="button"
+                    aria-pressed={active}
+                    onClick={() => setBand(key)}
+                    className={cn(
+                      "inline-flex items-center gap-1 px-2 py-0.5 sm:px-2.5 sm:py-1 rounded-full text-[11px] font-semibold",
+                      "border transition-colors cursor-pointer",
+                      "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-ring",
+                      active
+                        ? "bg-accent-soft text-accent-soft-fg border-accent/40"
+                        : "bg-surface text-ink-secondary border-subtle hover:bg-cushion hover:text-ink"
+                    )}
+                  >
+                    {key !== "all" && (
+                      <span
+                        aria-hidden
+                        className={cn(
+                          "w-1.5 h-1.5 rounded-full",
+                          key === "good" ? "bg-success" : key === "critical" ? "bg-warning" : "bg-danger"
+                        )}
+                      />
+                    )}
+                    <span>{key === "all" ? t("sp.filterAll") : t(BAND_LABEL[key])}</span>
+                    <span className="tabular-nums opacity-70">{count}</span>
+                  </button>
+                );
+              })}
+              {hasActiveColumnFilters && (
+                <button
+                  type="button"
+                  onClick={handleClearAllColumnFilters}
+                  className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-semibold bg-danger/10 text-danger border border-danger/20 hover:bg-danger/15 transition-colors cursor-pointer select-none ml-auto"
+                  title={t("sp.colFilter.clearAll")}
+                >
+                  <X className="w-3 h-3" />
+                  <span>{t("sp.colFilter.clearAll")}</span>
+                </button>
+              )}
+            </div>
+          </div>
+        )}
 
         {/* Table Content — also the IntersectionObserver root for infinite scroll */}
         <div ref={scrollRootRef} className="flex-1 overflow-x-auto overflow-y-auto min-h-0">
           <table className="w-full text-left border-collapse min-w-full text-xs">
             <thead>
-              {/*
-                Sticky header. This table scrolls 665 rows inside its own
-                container, and without this the column names leave the screen
-                after the first eight — every row after that is unlabelled
-                numbers. `shadow-soft-sm` gives the separation from the body
-                that a scrolled-under row needs; it is on permanently rather
-                than toggled on scroll, because toggling it needs a scroll
-                listener on a container that is already doing infinite-scroll
-                intersection work, for a difference nobody looks at when the
-                table is at rest.
-              */}
               <tr className="sticky top-0 z-10 bg-cushion border-b border-subtle/80 text-[11px] font-bold text-ink-secondary uppercase tracking-wider shadow-soft-sm">
-                <th className="py-3 px-3.5 text-center whitespace-nowrap">{t("field.image")}</th>
-                <th className="py-3 px-3.5 whitespace-nowrap">{t("field.itemName")}</th>
-                <th className="py-3 px-3.5 whitespace-nowrap">{t("field.partNumber")}</th>
-                <th className="py-3 px-3.5 whitespace-nowrap">{t("field.useFor")}</th>
-                <th className="py-3 px-3.5 text-right whitespace-nowrap">{t("field.defaultPrice")}</th>
-                <th className="py-3 px-3.5 text-center whitespace-nowrap">{t("field.quantity")}</th>
-                <th className="py-3 px-3.5 text-center whitespace-nowrap">{t("field.barcode")}</th>
-                <th className="py-3 px-3.5 text-center whitespace-nowrap">{t("sp.setStock")}</th>
-                <th className="py-3 px-3.5 text-center whitespace-nowrap">{t("action.stockOut")}</th>
-                <th className="py-3 px-3.5 text-center whitespace-nowrap">{t("field.actions")}</th>
+                {isRibbonMode && (
+                  <th className="sticky top-0 z-20 bg-cushion py-2.5 px-2 text-center w-10 min-w-[40px]">
+                    <span className="sr-only">Select</span>
+                  </th>
+                )}
+                {isColVisible("image") && (
+                  <th className="py-1.5 px-2 sm:px-2.5 text-center whitespace-nowrap">
+                    <TableHeaderFilterPopover
+                      label={t("field.image")}
+                      isActive={Boolean(columnFilters.hasImage && columnFilters.hasImage !== "all")}
+                      onClear={() => setColumnFilters((prev) => ({ ...prev, hasImage: "all" }))}
+                      onApply={loadData}
+                      align="center"
+                      width={200}
+                      className="mx-auto"
+                    >
+                      <div className="space-y-1">
+                        <span className="text-[10px] font-bold uppercase tracking-wider text-ink-muted">
+                          {t("sp.colFilter.imageStatus")}
+                        </span>
+                        <div className="flex flex-col gap-1">
+                          {(["all", "yes", "no"] as const).map((opt) => (
+                            <label key={opt} className="flex items-center gap-2 p-1 rounded-lg hover:bg-cushion cursor-pointer select-none text-xs">
+                              <input
+                                type="radio"
+                                name="hasImage"
+                                checked={(columnFilters.hasImage || "all") === opt}
+                                onChange={() => setColumnFilters((prev) => ({ ...prev, hasImage: opt }))}
+                                className="accent-accent cursor-pointer"
+                              />
+                              <span>
+                                {opt === "all"
+                                  ? t("sp.colFilter.all")
+                                  : opt === "yes"
+                                  ? t("sp.colFilter.hasImage")
+                                  : t("sp.colFilter.noImage")}
+                              </span>
+                            </label>
+                          ))}
+                        </div>
+                      </div>
+                    </TableHeaderFilterPopover>
+                  </th>
+                )}
+
+                {isColVisible("itemName") && (
+                  <th className="py-1.5 px-2 sm:px-2.5 whitespace-nowrap">
+                    <TableHeaderFilterPopover
+                      label={t("field.itemName")}
+                      isActive={Boolean(columnFilters.itemName)}
+                      onClear={() => {
+                        setColumnFilters((prev) => ({ ...prev, itemName: "" }));
+                      }}
+                      onApply={loadData}
+                      sortState={columnSort.column === "itemName" ? columnSort.direction : null}
+                      sortType="alpha"
+                      onSortChange={(dir) => setColumnSort({ column: dir ? "itemName" : null, direction: dir })}
+                      width={260}
+                    >
+                      <div className="space-y-1.5">
+                        <span className="text-[10px] font-bold uppercase tracking-wider text-ink-muted">
+                          {t("field.itemName")}
+                        </span>
+                        <div className="relative">
+                          <input
+                            type="text"
+                            value={columnFilters.itemName || ""}
+                            onChange={(e) => {
+                              const val = e.target.value;
+                              setColumnFilters((prev) => ({ ...prev, itemName: val }));
+                            }}
+                            placeholder={t("sp.colFilter.searchPlaceholder", { col: t("field.itemName") })}
+                            className="w-full px-2.5 py-1.5 text-xs rounded-xl bg-cushion border border-subtle text-ink outline-none focus:border-accent focus:ring-1 focus:ring-accent"
+                            autoFocus
+                          />
+                          {columnFilters.itemName && (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setColumnFilters((prev) => ({ ...prev, itemName: "" }));
+                              }}
+                              className="absolute right-2 top-1/2 -translate-y-1/2 text-ink-muted hover:text-ink cursor-pointer"
+                            >
+                              <X className="w-3 h-3" />
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                    </TableHeaderFilterPopover>
+                  </th>
+                )}
+
+                {isColVisible("partNumber") && (
+                  <th className="py-1.5 px-2 sm:px-2.5 whitespace-nowrap">
+                    <TableHeaderFilterPopover
+                      label={t("field.partNumber")}
+                      isActive={Boolean(columnFilters.partNumber)}
+                      onClear={() => setColumnFilters((prev) => ({ ...prev, partNumber: "" }))}
+                      onApply={loadData}
+                      sortState={columnSort.column === "partNumber" ? columnSort.direction : null}
+                      sortType="alpha"
+                      onSortChange={(dir) => setColumnSort({ column: dir ? "partNumber" : null, direction: dir })}
+                      width={260}
+                    >
+                      <div className="space-y-1.5">
+                        <span className="text-[10px] font-bold uppercase tracking-wider text-ink-muted">
+                          {t("field.partNumber")}
+                        </span>
+                        <div className="relative">
+                          <input
+                            type="text"
+                            value={columnFilters.partNumber || ""}
+                            onChange={(e) => setColumnFilters((prev) => ({ ...prev, partNumber: e.target.value }))}
+                            placeholder={t("sp.colFilter.searchPlaceholder", { col: t("field.partNumber") })}
+                            className="w-full px-2.5 py-1.5 text-xs rounded-xl bg-cushion border border-subtle text-ink outline-none focus:border-accent focus:ring-1 focus:ring-accent"
+                          />
+                          {columnFilters.partNumber && (
+                            <button
+                              type="button"
+                              onClick={() => setColumnFilters((prev) => ({ ...prev, partNumber: "" }))}
+                              className="absolute right-2 top-1/2 -translate-y-1/2 text-ink-muted hover:text-ink cursor-pointer"
+                            >
+                              <X className="w-3 h-3" />
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                    </TableHeaderFilterPopover>
+                  </th>
+                )}
+
+                {isColVisible("useFor") && (
+                  <th className="py-1.5 px-2 sm:px-2.5 whitespace-nowrap">
+                    <TableHeaderFilterPopover
+                      label={t("field.useFor")}
+                      isActive={Boolean(columnFilters.useFor)}
+                      onClear={() => setColumnFilters((prev) => ({ ...prev, useFor: "" }))}
+                      onApply={loadData}
+                      width={260}
+                    >
+                      <div className="space-y-1.5">
+                        <span className="text-[10px] font-bold uppercase tracking-wider text-ink-muted">
+                          {t("field.useFor")}
+                        </span>
+                        <div className="relative">
+                          <input
+                            type="text"
+                            value={columnFilters.useFor || ""}
+                            onChange={(e) => setColumnFilters((prev) => ({ ...prev, useFor: e.target.value }))}
+                            placeholder={t("sp.colFilter.searchPlaceholder", { col: t("field.useFor") })}
+                            className="w-full px-2.5 py-1.5 text-xs rounded-xl bg-cushion border border-subtle text-ink outline-none focus:border-accent focus:ring-1 focus:ring-accent"
+                          />
+                          {columnFilters.useFor && (
+                            <button
+                              type="button"
+                              onClick={() => setColumnFilters((prev) => ({ ...prev, useFor: "" }))}
+                              className="absolute right-2 top-1/2 -translate-y-1/2 text-ink-muted hover:text-ink cursor-pointer"
+                            >
+                              <X className="w-3 h-3" />
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                    </TableHeaderFilterPopover>
+                  </th>
+                )}
+
+                {isColVisible("classification") && (
+                  <th className="py-1.5 px-2 sm:px-2.5 whitespace-nowrap">
+                    <TableHeaderFilterPopover
+                      label={t("sp.classification")}
+                      title={isKhmer ? "តម្រងចំណាត់ថ្នាក់" : "Filter Classification"}
+                      isActive={Boolean(filters.categoryId || filters.typeId || filters.brandId || columnFilters.unclassifiedOnly)}
+                      onClear={() => {
+                        setFilters({});
+                        setColumnFilters((prev) => ({ ...prev, unclassifiedOnly: false }));
+                      }}
+                      onApply={loadData}
+                      width={280}
+                    >
+                      <div className="space-y-2.5">
+                        <div className="space-y-1">
+                          <span className="text-[10px] font-bold uppercase tracking-wider text-ink-muted">{t("sp.category")}</span>
+                          <ModernSelect
+                            value={filters.categoryId || ""}
+                            options={[{ value: "", label: t("sp.filterCategory") }, ...taxonomy.categoryOptions]}
+                            onChange={(v) => setFilters((prev) => ({ ...prev, categoryId: v || undefined, typeId: undefined }))}
+                            dense
+                          />
+                        </div>
+                        <div className="space-y-1">
+                          <span className="text-[10px] font-bold uppercase tracking-wider text-ink-muted">{t("sp.type")}</span>
+                          <ModernSelect
+                            value={filters.typeId || ""}
+                            options={[{ value: "", label: t("sp.filterType") }, ...taxonomy.typeOptionsFor(filters.categoryId)]}
+                            onChange={(v) => setFilters((prev) => ({ ...prev, typeId: v || undefined }))}
+                            disabled={!filters.categoryId}
+                            dense
+                          />
+                        </div>
+                        <div className="space-y-1">
+                          <span className="text-[10px] font-bold uppercase tracking-wider text-ink-muted">{t("sp.brand")}</span>
+                          <ModernSelect
+                            value={filters.brandId || ""}
+                            options={[{ value: "", label: t("sp.filterBrand") }, ...taxonomy.brandOptions]}
+                            onChange={(v) => setFilters((prev) => ({ ...prev, brandId: v || undefined }))}
+                            dense
+                          />
+                        </div>
+                        <label className="flex items-center gap-2 pt-1 border-t border-subtle cursor-pointer select-none text-xs">
+                          <input
+                            type="checkbox"
+                            checked={Boolean(columnFilters.unclassifiedOnly)}
+                            onChange={(e) => setColumnFilters((prev) => ({ ...prev, unclassifiedOnly: e.target.checked }))}
+                            className="accent-accent rounded cursor-pointer w-3.5 h-3.5"
+                          />
+                          <span className="text-ink-secondary">{t("sp.unclassified")}</span>
+                        </label>
+                      </div>
+                    </TableHeaderFilterPopover>
+                  </th>
+                )}
+
+                {isColVisible("price") && (
+                  <th className="py-1.5 px-2 sm:px-2.5 text-right whitespace-nowrap">
+                    <div className="flex justify-end">
+                      <TableHeaderFilterPopover
+                        label={t("field.defaultPrice")}
+                        isActive={columnFilters.minPrice != null || columnFilters.maxPrice != null}
+                        onClear={() => setColumnFilters((prev) => ({ ...prev, minPrice: null, maxPrice: null }))}
+                        onApply={loadData}
+                        sortState={columnSort.column === "price" ? columnSort.direction : null}
+                        sortType="numeric"
+                        onSortChange={(dir) => setColumnSort({ column: dir ? "price" : null, direction: dir })}
+                        align="start"
+                        width={260}
+                      >
+                        <div className="space-y-2">
+                          <span className="text-[10px] font-bold uppercase tracking-wider text-ink-muted">
+                            {t("field.defaultPrice")} ($)
+                          </span>
+                          <div className="grid grid-cols-2 gap-2">
+                            <div>
+                              <label className="text-[10px] text-ink-muted block mb-0.5">{t("sp.colFilter.minPrice")}</label>
+                              <input
+                                type="number"
+                                min="0"
+                                step="0.01"
+                                value={columnFilters.minPrice ?? ""}
+                                onChange={(e) => {
+                                  const v = e.target.value === "" ? null : Number(e.target.value);
+                                  setColumnFilters((prev) => ({ ...prev, minPrice: v }));
+                                }}
+                                placeholder="0.00"
+                                className="w-full px-2 py-1 text-xs rounded-lg bg-cushion border border-subtle text-ink outline-none focus:border-accent"
+                              />
+                            </div>
+                            <div>
+                              <label className="text-[10px] text-ink-muted block mb-0.5">{t("sp.colFilter.maxPrice")}</label>
+                              <input
+                                type="number"
+                                min="0"
+                                step="0.01"
+                                value={columnFilters.maxPrice ?? ""}
+                                onChange={(e) => {
+                                  const v = e.target.value === "" ? null : Number(e.target.value);
+                                  setColumnFilters((prev) => ({ ...prev, maxPrice: v }));
+                                }}
+                                placeholder="999.00"
+                                className="w-full px-2 py-1 text-xs rounded-lg bg-cushion border border-subtle text-ink outline-none focus:border-accent"
+                              />
+                            </div>
+                          </div>
+                        </div>
+                      </TableHeaderFilterPopover>
+                    </div>
+                  </th>
+                )}
+
+                {isColVisible("quantity") && (
+                  <th className="py-1.5 px-2 sm:px-2.5 text-center whitespace-nowrap">
+                    <TableHeaderFilterPopover
+                      label={t("field.quantity")}
+                      isActive={band !== "all"}
+                      onClear={() => setBand("all")}
+                      onApply={loadData}
+                      sortState={columnSort.column === "quantity" ? columnSort.direction : null}
+                      sortType="numeric"
+                      onSortChange={(dir) => setColumnSort({ column: dir ? "quantity" : null, direction: dir })}
+                      align="center"
+                      width={220}
+                      className="mx-auto"
+                    >
+                      <div className="space-y-1.5">
+                        <span className="text-[10px] font-bold uppercase tracking-wider text-ink-muted">
+                          {t("sp.colFilter.stockStatus")}
+                        </span>
+                        <div className="flex flex-col gap-1">
+                          {[
+                            { key: "all", label: t("sp.filterAll") },
+                            { key: "good", label: t("sp.stockGood") },
+                            { key: "critical", label: t("sp.stockCritical") },
+                            { key: "out", label: t("sp.stockOut") },
+                          ].map((opt) => (
+                            <label key={opt.key} className="flex items-center gap-2 p-1 rounded-lg hover:bg-cushion cursor-pointer select-none text-xs">
+                              <input
+                                type="radio"
+                                name="stockBandHeader"
+                                checked={band === opt.key}
+                                onChange={() => setBand(opt.key as StockBand | "all")}
+                                className="accent-accent"
+                              />
+                              <span>{opt.label}</span>
+                            </label>
+                          ))}
+                        </div>
+                      </div>
+                    </TableHeaderFilterPopover>
+                  </th>
+                )}
+
+                {isColVisible("barcode") && (
+                  <th className="py-1.5 px-2 sm:px-2.5 text-center whitespace-nowrap">{t("field.barcode")}</th>
+                )}
+                {isColVisible("stockIn") && (
+                  <th className="py-1.5 px-2 sm:px-2.5 text-center whitespace-nowrap">{t("sp.setStock")}</th>
+                )}
+                {isColVisible("stockOut") && (
+                  <th className="py-1.5 px-2 sm:px-2.5 text-center whitespace-nowrap">{t("action.stockOut")}</th>
+                )}
+                {isColVisible("actions") && (
+                  <th className="py-1.5 px-2 sm:px-2.5 text-center whitespace-nowrap">{t("field.actions")}</th>
+                )}
               </tr>
             </thead>
             <tbody className="divide-y divide-subtle text-ink ">
               {isLoading ? (
-                /* Real column cells, not one grey bar across a colSpan. The
-                   old version collapsed ten columns into a single block, so
-                   the table visibly snapped into its column widths the moment
-                   data landed — the jump a skeleton exists to prevent. */
-                <SkeletonRows rows={8} columns={10} leadingThumbnail />
+                /* Real column cells, not one grey bar across a colSpan. */
+                <SkeletonRows rows={8} columns={columnsState.filter((c) => c.visible).length + (isRibbonMode ? 1 : 0)} leadingThumbnail />
               ) : visibleItems.length > 0 ? (
                 <>
-                  {/* Spacer for the rows scrolled off the top. `borderTopWidth`
-                      is forced to 0 inline because the tbody's `divide-y` would
-                      otherwise draw a hairline across an empty row — inline
-                      beats the utility class without a specificity fight. */}
+                  {/* Spacer for the rows scrolled off the top. */}
                   {rowWindow.paddingTop > 0 && (
                     <tr aria-hidden style={{ height: rowWindow.paddingTop, borderTopWidth: 0 }} />
                   )}
@@ -901,8 +2049,14 @@ export default function SparePartsPage() {
                       onPreviewBarcode={handlePreviewBarcode}
                       onStockIn={handleStockIn}
                       onStockOut={handleStockOut}
+                      onSetStock={handleSetStock}
                       onEdit={handleEditPart}
                       onDelete={handleDeletePart}
+                      onPrint={handlePrintPart}
+                      isRibbonMode={isRibbonMode}
+                      isSelected={checkedRow?.id === part.id}
+                      onToggleSelect={(p) => setCheckedRow(checkedRow?.id === p.id ? null : p)}
+                      isColVisible={isColVisible}
                     />
                   ))}
 
@@ -912,17 +2066,18 @@ export default function SparePartsPage() {
                 </>
               ) : (
                 <tr>
-                  <td colSpan={10} className="p-0">
+                  <td colSpan={columnsState.filter((c) => c.visible).length + (isRibbonMode ? 1 : 0)} className="p-0">
                     <EmptyState
                       icon={Box}
                       title={t("sp.empty")}
                       action={
-                        search || band !== "all" ? (
+                        search || band !== "all" || filterKey !== "::" ? (
                           <button
                             type="button"
                             onClick={() => {
                               setSearch("");
                               setBand("all");
+                              setFilters({});
                             }}
                             className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl text-xs font-semibold text-ink bg-surface border border-prominent hover:bg-cushion transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-ring"
                           >
@@ -935,15 +2090,15 @@ export default function SparePartsPage() {
                 </tr>
               )}
 
-              {/* Placeholder rows for the batch being fetched, so the scroll
-                  position has somewhere to land instead of the list ending
-                  abruptly at the sentinel and jumping when rows arrive. */}
-              {isLoadingMore && <SkeletonRows rows={3} columns={10} leadingThumbnail />}
+              {/* Placeholder rows for the batch being fetched */}
+              {isLoadingMore && (
+                <SkeletonRows rows={3} columns={columnsState.filter((c) => c.visible).length + (isRibbonMode ? 1 : 0)} leadingThumbnail />
+              )}
 
-              {/* Infinite-scroll sentinel — observing this row pulls the next batch. */}
+              {/* Infinite-scroll sentinel */}
               {!isLoading && items.length > 0 && (
                 <tr ref={sentinelRef}>
-                  <td colSpan={10} className="py-4 text-center">
+                  <td colSpan={columnsState.filter((c) => c.visible).length + (isRibbonMode ? 1 : 0)} className="py-4 text-center">
                     <InfiniteScrollStatus
                       isLoadingMore={isLoadingMore}
                       reachedEnd={reachedEnd}
@@ -957,13 +2112,8 @@ export default function SparePartsPage() {
           </table>
         </div>
 
-        {/* Status Bar — infinite scroll replaces page controls (this page
-            previously had none at all, capping it at the first page). */}
+        {/* Status Bar */}
         <div className="p-3 md:p-4 shrink-0 border-t border-subtle bg-cushion/50 flex items-center gap-4">
-          {/* How far through the catalogue this list has loaded. The bare
-              "Loaded 25 of 665" sentence was also three hardcoded English
-              fragments ("Loaded", "part"/"parts", "matching"), so it stayed
-              English in the Khmer UI — it reads through t() now. */}
           <div className="flex items-center gap-2.5 min-w-0">
             <span className="text-xs font-semibold text-ink tabular-nums whitespace-nowrap">
               {t("sp.loadedOf", {
@@ -980,19 +2130,21 @@ export default function SparePartsPage() {
             )}
           </div>
 
-          {/* Only shown while a chip is narrowing the view, because that is the
-              only time the number of rows on screen differs from the number
-              loaded — and the difference is exactly what would otherwise be
-              mistaken for a catalogue-wide count. */}
           {band !== "all" && (
             <Badge tone={BAND_TONE[band]} dot>
-              {visibleItems.length} / {items.length}
+              {items.length} / {totalCount}
             </Badge>
           )}
 
           {term && (
             <span className="text-xs text-ink-secondary truncate">
               &ldquo;{term}&rdquo;
+            </span>
+          )}
+
+          {checkedRow && (
+            <span className="text-xs font-medium text-accent ml-auto">
+              1 {isKhmer ? "បានជ្រើសរើស" : "selected"}: {checkedRow.itemName}
             </span>
           )}
         </div>
@@ -1182,6 +2334,18 @@ export default function SparePartsPage() {
                       />
                     </div>
 
+                    <SparePartClassificationFields
+                      value={{
+                        categoryId: formState.categoryId ?? null,
+                        typeId: formState.typeId ?? null,
+                        brandId: formState.brandId ?? null,
+                      }}
+                      onChange={(c) => setFormState((prev) => ({ ...prev, ...c }))}
+                      categoryOptions={taxonomy.categoryOptions}
+                      brandOptions={taxonomy.brandOptions}
+                      typeOptionsFor={taxonomy.typeOptionsFor}
+                    />
+
                     <div className="grid grid-cols-2 gap-3 pt-1">
                       <div className="space-y-1">
                         <label className="text-xs font-semibold text-ink ">
@@ -1198,7 +2362,7 @@ export default function SparePartsPage() {
 
                       <div className="space-y-1">
                         <label className="text-xs font-semibold text-ink ">
-                          Default Price ($)
+                          {t("sp.defaultPrice")}
                         </label>
                         <input
                           type="number"
@@ -1393,6 +2557,152 @@ export default function SparePartsPage() {
                     className="px-4 py-2 text-xs font-semibold text-white bg-danger hover:bg-danger rounded-xl transition-colors shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
                   >
                     {t("sp.confirmStockOut")}
+                  </button>
+                </div>
+              </div>
+            </div>
+          </ModalWrapper>
+        )}
+
+        {/* ── SET STOCK / QUICK QUANTITY EDIT DIALOG ── */}
+        {activeModal === "setStock" && selectedPart && (
+          <ModalWrapper
+            open
+            onClose={() => setActiveModal(null)}
+            maxWidth="max-w-md"
+            zIndex={120}
+            placement="center"
+            backdropVariant="heavy"
+          >
+            <div className="bg-surface border border-subtle rounded-2xl p-6 shadow-2xl font-sans animate-in zoom-in-95 duration-200">
+              <div className="flex items-center justify-between border-b border-subtle pb-3 mb-4">
+                <div className="flex items-center gap-3">
+                  <div className="p-2.5 bg-accent-soft text-accent rounded-xl shadow-inner">
+                    <Edit className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <h3 className="font-bold text-ink text-base">
+                      {isKhmer ? "កំណត់ចំនួនស្តុក" : "Set Stock Quantity"}
+                    </h3>
+                    <p className="text-xs text-ink-secondary truncate max-w-xs">
+                      {selectedPart.itemName} ({selectedPart.serialNumber || selectedPart.partNumber || "N/A"})
+                    </p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setActiveModal(null)}
+                  className="p-1.5 rounded-lg text-ink-muted hover:text-ink-secondary hover:bg-sunken transition-colors"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+
+              <div className="space-y-4">
+                {/* Current vs New comparison card */}
+                <div className="grid grid-cols-2 gap-3 p-3 bg-sunken/80 rounded-xl border border-subtle">
+                  <div className="flex flex-col items-center justify-center p-2 rounded-lg bg-surface border border-subtle">
+                    <span className="text-[11px] font-medium text-ink-muted">
+                      {isKhmer ? "ចំនួនចាស់ (Before)" : "Current Stock"}
+                    </span>
+                    <span className="font-mono text-lg font-bold text-ink-secondary">
+                      {selectedPart.quantity ?? 0} <span className="text-[11px] font-normal">{isKhmer ? "គ្រឿង" : "pcs"}</span>
+                    </span>
+                  </div>
+
+                  <div className="flex flex-col items-center justify-center p-2 rounded-lg bg-surface border border-accent/40 shadow-xs">
+                    <span className="text-[11px] font-bold text-accent">
+                      {isKhmer ? "ចំនួនថ្មី (New)" : "New Stock"}
+                    </span>
+                    <span className="font-mono text-lg font-extrabold text-accent">
+                      {quantityInput} <span className="text-[11px] font-normal">{isKhmer ? "គ្រឿង" : "pcs"}</span>
+                    </span>
+                  </div>
+                </div>
+
+                {/* Delta Badge */}
+                <div className="flex items-center justify-center">
+                  {quantityInput > (selectedPart.quantity ?? 0) ? (
+                    <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold bg-success-soft text-success-fg border border-success/30">
+                      <Plus className="w-3.5 h-3.5" />
+                      <span>+{quantityInput - (selectedPart.quantity ?? 0)} {isKhmer ? "គ្រឿង (បញ្ចូលស្តុក - Stock In)" : "pcs (Stock In)"}</span>
+                    </span>
+                  ) : quantityInput < (selectedPart.quantity ?? 0) ? (
+                    <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold bg-danger-soft text-danger-fg border border-danger/30">
+                      <MinusCircle className="w-3.5 h-3.5" />
+                      <span>-{(selectedPart.quantity ?? 0) - quantityInput} {isKhmer ? "គ្រឿង (ដកស្តុក - Stock Out)" : "pcs (Stock Out)"}</span>
+                    </span>
+                  ) : (
+                    <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-medium bg-sunken text-ink-muted border border-subtle">
+                      <span>{isKhmer ? "មិនមានការផ្លាស់ប្តូរ" : "No change"}</span>
+                    </span>
+                  )}
+                </div>
+
+                {/* Input with Quick Buttons */}
+                <div>
+                  <label className="block text-xs font-semibold text-ink mb-1.5">
+                    {isKhmer ? "បញ្ចូលចំនួនស្តុកថ្មី៖" : "Enter new stock quantity:"}
+                  </label>
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="number"
+                      min="0"
+                      value={quantityInput}
+                      onChange={(e) => setQuantityInput(Math.max(0, parseInt(e.target.value) || 0))}
+                      className="w-full px-3 py-2 text-base font-mono font-bold border border-subtle rounded-xl bg-surface text-ink focus:ring-2 focus:ring-accent/20 outline-none"
+                      autoFocus
+                    />
+                  </div>
+
+                  {/* Quick delta buttons */}
+                  <div className="flex items-center justify-between gap-1.5 mt-2">
+                    {[-10, -5, -1, 1, 5, 10].map((delta) => (
+                      <button
+                        key={delta}
+                        type="button"
+                        onClick={() => setQuantityInput((prev) => Math.max(0, prev + delta))}
+                        className={`flex-1 py-1 text-xs font-semibold rounded-lg border transition-colors ${
+                          delta > 0
+                            ? "bg-success-soft text-success-fg border-success/30 hover:bg-success/20"
+                            : "bg-danger-soft text-danger-fg border-danger/30 hover:bg-danger/20"
+                        }`}
+                      >
+                        {delta > 0 ? `+${delta}` : delta}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Reason / Remarks */}
+                <div>
+                  <label className="block text-xs font-medium text-ink mb-1">
+                    {isKhmer ? "កំណត់ចំណាំ / មូលហេតុ (Reason)" : "Remarks / Reason"}
+                  </label>
+                  <input
+                    type="text"
+                    placeholder={isKhmer ? "បញ្ជាក់មូលហេតុកែប្រែស្តុក..." : "e.g. Direct quantity edit..."}
+                    value={reasonInput}
+                    onChange={(e) => setReasonInput(e.target.value)}
+                    className="w-full px-3 py-2 text-xs border border-subtle rounded-xl bg-surface text-ink outline-none focus:ring-2 focus:ring-accent/20"
+                  />
+                </div>
+
+                {/* Footer Buttons */}
+                <div className="flex items-center justify-end gap-2 pt-3 border-t border-subtle">
+                  <button
+                    type="button"
+                    onClick={() => setActiveModal(null)}
+                    className="px-4 py-2 text-xs font-semibold text-ink-secondary hover:bg-sunken rounded-xl transition-colors"
+                  >
+                    {t("action.cancel")}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleSetStockSubmit}
+                    className="px-4 py-2 text-xs font-bold text-white bg-accent hover:bg-accent/90 rounded-xl transition-colors shadow-sm"
+                  >
+                    {isKhmer ? "រក្សាទុកចំនួនស្តុក" : "Save Stock Quantity"}
                   </button>
                 </div>
               </div>

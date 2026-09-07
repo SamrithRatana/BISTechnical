@@ -18,6 +18,7 @@ export interface SparePartItemDetail {
   sparePartId: string;
   itemName?: string;
   useFor?: string;
+  partNumber?: string;
   /**
    * The line's own stored text, distinct from the catalog part's `itemName`.
    * Kept even when a row is enriched from the catalog, because saving a
@@ -53,7 +54,89 @@ export interface SparePartItem {
   description?: string;
   /** "In Stock" | "Low Stock" | "Out of Stock" | "CRITICAL" */
   status?: string;
+  /** The machine model this part is linked to; all-zero GUID when none. */
+  linkItemId?: string;
+  // Classification — null/undefined until someone files the part.
+  categoryId?: string | null;
+  categoryName?: string | null;
+  typeId?: string | null;
+  typeName?: string | null;
+  brandId?: string | null;
+  brandName?: string | null;
+  brandLogoUrl?: string | null;
 }
+
+// ---------------------------------------------------------------------------
+// Spare-part taxonomy (Category → Type, Brand)
+// ---------------------------------------------------------------------------
+
+/**
+ * What the create / update payloads carry as `classification`. Sending the
+ * object at all means "set all three"; omitting it means "leave them alone"
+ * (the phone app never sends it). `null` clears a field — never send `""`,
+ * which the .NET body binder rejects as an invalid Guid.
+ */
+export interface SparePartClassification {
+  categoryId: string | null;
+  typeId: string | null;
+  brandId: string | null;
+}
+
+export interface SparePartCategory {
+  id: string;
+  name: string;
+  description: string | null;
+  sortOrder: number;
+  /** Types under this category. */
+  typeCount: number;
+  /** Parts filed under this category. */
+  partCount: number;
+}
+
+export interface SparePartType {
+  id: string;
+  categoryId: string;
+  categoryName: string;
+  name: string;
+  description: string | null;
+  sortOrder: number;
+  partCount: number;
+}
+
+export interface SparePartBrand {
+  id: string;
+  /** Always upper-case; the API normalises and the DB enforces it. */
+  name: string;
+  logoUrl: string | null;
+  partCount: number;
+}
+
+/** Field set a taxonomy form submits. `sortOrder` is ignored for brands. */
+export interface SparePartTaxonomyInput {
+  name: string;
+  description?: string | null;
+  sortOrder?: number;
+  /** Types only. */
+  categoryId?: string;
+  /** Brands only. */
+  logoUrl?: string | null;
+}
+
+/**
+ * Outcome of a write the UI needs to explain, not just pass/fail. The API
+ * answers ProblemDetails with a stable `code` — `duplicate`, `inUse`,
+ * `constraint` — and, for "in use", the number of rows still pointing at the
+ * record. A screen keys its message off `code`, never off `detail`.
+ */
+export type ApiWriteResult =
+  | { ok: true; id?: string }
+  | {
+      ok: false;
+      status: number;
+      code?: "duplicate" | "inUse" | "constraint" | "validation" | "notFound" | "network";
+      detail?: string;
+      count?: number;
+    };
 
 // ---------------------------------------------------------------------------
 // Service Tickets
@@ -118,6 +201,7 @@ export interface RepairServiceItem {
   thirdPartyRepairByName?: string;
   /** Who verified/finished — verifiedBy */
   verifiedByName?: string;
+  verifiedByPhone?: string;
   setCustomerRejectedByName?: string;
   setUnrepairableByName?: string;
 
@@ -142,6 +226,7 @@ export interface RepairServiceItem {
   // ── Service / Repair Info ──────────────────────────────────────────────────
   serviceLocation: string;
   serviceType?: string;
+  serviceTypeId?: number;
   servicePriority: "LOW" | "NORMAL" | "HIGH" | string;
   status: string;
   statusId?: number;
@@ -402,6 +487,70 @@ export const SERVICE_STATUSES_DB: ServiceStatusDbItem[] = [
 ];
 
 /**
+ * Determines whether the spare parts section of a service ticket should be
+ * locked (read-only, cannot add, remove or edit spare parts).
+ *
+ * Locked statuses:
+ * - 1: Item Recieved
+ * - 10: Inspecting (Note: Status 2 "Inspection" is UNLOCKED and editable!)
+ * - 7: Customer Rejected
+ * - 8: Unrepairable
+ */
+export function isSparepartLockedStatus(ticket?: RepairServiceItem | null): boolean {
+  if (!ticket) return false;
+
+  const sid = (ticket as any).statusId ?? (ticket as any)._serviceStatusId;
+  if (typeof sid === "number") {
+    // 1: Item Recieved, 7: Customer Rejected, 8: Unrepairable, 10: Inspecting
+    // Note: statusId 2 is "Inspection" which is editable / unlocked!
+    if (sid === 1 || sid === 7 || sid === 8 || sid === 10) {
+      return true;
+    }
+  }
+
+  const s = String(ticket.status || "").toLowerCase().trim();
+  if (!s) return false;
+
+  // 1: Item Recieved / Received
+  if (
+    s.includes("item rec") ||
+    s.includes("received") ||
+    s.includes("recieved") ||
+    s.includes("បានទទួល") ||
+    s.includes("ទើបទទួល")
+  ) {
+    return true;
+  }
+
+  // 10: Inspecting ONLY (strictly does NOT lock "inspection")
+  if (
+    s.includes("inspecting") ||
+    s.includes("កំពុងពិនិត្យ") ||
+    s.includes("កំពុងវិនិច្ឆ័យ")
+  ) {
+    return true;
+  }
+
+  // 7: Customer Rejected
+  if (
+    s.includes("reject") ||
+    s.includes("បដិសេធ")
+  ) {
+    return true;
+  }
+
+  // 8: Unrepairable
+  if (
+    s.includes("unrepairable") ||
+    s.includes("មិនអាចជួសជុល")
+  ) {
+    return true;
+  }
+
+  return false;
+}
+
+/**
  * Formats a time as 24-hour digits with an AM/PM label still appended
  * (e.g. "13:17 PM"), matching how this app's users read a timestamp — not a
  * standard clock convention, so there is no Intl option for it and it must
@@ -477,6 +626,17 @@ export interface PaginatedResult<T> {
   pageNumber: number;
   pageSize: number;
   totalPages: number;
+  goodCount?: number;
+  criticalCount?: number;
+  outOfStockCount?: number;
+  totalAll?: number;
+}
+
+export interface CustomerTypeItem {
+  listId: number;
+  type: string;
+  description?: string;
+  isActive?: boolean;
 }
 
 export interface CustomerItem {
@@ -486,6 +646,7 @@ export interface CustomerItem {
   phoneNumber?: string;
   address?: string;
   customerType?: string;
+  customerTypeListId?: number | null;
   isActive?: boolean;
 }
 

@@ -126,18 +126,7 @@ function ScannerContent() {
     };
 
     es.onerror = () => {
-      // Check if session has been closed on PC
-      fetch(`/api/scanner/session?sessionId=${sessionId}`)
-        .then((res) => {
-          if (res.status === 410 || res.status === 404) {
-            setIsTerminated(true);
-            if (streamRef.current) {
-              streamRef.current.getTracks().forEach((t) => t.stop());
-              streamRef.current = null;
-            }
-          }
-        })
-        .catch(() => {});
+      // EventSource auto-reconnects automatically; don't terminate immediately on brief network hiccups
     };
 
     return () => {
@@ -201,6 +190,7 @@ function ScannerContent() {
     [sessionId, playBeep]
   );
 
+
   // ── Decode Barcode from Photo File (Works in HTTP without SSL and Snapshot Mode) ──
   const handleFileCapture = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -212,67 +202,65 @@ function ScannerContent() {
       const img = new Image();
       img.src = imgUrl;
 
-      img.onload = async () => {
-        let detected = false;
+      await new Promise<void>((resolve) => {
+        img.onload = () => resolve();
+        img.onerror = () => resolve();
+      });
 
-        // 1. Try Native BarcodeDetector if available
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const NativeBarcodeDetector = (window as any).BarcodeDetector;
-        if (NativeBarcodeDetector) {
-          try {
-            const detector = new NativeBarcodeDetector({
-              formats: [
-                "code_128",
-                "code_39",
-                "ean_13",
-                "ean_8",
-                "qr_code",
-                "data_matrix",
-                "itf",
-                "upc_a",
-                "upc_e",
-              ],
-            });
-            const barcodes = await detector.detect(img);
-            if (barcodes?.length && barcodes[0]?.rawValue) {
-              handleBarcodeDetected(barcodes[0].rawValue, barcodes[0].format);
-              detected = true;
-            }
-          } catch (err) {
-            console.warn("Native file decode failed:", err);
+      let detected = false;
+
+      // 1. Try Native BarcodeDetector if available
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const NativeBarcodeDetector = (window as any).BarcodeDetector;
+      if (NativeBarcodeDetector) {
+        try {
+          const detector = new NativeBarcodeDetector({
+            formats: [
+              "code_128",
+              "code_39",
+              "ean_13",
+              "ean_8",
+              "qr_code",
+              "data_matrix",
+              "itf",
+              "upc_a",
+              "upc_e",
+            ],
+          });
+          const barcodes = await detector.detect(img);
+          if (barcodes?.length && barcodes[0]?.rawValue) {
+            handleBarcodeDetected(barcodes[0].rawValue, barcodes[0].format);
+            detected = true;
           }
+        } catch (err) {
+          console.warn("Native file decode failed:", err);
         }
+      }
 
-        // 2. Fallback to ZXing
-        if (!detected) {
-          try {
-            const reader = new BrowserMultiFormatReader();
-            const result = await reader.decodeFromImageUrl(imgUrl);
-            if (result) {
-              handleBarcodeDetected(result.getText(), result.getBarcodeFormat().toString());
-              detected = true;
-            }
-          } catch (err) {
-            console.warn("ZXing file decode failed:", err);
+      // 2. Fallback to ZXing 1D/2D Barcode reader
+      if (!detected) {
+        try {
+          const reader = new BrowserMultiFormatReader();
+          const result = await reader.decodeFromImageUrl(imgUrl);
+          if (result) {
+            handleBarcodeDetected(result.getText(), result.getBarcodeFormat().toString());
+            detected = true;
           }
+        } catch (err) {
+          // ZXing throws NotFoundException when barcode lines are damaged or covered - expected!
         }
+      }
 
-        URL.revokeObjectURL(imgUrl);
-        if (cameraInputRef.current) cameraInputRef.current.value = "";
-        if (galleryInputRef.current) galleryInputRef.current.value = "";
-        setIsProcessingImage(false);
 
-        if (!detected) {
-          alert("មិនអាចចាប់ Barcode លើរូបភាពនេះបានទេ សូមសាកល្បងថតឱ្យជិត និងច្បាស់ជាងនេះបន្តិច");
-        }
-      };
 
-      img.onerror = () => {
-        URL.revokeObjectURL(imgUrl);
-        if (cameraInputRef.current) cameraInputRef.current.value = "";
-        if (galleryInputRef.current) galleryInputRef.current.value = "";
-        setIsProcessingImage(false);
-      };
+      URL.revokeObjectURL(imgUrl);
+      if (cameraInputRef.current) cameraInputRef.current.value = "";
+      if (galleryInputRef.current) galleryInputRef.current.value = "";
+      setIsProcessingImage(false);
+
+      if (!detected) {
+        alert("មិនអាចចាប់ Barcode ឬលេខសម្គាល់លើរូបភាពនេះបានទេ សូមសាកល្បងថតឱ្យជិត និងចំលេខបារកូដច្បាស់ជាងនេះបន្តិច");
+      }
     } catch (err) {
       console.error("File processing error:", err);
       if (cameraInputRef.current) cameraInputRef.current.value = "";

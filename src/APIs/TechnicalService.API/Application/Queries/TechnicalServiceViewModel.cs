@@ -14,6 +14,17 @@ public record Sparepart
     public Guid LinkItemId { get; init; }
     public int Quantity { get; init; }
     public decimal DefaultPrice { get; init; }
+
+    // Classification — all null for parts that have not been classified yet.
+    // Names and the brand logo are projected alongside the ids so the list
+    // can render them without a second lookup per row.
+    public Guid? CategoryId { get; init; }
+    public string? CategoryName { get; init; }
+    public Guid? TypeId { get; init; }
+    public string? TypeName { get; init; }
+    public Guid? BrandId { get; init; }
+    public string? BrandName { get; init; }
+    public string? BrandLogoUrl { get; init; }
 }
 public record SparepartWithUsage
 {
@@ -44,12 +55,14 @@ public record SparepartItem
 public record Service
 {
     public Guid Id { get; init; }
+    public Guid CustomerId { get; init; }
     public string ReportNo { get; init; }
     public DateTime ServiceDate { get; init; }
     public string CompanyName { get; init; }
     public string Address { get; init; }
     public string ContactName { get; init; }
     public string PhoneNumber { get; init; }
+    public Guid? ItemId { get; init; }
     public string ItemName { get; init; }
     public string SerialNumber { get; init; }
     public string CustomerRequest { get; init; }
@@ -57,8 +70,11 @@ public record Service
     public string Solution { get; init; }
     public string ServiceLocation { get; init; }
     public string ServiceType { get; init; }
+    public int? ServiceTypeId { get; init; }
     public string ServicePriority { get; init; }
+    public int? ServicePriorityId { get; init; }
     public string Status { get; init; }
+    public int? StatusId { get; init; }
     public bool HasContract { get; init; }
     public Guid? CreateBy { get; init; }
     public DateTime? InspectDate { get; init; }
@@ -85,6 +101,9 @@ public record Service
 
     public DateTime? SaleConfirmedDate { get; init; }
     public Guid? SetSaleConfirmedBy { get; init; }
+
+    public DateTime? SentSparepartsDate { get; init; }
+    public Guid? SetSentSparepartsBy { get; init; }
 
     public List<SparepartItem> SparepartItems { get; set; }
 }
@@ -122,6 +141,7 @@ public record SparepartTransactionRow
     public Guid SparepartId { get; init; }
     public string ItemName { get; init; }
     public string SerialNumber { get; init; }
+    public string? PictureUrl { get; init; }
 
     /// <summary>The trigger's own label: STOCK_IN or STOCK_OUT.</summary>
     public string OperationType { get; init; }
@@ -458,13 +478,13 @@ public class SparepartHoldResult
 }
 public class SparepartHoldQuery
 {
-    public int PageNumber { get; set; } = 1;
-    public int PageSize { get; set; } = 15;
-    public string SearchTerm { get; set; }
-    public string Status { get; set; }
-    public string ServiceType { get; set; }
-    public string SortBy { get; set; } = "holdqty";
-    public bool SortDescending { get; set; } = true;
+    public int? PageNumber { get; set; } = 1;
+    public int? PageSize { get; set; } = 15;
+    public string? SearchTerm { get; set; }
+    public string? Status { get; set; }
+    public string? ServiceType { get; set; }
+    public string? SortBy { get; set; } = "holdqty";
+    public bool? SortDescending { get; set; } = true;
 }
 
 public record Item

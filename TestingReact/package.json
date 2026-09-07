@@ -7,11 +7,13 @@
     "dev:turbo": "next dev -H 0.0.0.0 --turbo",
     "dev:webpack": "next dev -H 0.0.0.0 --webpack",
     "dev:https": "next dev -H 0.0.0.0 --experimental-https --experimental-https-key ./certificates/localhost-key.pem --experimental-https-cert ./certificates/localhost.pem",
-    "build": "node scripts/build-report-templates.mjs && next build --webpack",
+    "build": "node scripts/sync-report-layout.mjs --check && node scripts/build-report-templates.mjs && next build --webpack",
     "start": "next start -H 0.0.0.0",
     "lint": "eslint",
-    "typecheck": "tsc --noEmit",
-    "build:templates": "node scripts/build-report-templates.mjs"
+    "typecheck": "node scripts/sync-report-layout.mjs --check && tsc --noEmit",
+    "build:templates": "node scripts/build-report-templates.mjs",
+    "sync:shared": "node scripts/sync-report-layout.mjs",
+    "check:shared": "node scripts/sync-report-layout.mjs --check"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.116.0",
@@ -25,6 +27,7 @@
     "clsx": "^2.1.1",
     "exceljs": "^4.4.0",
     "framer-motion": "^13.1.0",
+    "html2pdf.js": "^0.14.0",
     "lucide-react": "^1.31.0",
     "next": "^16.3.2",
     "qrcode": "^1.5.4",
@@ -41,6 +44,6 @@
     "eslint": "^9",
     "eslint-config-next": "16.3.0",
     "tailwindcss": "^4",
-    "typescript": "^5.9.3"
+    "typescript": "^5.7.3"
   }
 }

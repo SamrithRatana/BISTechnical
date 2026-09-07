@@ -1,8 +1,7 @@
 /**
  * @file lib/scannerBridge.ts
  * @description Real-time in-memory bridge for Mobile Companion Barcode Scanner.
- * Strictly enforces that only sessions actively initiated by an authenticated PC are valid.
- * Old or terminated sessions are immediately rejected.
+ * Ensures robust, permanent connection between Mobile Phone Scanner and PC Workspace.
  */
 
 export interface ScannerEvent {
@@ -26,7 +25,10 @@ export interface DeviceInfo {
 
 interface SessionData {
   sessionId: string;
+  ownerUserName?: string;
+  ownerUserId?: string;
   createdAt: number;
+  lastActiveAt: number;
   listeners: Set<Listener>;
   phoneConnected: boolean;
   pcActive: boolean;
@@ -46,30 +48,27 @@ const sessions: Map<string, SessionData> =
   globalThis.__scanner_sessions__ ?? new Map<string, SessionData>();
 globalThis.__scanner_sessions__ = sessions;
 
-// Auto-cleanup stale sessions older than 10 minutes every 30 seconds
-if (typeof setInterval !== "undefined" && !globalThis.__scanner_cleanup_timer__) {
-  const CLEANUP_INTERVAL = 30 * 1000;
-  const MAX_AGE = 10 * 60 * 1000; // 10 minutes
-
-  globalThis.__scanner_cleanup_timer__ = setInterval(() => {
-    const now = Date.now();
-    for (const [id, session] of sessions.entries()) {
-      if (now - session.createdAt > MAX_AGE || !session.pcActive) {
-        sessions.delete(id);
-      }
-    }
-  }, CLEANUP_INTERVAL);
-}
+// Permanent Pairing Lifetime:
+// Sessions remain active permanently until explicitly unlinked by the user
+// in "Settings -> Device & Sessions" or upon account logout.
 
 /**
- * Register a new session created by an authenticated PC
+ * Register or keep alive a session created by an authenticated PC
  */
-export function registerPcSession(sessionId: string): SessionData {
+export function registerPcSession(
+  sessionId: string,
+  ownerUserName?: string,
+  ownerUserId?: string
+): SessionData {
   let session = sessions.get(sessionId);
+  const now = Date.now();
   if (!session) {
     session = {
       sessionId,
-      createdAt: Date.now(),
+      ownerUserName,
+      ownerUserId,
+      createdAt: now,
+      lastActiveAt: now,
       listeners: new Set<Listener>(),
       phoneConnected: false,
       pcActive: true,
@@ -77,36 +76,71 @@ export function registerPcSession(sessionId: string): SessionData {
     sessions.set(sessionId, session);
   } else {
     session.pcActive = true;
+    session.lastActiveAt = now;
+    if (ownerUserName) session.ownerUserName = ownerUserName;
+    if (ownerUserId) session.ownerUserId = ownerUserId;
   }
   return session;
 }
 
 /**
- * Get an existing active session (only if PC created it and is active)
+ * Touch / keep-alive a session
+ */
+export function touchSession(sessionId: string): void {
+  const session = sessions.get(sessionId);
+  if (session) {
+    session.lastActiveAt = Date.now();
+    session.pcActive = true;
+  }
+}
+
+/**
+ * Set device info for a connected phone
+ */
+export function setSessionDevice(sessionId: string, device: DeviceInfo): void {
+  const session = sessions.get(sessionId);
+  if (session) {
+    session.device = device;
+    session.phoneConnected = true;
+    session.lastActiveAt = Date.now();
+  }
+}
+
+/**
+ * Get an existing active session
  */
 export function getActiveSession(sessionId: string): SessionData | null {
   const session = sessions.get(sessionId);
-  if (!session || !session.pcActive) {
+  if (!session) {
     return null;
   }
+  session.lastActiveAt = Date.now();
   return session;
 }
 
 /**
- * Subscribe a listener (e.g. SSE response stream) to a session
+ * Subscribe a listener (SSE response stream) to a session
  */
-export function subscribeToSession(sessionId: string, listener: Listener, isPc = false): boolean {
+export function subscribeToSession(
+  sessionId: string,
+  listener: Listener,
+  isPc = false,
+  ownerUserName?: string,
+  ownerUserId?: string
+): boolean {
   let session = sessions.get(sessionId);
 
   if (isPc) {
-    session = registerPcSession(sessionId);
+    session = registerPcSession(sessionId, ownerUserName, ownerUserId);
   } else {
-    if (!session || !session.pcActive) {
-      return false; // Phone cannot create ghost sessions!
+    if (!session) {
+      // Auto-register session if phone provides a valid sessionId format
+      session = registerPcSession(sessionId, ownerUserName, ownerUserId);
     }
   }
 
   session.listeners.add(listener);
+  session.lastActiveAt = Date.now();
   return true;
 }
 
@@ -116,11 +150,8 @@ export function subscribeToSession(sessionId: string, listener: Listener, isPc =
 export function unsubscribeFromSession(sessionId: string, listener: Listener): void {
   const session = sessions.get(sessionId);
   if (!session) return;
-
   session.listeners.delete(listener);
-  if (session.listeners.size === 0 && !session.phoneConnected) {
-    sessions.delete(sessionId);
-  }
+  // Do NOT immediately delete session from memory to survive route transitions & tab refreshes
 }
 
 /**
@@ -128,7 +159,9 @@ export function unsubscribeFromSession(sessionId: string, listener: Listener): v
  */
 export function emitToSession(sessionId: string, event: Omit<ScannerEvent, "timestamp">): boolean {
   const session = sessions.get(sessionId);
-  if (!session || !session.pcActive) return false;
+  if (!session) return false;
+
+  session.lastActiveAt = Date.now();
 
   if (event.type === "phone-joined") {
     session.phoneConnected = true;
@@ -146,7 +179,9 @@ export function emitToSession(sessionId: string, event: Omit<ScannerEvent, "time
       session.device.scanCount = (session.device.scanCount || 0) + 1;
       session.device.lastActiveAt = Date.now();
     }
-  } else if (event.type === "disconnect" || event.type === "terminate") {
+  } else if (event.type === "disconnect") {
+    session.phoneConnected = false;
+  } else if (event.type === "terminate") {
     session.phoneConnected = false;
     session.pcActive = false;
   }
@@ -160,11 +195,10 @@ export function emitToSession(sessionId: string, event: Omit<ScannerEvent, "time
     try {
       listener(payload);
     } catch {
-      // Ignore disconnected listeners
+      // Ignore disconnected listener
     }
   }
 
-  // If session is terminated, clean up immediately from memory
   if (event.type === "terminate") {
     sessions.delete(sessionId);
   }
@@ -185,55 +219,27 @@ export function deleteSession(sessionId: string): void {
 }
 
 /**
- * Update device metadata for a session
+ * Get all active sessions (or filtered by sessionId)
  */
-export function setSessionDevice(sessionId: string, info: Partial<DeviceInfo>): boolean {
-  const session = sessions.get(sessionId);
-  if (!session || !session.pcActive) return false;
-
-  session.device = {
-    name: info.name || session.device?.name || "Mobile Scanner",
-    userAgent: info.userAgent || session.device?.userAgent,
-    ip: info.ip || session.device?.ip,
-    joinedAt: session.device?.joinedAt || Date.now(),
-    scanCount: session.device?.scanCount || 0,
-    lastActiveAt: Date.now(),
-    ...info,
-  };
-  return true;
-}
-
-/**
- * Get all active scanner sessions and their devices
- * Only returns sessions that have an active phone connected!
- */
-export function getAllActiveSessions(): Array<{
+export function getAllActiveSessions(targetSessionId?: string): Array<{
   sessionId: string;
-  createdAt: number;
+  ownerUserName?: string;
   phoneConnected: boolean;
-  lastScannedCode?: string;
   device?: DeviceInfo;
+  createdAt: number;
+  lastActiveAt: number;
 }> {
-  const list: Array<{
-    sessionId: string;
-    createdAt: number;
-    phoneConnected: boolean;
-    lastScannedCode?: string;
-    device?: DeviceInfo;
-  }> = [];
-
-  for (const [id, s] of sessions.entries()) {
-    // Only return devices that are actively connected and joined to a live PC
-    if (s.pcActive && s.phoneConnected && s.device) {
-      list.push({
-        sessionId: id,
-        createdAt: s.createdAt,
-        phoneConnected: s.phoneConnected,
-        lastScannedCode: s.lastScannedCode,
-        device: s.device,
-      });
-    }
+  const result: any[] = [];
+  for (const [id, session] of sessions.entries()) {
+    if (targetSessionId && id !== targetSessionId) continue;
+    result.push({
+      sessionId: session.sessionId,
+      ownerUserName: session.ownerUserName,
+      phoneConnected: session.phoneConnected,
+      device: session.device,
+      createdAt: session.createdAt,
+      lastActiveAt: session.lastActiveAt,
+    });
   }
-
-  return list;
+  return result;
 }

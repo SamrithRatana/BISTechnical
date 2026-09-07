@@ -1,17 +1,19 @@
 import type { Metadata } from "next";
-import { Geist, Geist_Mono, Noto_Sans_Khmer } from "next/font/google";
+import { Geist, Geist_Mono, Noto_Sans_Khmer, Battambang, Kantumruy_Pro } from "next/font/google";
+import { Suspense } from "react";
 import AuthGuard from "@/components/AuthGuard";
-import ThemeScript from "@/components/ThemeScript";
 import MotionPreference from "@/components/MotionPreference";
 import { ActionBusProvider } from "@/components/ActionBus";
 import { AiAssistantProvider } from "@/components/ai/AiAssistantProvider";
-import AiAssistantPanel from "@/components/ai/AiAssistantPanel";
+import AiAssistantPanelHost from "@/components/ai/AiAssistantPanelHost";
 import AiLauncher from "@/components/ai/AiLauncher";
-import { LanguageProvider, LanguageScript } from "@/i18n/LanguageProvider";
+import { LanguageProvider } from "@/i18n/LanguageProvider";
 import { ThemeProvider } from "@/theme/ThemeProvider";
 import { CompanionScannerProvider } from "@/context/CompanionScannerContext";
 import GlobalCompanionModal from "@/components/GlobalCompanionModal";
 import PerformanceProvider from "@/components/PerformanceProvider";
+import TopNavigationProgressBar from "@/components/TopNavigationProgressBar";
+import AppShell from "@/components/AppShell";
 import { Toaster } from "react-hot-toast";
 import "./globals.css";
 
@@ -25,23 +27,24 @@ const geistMono = Geist_Mono({
   subsets: ["latin"],
 });
 
-/**
- * The Khmer UI face, self-hosted rather than fetched from Google.
- *
- * It was previously requested twice on every page load — a <link rel=stylesheet>
- * in the <head> below and an `@import url(...)` at the top of globals.css — and
- * both were render-blocking. next/font downloads the file at build time and
- * serves it from this origin, so a page load now makes no request to
- * fonts.googleapis.com or fonts.gstatic.com at all.
- *
- * `display: "swap"` keeps text visible while the face loads, matching the
- * `&display=swap` the old URL carried. The full 100..900 axis is preserved
- * because the UI relies on real bold cuts in dense tables.
- */
 const notoSansKhmer = Noto_Sans_Khmer({
   variable: "--font-noto-khmer",
   subsets: ["khmer"],
-  weight: ["100", "200", "300", "400", "500", "600", "700", "800", "900"],
+  weight: ["400", "500", "600", "700", "800", "900"],
+  display: "swap",
+});
+
+const battambang = Battambang({
+  variable: "--font-battambang",
+  subsets: ["khmer"],
+  weight: ["400", "700"],
+  display: "swap",
+});
+
+const kantumruyPro = Kantumruy_Pro({
+  variable: "--font-kantumruy",
+  subsets: ["khmer"],
+  weight: ["400", "500", "600", "700"],
   display: "swap",
 });
 
@@ -57,26 +60,22 @@ export default function RootLayout({
 }) {
   return (
     <html
-      lang="en"
-      // LanguageScript rewrites lang/data-lang here before hydration, so the
-      // attributes legitimately differ from this server-rendered markup.
+      lang="km"
       suppressHydrationWarning
-      className={`${geistSans.variable} ${geistMono.variable} ${notoSansKhmer.variable} h-full antialiased`}
+      className={`${geistSans.variable} ${geistMono.variable} ${notoSansKhmer.variable} ${battambang.variable} ${kantumruyPro.variable} h-full antialiased`}
     >
       <head>
-        {/* No font <link> and no preconnects: every face is self-hosted by
-            next/font, so there is nothing to connect to. The two preconnect
-            hints that used to sit here pointed at fonts.googleapis.com and
-            fonts.gstatic.com and are now dead weight — a preconnect to an
-            origin the page never calls costs a DNS lookup and a TLS handshake
-            for nothing. */}
-        <LanguageScript />
-        {/* Both run before first paint so the opening frame already has the
-            right language and the right theme. */}
-        <ThemeScript />
+        <link rel="manifest" href="/manifest.json" />
+        <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+        <meta name="apple-mobile-web-app-capable" content="yes" />
+        <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+        <meta name="apple-mobile-web-app-title" content="CAM ID" />
       </head>
       <body className="min-h-full flex flex-col bg-[var(--background)]" suppressHydrationWarning>
         <LanguageProvider>
+          <Suspense fallback={null}>
+            <TopNavigationProgressBar />
+          </Suspense>
           {/* Outside AuthGuard: the login screen is themed too, and the theme
               must survive the route change that logging in causes. */}
           <ThemeProvider>
@@ -101,10 +100,12 @@ export default function RootLayout({
                 pages so the conversation survives navigation. */}
             <AiAssistantProvider>
               <CompanionScannerProvider>
-                <AuthGuard>{children}</AuthGuard>
+                <AuthGuard>
+                  <AppShell>{children}</AppShell>
+                </AuthGuard>
                 <GlobalCompanionModal />
                 <AiLauncher />
-                <AiAssistantPanel />
+                <AiAssistantPanelHost />
               </CompanionScannerProvider>
             </AiAssistantProvider>
           </ActionBusProvider>

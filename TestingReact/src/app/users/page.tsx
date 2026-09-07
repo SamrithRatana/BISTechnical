@@ -6,19 +6,11 @@
  * UserManagementAPI via Next.js proxy (/api/proxy/UserManagement?service=jwt).
  */
 
-import React, { useState, useEffect, useCallback, useSyncExternalStore } from "react";
-import Sidebar from "@/components/Sidebar";
-import Header from "@/components/Header";
+import React, { useState, useEffect, useCallback } from "react";
+import PageTransition from "@/components/PageTransition";
 import RequireRole, { useHasRole } from "@/components/RequireRole";
 import { ADMIN_ROLES } from "@/services/authSession";
-import {
-  readSidebarOpen,
-  readSidebarOpenOnServer,
-  setSidebarOpen,
-  subscribeToSidebar,
-} from "@/services/sidebarPreference";
-import { sidebarMarginClass } from "@/lib/sidebarMetrics";
-import { useTheme } from "@/theme/ThemeProvider";
+import { useRealtimeTickets } from "@/hooks/useRealtimeTickets";
 import { useI18n } from "@/i18n/LanguageProvider";
 import {
   Users,
@@ -30,12 +22,14 @@ import {
   CheckCircle2,
   XCircle,
   Loader2,
-  Edit,
   Mail,
   Phone,
-  User
-  } from "lucide-react";
+  User,
+  KeyRound,
+} from "lucide-react";
 import { ModalWrapper } from "@/components/av/ModalWrapper";
+import PermissionMatrix from "@/components/permissions/PermissionMatrix";
+import UserPermissionsModal from "@/components/permissions/UserPermissionsModal";
 
 interface SystemUser {
   id: string;
@@ -62,10 +56,12 @@ interface UserRoleAssignment {
 }
 
 export default function UsersPage() {
-  const { t, lang } = useI18n();
+  const { lang } = useI18n();
   const isKhmer = lang === "km";
 
-  const [activeTab, setActiveTab] = useState<"users" | "roles">("users");
+  const [activeTab, setActiveTab] = useState<"users" | "roles" | "permissions">("users");
+  const [selectedRoleForPerms, setSelectedRoleForPerms] = useState<string>("");
+  const [viewPermsUser, setViewPermsUser] = useState<SystemUser | null>(null);
 
   // Data states
   const [usersList, setUsersList] = useState<SystemUser[]>([]);
@@ -89,11 +85,6 @@ export default function UsersPage() {
   const [newPassword, setNewPassword] = useState("");
   const [creatingUser, setCreatingUser] = useState(false);
 
-  // Fetch Users & Roles
-  // The User/Role Management controllers now require a signed-in caller (they
-  // previously had no [Authorize] at all, so create-user and role assignment
-  // were open to anyone). The proxy route only forwards an Authorization header
-  // when the browser sent one, so these calls have to attach the token.
   const authHeaders = useCallback((extra: Record<string, string> = {}) => {
     const headers: Record<string, string> = { Accept: "application/json", ...extra };
     if (typeof window !== "undefined") {
@@ -112,16 +103,16 @@ export default function UsersPage() {
       });
       if (usersRes.ok) {
         const uData = await usersRes.json();
-        const raw = uData.Data || uData.items || (Array.isArray(uData) ? uData : []);
-        const mapped: SystemUser[] = raw.map((u: any) => ({
+        const raw: Record<string, unknown>[] = (uData.Data || uData.items || (Array.isArray(uData) ? uData : [])) as Record<string, unknown>[];
+        const mapped: SystemUser[] = raw.map((u: Record<string, unknown>) => ({
           id: String(u.id || u.Id || ""),
-          userName: u.userName || u.UserName || "",
-          email: u.email || u.Email || "",
-          firstName: u.firstName || u.FirstName || "",
-          lastName: u.lastName || u.LastName || "",
-          phoneNumber: u.phoneNumber || u.PhoneNumber || "",
-          profilePictureUrl: u.profilePictureUrl || u.ProfilePictureUrl || "",
-          roles: u.roles || u.Roles || [],
+          userName: String(u.userName || u.UserName || ""),
+          email: String(u.email || u.Email || ""),
+          firstName: String(u.firstName || u.FirstName || ""),
+          lastName: String(u.lastName || u.LastName || ""),
+          phoneNumber: String(u.phoneNumber || u.PhoneNumber || ""),
+          profilePictureUrl: String(u.profilePictureUrl || u.ProfilePictureUrl || ""),
+          roles: (u.roles || u.Roles || []) as string[],
           isLockedOut: Boolean(u.isLockedOut || u.IsLockedOut)
         }));
         setUsersList(mapped);
@@ -133,11 +124,11 @@ export default function UsersPage() {
       });
       if (rolesRes.ok) {
         const rData = await rolesRes.json();
-        const rawR = rData.Data || rData || [];
-        const mappedR: SystemRole[] = rawR.map((r: any) => ({
+        const rawR: Record<string, unknown>[] = (rData.Data || (Array.isArray(rData) ? rData : [])) as Record<string, unknown>[];
+        const mappedR: SystemRole[] = rawR.map((r: Record<string, unknown>) => ({
           id: String(r.id || r.Id || ""),
-          name: r.name || r.Name || r.roleName || r.RoleName || "",
-          userCount: r.userCount || r.UserCount || 0
+          name: String(r.name || r.Name || r.roleName || r.RoleName || ""),
+          userCount: Number(r.userCount || r.UserCount || 0)
         }));
         setRolesList(mappedR);
       }
@@ -155,8 +146,14 @@ export default function UsersPage() {
 
   useEffect(() => {
     if (canAdminister !== true) return;
-    void loadData();
+    queueMicrotask(() => {
+      void loadData();
+    });
   }, [loadData, canAdminister]);
+
+  useRealtimeTickets("All", () => {
+    if (canAdminister === true) void loadData();
+  });
 
   // Open Manage Roles for User
   const handleOpenManageRoles = async (user: SystemUser) => {
@@ -168,10 +165,10 @@ export default function UsersPage() {
       });
       if (res.ok) {
         const data = await res.json();
-        const rawRoles: any[] = data.Data?.Roles || data.Roles || data.roles || [];
-        const mapped: UserRoleAssignment[] = rawRoles.map((r: any) => ({
+        const rawRoles: Record<string, unknown>[] = (data.Data?.Roles || data.Roles || data.roles || []) as Record<string, unknown>[];
+        const mapped: UserRoleAssignment[] = rawRoles.map((r: Record<string, unknown>) => ({
           id: String(r.id || r.Id || ""),
-          name: r.name || r.Name || r.roleName || r.RoleName || "",
+          name: String(r.name || r.Name || r.roleName || r.RoleName || ""),
           isAssigned: Boolean(r.isAssigned || r.IsAssigned)
         }));
         setUserRoles(mapped);
@@ -249,22 +246,6 @@ export default function UsersPage() {
     }
   };
 
-  /*
-    Same module store `PageWrapper` reads, not a local `useState`.
-
-    This page renders the shell itself rather than going through `PageWrapper`,
-    and a `useState(true)` here meant the rail arrived expanded no matter what
-    the user had collapsed it to elsewhere — and toggling it here persisted
-    nothing, so navigating away snapped it back. See `services/sidebarPreference`
-    for why this lives outside React.
-  */
-  const sidebarOpen = useSyncExternalStore(
-    subscribeToSidebar,
-    readSidebarOpen,
-    readSidebarOpenOnServer
-  );
-  const { prefs } = useTheme();
-
   // Filtered users by query
   const filteredUsers = usersList.filter((u) => {
     const q = searchQuery.toLowerCase().trim();
@@ -279,32 +260,8 @@ export default function UsersPage() {
   });
 
   return (
-    <div className="h-screen overflow-hidden bg-sunken/70 text-ink font-sans flex">
-      <Sidebar isOpen={sidebarOpen} setIsOpen={setSidebarOpen} />
-      {/* The margin comes from `sidebarMarginClass` so this page cannot drift
-          from `PageWrapper` again: the hardcoded `lg:ml-64` here knew nothing
-          about sidebar styles, so a dual-column rail (320px) painted 64px over
-          this column and an enterprise rail 48px over it.
-
-          The `lg:` prefixes inside that helper are load-bearing. The aside is
-          `position: fixed`, and below `lg` it is an off-canvas drawer occupying
-          no layout space — so an unprefixed `ml-64` indented this column by
-          256px on every phone and small tablet with nothing in the gap, leaving
-          ~134px of usable width at 390px. Only the desktop rail earns a margin.
-
-          `transition-[margin]` rather than `transition-all`: the latter also
-          animated `background-color`, so every theme change dragged a 300ms
-          cross-fade through this full-height container for no reason. */}
-      <div
-        className={`flex-1 flex flex-col h-screen overflow-hidden min-w-0 transition-[margin] duration-300 ease-out ${sidebarMarginClass(
-          prefs.sidebarStyle || "classic",
-          sidebarOpen
-        )}`}
-      >
-        <Header sidebarOpen={sidebarOpen} setSidebarOpen={setSidebarOpen} />
-        <main className="flex-1 flex flex-col p-4 lg:p-6 w-full mx-auto overflow-y-auto min-h-0 space-y-6">
-        {/* Sidebar and Header stay outside the gate so a user who lands here
-            by URL can still navigate away. */}
+    <PageTransition className="flex-1 flex flex-col min-h-0 overflow-y-auto">
+      <main className="w-full mx-auto p-4 lg:p-6 space-y-6 pb-24">
         <RequireRole allowed={ADMIN_ROLES}>
         {/* Header Title */}
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 bg-surface p-6 rounded-2xl border border-subtle shadow-sm">
@@ -375,6 +332,18 @@ export default function UsersPage() {
               <span className="px-2 py-0.5 text-xs bg-accent-soft text-accent rounded-full font-semibold">
                 {rolesList.length}
               </span>
+            </button>
+
+            <button
+              onClick={() => setActiveTab("permissions")}
+              className={`flex items-center gap-2 px-4 py-2 rounded-lg font-medium text-sm transition-[color,background-color,border-color,box-shadow,opacity,transform,filter] ${
+                activeTab === "permissions"
+                  ? "bg-surface text-accent shadow-sm font-bold"
+                  : "text-ink-secondary hover:text-ink "
+              }`}
+            >
+              <KeyRound className="w-4 h-4" />
+              <span>{isKhmer ? "សិទ្ធិអនុញ្ញាត (Permissions)" : "Role Permissions"}</span>
             </button>
           </div>
 
@@ -492,13 +461,23 @@ export default function UsersPage() {
                           </td>
 
                           <td className="px-6 py-4 text-right">
-                            <button
-                              onClick={() => void handleOpenManageRoles(u)}
-                              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium bg-accent-soft hover:bg-accent-soft text-accent rounded-lg transition-colors border border-accent "
-                            >
-                              <ShieldCheck className="w-3.5 h-3.5" />
-                              <span>{isKhmer ? "កំណត់ Roles" : "Edit Roles"}</span>
-                            </button>
+                            <div className="flex items-center justify-end gap-1.5">
+                              <button
+                                onClick={() => setViewPermsUser(u)}
+                                className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium bg-surface hover:bg-cushion text-ink-secondary hover:text-ink rounded-lg transition-colors border border-subtle cursor-pointer shadow-2xs"
+                                title={isKhmer ? "មើលសិទ្ធិអនុញ្ញាតដែលទទួលបាន" : "View Effective Permissions"}
+                              >
+                                <KeyRound className="w-3.5 h-3.5 text-accent" />
+                                <span>{isKhmer ? "មើលសិទ្ធិ" : "Permissions"}</span>
+                              </button>
+                              <button
+                                onClick={() => void handleOpenManageRoles(u)}
+                                className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium bg-accent-soft hover:bg-accent hover:text-white text-accent rounded-lg transition-colors border border-accent cursor-pointer"
+                              >
+                                <ShieldCheck className="w-3.5 h-3.5" />
+                                <span>{isKhmer ? "កំណត់ Roles" : "Edit Roles"}</span>
+                              </button>
+                            </div>
                           </td>
                         </tr>
                       );
@@ -508,36 +487,58 @@ export default function UsersPage() {
               </table>
             </div>
           </div>
-        ) : (
+        ) : activeTab === "roles" ? (
           /* Roles Grid */
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
             {rolesList.map((r) => (
               <div
                 key={r.id}
-                className="bg-surface p-6 rounded-2xl border border-subtle shadow-sm hover:shadow-md transition-[color,background-color,border-color,box-shadow,opacity,transform,filter] space-y-4"
+                className="bg-surface p-6 rounded-2xl border border-subtle shadow-sm hover:shadow-md transition-[color,background-color,border-color,box-shadow,opacity,transform,filter] space-y-4 flex flex-col justify-between"
               >
-                <div className="flex items-center justify-between">
-                  <div className="p-3 bg-accent-soft text-accent rounded-xl border border-accent ">
-                    <ShieldCheck className="w-6 h-6" />
+                <div className="space-y-4">
+                  <div className="flex items-center justify-between">
+                    <div className="p-3 bg-accent-soft text-accent rounded-xl border border-accent ">
+                      <ShieldCheck className="w-6 h-6" />
+                    </div>
+                    <span className="px-2.5 py-1 text-xs font-semibold bg-sunken text-ink-secondary rounded-full">
+                      {r.userCount ? `${r.userCount} Users` : "System Role"}
+                    </span>
                   </div>
-                  <span className="px-2.5 py-1 text-xs font-semibold bg-sunken text-ink-secondary rounded-full">
-                    {r.userCount ? `${r.userCount} Users` : "System Role"}
-                  </span>
+
+                  <div>
+                    <h3 className="text-lg font-bold text-ink ">
+                      {r.name}
+                    </h3>
+                    <p className="text-xs text-ink-secondary mt-1">
+                      {isKhmer
+                        ? `តួនាទីប្រព័ន្ធ ${r.name} សម្រាប់កំណត់សិទ្ធិអនុញ្ញាត`
+                        : `System security role defining access control permissions`}
+                    </p>
+                  </div>
                 </div>
 
-                <div>
-                  <h3 className="text-lg font-bold text-ink ">
-                    {r.name}
-                  </h3>
-                  <p className="text-xs text-ink-secondary mt-1">
-                    {isKhmer
-                      ? `តួនាទីប្រព័ន្ធ ${r.name} សម្រាប់កំណត់សិទ្ធិអនុញ្ញាត`
-                      : `System security role defining access control permissions`}
-                  </p>
+                <div className="pt-3 border-t border-subtle">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setSelectedRoleForPerms(r.id);
+                      setActiveTab("permissions");
+                    }}
+                    className="w-full py-2 px-3 rounded-xl text-xs font-semibold bg-accent-soft hover:bg-accent hover:text-white text-accent border border-accent/20 transition-all flex items-center justify-center gap-1.5 cursor-pointer shadow-2xs"
+                  >
+                    <KeyRound className="w-3.5 h-3.5" />
+                    <span>{isKhmer ? "គ្រប់គ្រងសិទ្ធិ (Manage Permissions)" : "Manage Permissions"}</span>
+                  </button>
                 </div>
               </div>
             ))}
           </div>
+        ) : (
+          /* Role Permissions Matrix Tab */
+          <PermissionMatrix
+            initialRoleId={selectedRoleForPerms}
+            onRoleChange={setSelectedRoleForPerms}
+          />
         )}
 
       {/* Edit Roles Modal */}
@@ -713,9 +714,20 @@ export default function UsersPage() {
           </div>
         </form>
       </ModalWrapper>
+
+      {/* User Effective Permissions Inspection Modal */}
+      <UserPermissionsModal
+        user={viewPermsUser}
+        open={!!viewPermsUser}
+        onClose={() => setViewPermsUser(null)}
+        onEditRoles={() => {
+          if (viewPermsUser) {
+            void handleOpenManageRoles(viewPermsUser);
+          }
+        }}
+      />
         </RequireRole>
-        </main>
-      </div>
-    </div>
+      </main>
+    </PageTransition>
   );
 }

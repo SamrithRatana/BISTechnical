@@ -1,4 +1,4 @@
-﻿namespace TechnicalService.API.Application.Commands;
+namespace TechnicalService.API.Application.Commands;
 
 public class CreateSparepartCommand : IRequest<bool>
 {
@@ -20,9 +20,15 @@ public class CreateSparepartCommand : IRequest<bool>
     [DataMember]
     public decimal DefaultPrice { get; private set; }
 
+    /// <summary>Optional; null means the part starts unclassified.</summary>
+    [DataMember]
+    public SparepartClassification? Classification { get; private set; }
+
     public CreateSparepartCommand(string itemName, string serialNumber,
          string description, string useFor, string pictureUrl,
-         Guid linkItemId, int quantity = 0, decimal defaultPrice = 0)    {
+         Guid linkItemId, int quantity = 0, decimal defaultPrice = 0,
+         SparepartClassification? classification = null)
+    {
         ItemName = itemName;
         SerialNumber = serialNumber;
         Description = description;
@@ -30,5 +36,7 @@ public class CreateSparepartCommand : IRequest<bool>
         PictureUrl = pictureUrl;
         LinkItemId = linkItemId;
         Quantity = quantity;
-        DefaultPrice = defaultPrice;    }
+        DefaultPrice = defaultPrice;
+        Classification = classification;
+    }
 }

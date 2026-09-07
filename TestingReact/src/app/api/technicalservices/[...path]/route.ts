@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { recordRequest } from "@/services/activityTracker";
 
 const TECHNICAL_API_BASE =
-  process.env.NEXT_PUBLIC_TECHNICAL_API_URL || "http://localhost:8000";
+  process.env.NEXT_PUBLIC_TECHNICAL_API_URL || "https://technicalservicesapi.camprotec.com.kh";
 
 export async function GET(
   req: NextRequest,
@@ -39,7 +39,7 @@ export async function GET(
 
     const data = await res.json();
     return NextResponse.json(data);
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error("TechnicalServices Proxy GET Error:", error);
     return NextResponse.json(
       { error: "Failed to connect to Technical Services API" },

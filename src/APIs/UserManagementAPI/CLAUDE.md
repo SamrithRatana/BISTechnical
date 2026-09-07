@@ -147,6 +147,140 @@ at class level; per-action.
 - `GenerateJwtToken(List<Claim>)` (private, unused duplicate of the permissions variant),
   `CreateLoginErrorResponse(string)` (private), `GetFullImageUrl(string)` (private) — helpers.
 
+`src/APIs/UserManagementAPI/Controllers/WebAuthnController.cs` — route `api/auth/webauthn`.
+WebAuthn / FIDO2 passkey enrolment and login ("Face Login"). Added 2026-08-22.
+- `RegisterOptions()` — POST `register-options`, `[Authorize]` — starts enrolment. Requires an
+  existing session on purpose: the bearer token is what authorises binding a new device, so an
+  anonymous version would let anyone attach their phone to someone else's account.
+- `Register(JsonElement)` — POST `register`, `[Authorize]` — verifies the attestation and writes a
+  `UserCredential` row.
+- `LoginOptions(JsonElement)` — POST `login-options`, `[AllowAnonymous]`,
+  `[EnableRateLimiting("login")]` — body `{ userName? }`. With no username the allow-list is empty
+  and the browser offers whichever discoverable passkeys the device holds (usernameless flow). An
+  **unknown username returns normal options with an empty allow-list**, not an error — answering
+  "no such user" here would make this an account-enumeration oracle.
+- `Login(JsonElement)` — POST `login`, `[AllowAnonymous]`, `[EnableRateLimiting("login")]` —
+  verifies the assertion, checks lockout the same way the password path does, and returns a
+  response **byte-identical in shape to `AuthController.Login`'s** so the frontend stores a passkey
+  session exactly as it stores a password one.
+- `GetCredentials()` / `DeleteCredential(int)` — GET/DELETE `credentials[/{id}]`, `[Authorize]` —
+  device list and removal, both scoped to the caller's own rows (another user's id reads as "not
+  found").
+- Every action is a one-line wrapper over a private `*Core` method behind `Guarded(...)`, which
+  turns anything unexpected into a plain JSON 500 — matching what `AuthController` does, and for
+  the same reason: the frontend parses every response on this route as JSON.
+
+**Three things here are load-bearing and must not be "simplified":**
+1. **Requests and responses are raw JSON** (`[FromBody] JsonElement` in, `options.ToJson()` out),
+   not MVC model binding. `Program.cs` sets `PropertyNamingPolicy = null` (PascalCase) API-wide,
+   while WebAuthn's wire format is fixed camelCase — going through the app serializer renames every
+   field and the browser rejects the options object.
+2. **The challenge lives in `IMemoryCache`**, keyed by a random ceremony id the client echoes back,
+   not in a session cookie (this API is stateless and is reached server-to-server through the
+   Next.js proxy, where no cookie survives). Entries are single-use — **verified**: replaying a
+   ceremony id returns "expired".
+3. **`WebAuthn:ServerDomain` is the Relying Party ID and must be the domain the USER's browser
+   shows** — the frontend's host, not this API's. They differ in this system. In production that
+   means `camprotec.com.kh` (a registrable parent of `technicalsystem.camprotec.com.kh`); locally
+   it is `localhost`, which browsers treat as a secure context over plain http. The port is not
+   part of the domain but IS part of `WebAuthn:Origins`.
+
+`src/APIs/UserManagementAPI/Controllers/FaceAuthController.cs` — route `api/auth/face`.
+Face verification as a **second factor**. Added 2026-08-22, after passkeys, because passkeys
+delegate the biometric to the device and never open a camera — which on hardware with no
+Windows Hello sensor means no face at all. This one does open the camera.
+- `GET status` / `POST enroll` / `DELETE enroll` — `[Authorize]`. Enrolment replaces rather than
+  appends (re-enrolling is what someone does when the old samples stopped working). Removal is
+  unconditional and immediate: withdrawing biometric data must be as easy as giving it.
+- `POST login-start` — `[AllowAnonymous]`, `[EnableRateLimiting("login")]`. Checks the password
+  with the same lockout bookkeeping `AuthController.Login` uses, then either returns a **full
+  session** (no face enrolled — so this is a drop-in replacement for `api/Auth/login`) or
+  `{ requiresFace: true, faceToken }` **and no token**.
+- `POST login-verify` — `[AllowAnonymous]`, rate-limited. Compares and issues the real session.
+
+**The security model, stated plainly:**
+- The `faceToken` is not a session. No roles, no permission claims, nothing callable. It is a
+  two-minute single-use receipt saying "somebody knew this password".
+- **The descriptor is computed in the BROWSER.** The server compares a vector it did not produce,
+  so anyone who can craft a matching vector skips the camera. That is the known ceiling of
+  client-side face recognition and is exactly why this sits *behind* a password and must not be
+  promoted to a primary credential. Moving the embedding server-side (ONNX + ArcFace) is the
+  upgrade path.
+- Liveness (a blink) is measured client-side and is therefore advisory. It stops a photo held up
+  to the lens; it does not stop devtools.
+- A failed match **never returns the distance** — that would be a similarity oracle a caller could
+  hill-climb to a match without ever seeing the enrolled face. Only `attemptsLeft` comes back.
+- 5 attempts per token; a malformed descriptor is a 400 and does **not** spend one.
+
+**Paired phones** (`device/*`, added the same day):
+- `POST device/enroll` — `[Authorize]`. Pairs a phone AND stores the face in one call: a paired
+  phone with no face can never sign in, and a face enrolled from an unpaired phone has no way to
+  be presented later. Returns a `deviceToken` **once** — only its SHA-256 is stored.
+- `POST device/login` — `[AllowAnonymous]`, rate-limited. The token names the account, so the face
+  is checked **1:1** against that account's samples. See `UserFaceDevice` for why this must never
+  become a search across every enrolled face. 5 consecutive failures lock that device for 5
+  minutes.
+- `GET devices` / `DELETE devices/{id}` — `[Authorize]`, scoped to the caller's own rows. Revoked
+  rather than deleted, so "unpaired on that date" survives.
+
+**Server-side photo verification (`device/enroll-face`, `device/approve-session`, added 2026-08-24).**
+This is the "ONNX + ArcFace" upgrade the rest of this file kept pointing at, built specifically
+to close the CAM ID push-approve hole where **a friend's face approved a sign-in**. The mobile app
+runs Google ML Kit, which *detects* faces but cannot *recognise* them, so the old push-approve was
+ML Kit "a face is present" + a hub call that minted a session — no identity check at all, and the
+hub even hardcoded the **admin** account regardless of whose phone answered.
+- `POST device/enroll-face` — `[AllowAnonymous]`, rate-limited, **multipart** (`deviceToken`, 3–8
+  `photos`). Embeds each photo with ArcFace **on the server** (`PhotoFaceService`) into 512-float
+  templates stored in `security.UserFaceTemplates` alongside — never matching against — the
+  browser's 128-float face-api rows (`FaceMatcher.Distance` returns ∞ across mismatched
+  `Dimensions`). Token alone may enrol **only while the account has zero 512-float templates**
+  (first-time upgrade / fresh pairing); **replacing** an enrolled face needs a signed-in bearer for
+  the same account, or anyone holding the phone could swap in their own face. Rejects a photo set
+  whose captures are not pairwise consistent (cosine ≥ 0.28), so a mixed-people set can't enrol.
+  Does **not** touch `TwoFactorEnabled` (that gates the browser 128-float flow).
+- `POST device/approve-session` — `[AllowAnonymous]`, rate-limited, **multipart** (`deviceToken`,
+  `sessionId`, `approved`, `photo`). Approval requires ALL of: paired unrevoked device token; a
+  **single-use** `sessionId → userId` binding this API itself wrote (`AuthSessionRegistry` in
+  `IMemoryCache`, set by `RequestDevicePush` and the hub's `RequestMobileApproval`) so a device can
+  only answer a challenge pushed to ITS user, once; and an ArcFace match (cosine ≥
+  `Face:PhotoMatchThreshold`, default 0.42) of the uploaded photo against that user's 512-float
+  samples. Issues a session **for the device's user**, not admin. Zero 512-float samples →
+  409 `RequiresEnrollment` (the phone then runs enroll-face). Denial needs token+binding only, no
+  photo. 5 face failures lock the device 5 min. The distance is never returned (similarity oracle).
+- **`AuthNotificationHub.RespondToAuthRequest` approve path is now REFUSED** — it was an
+  unauthenticated token-vending machine any connected client could call. Denial still works there;
+  approvals must go through `device/approve-session`. The hub no longer injects `ITokenIssuer`.
+- **The hardcoded `dev_tok_admin_live` device is gone** — `Program.cs` now *revokes* any legacy row
+  (its token is public in git, and a paired device can now enrol a face), and `CheckUserDevices` no
+  longer auto-pairs admin.
+- `Face:PhotoMatchThreshold` (**cosine**, 0.42 default) is NOT tuned on real staff faces — tune it
+  from the `similarity {Similarity:F3}` values logged on every approve, per the same discipline as
+  `Face:MatchThreshold`. Parsed invariant-culture so a `,`-decimal locale can't break it.
+
+`src/APIs/UserManagementAPI/Services/PhotoFaceService.cs` — `IPhotoFaceService` (DI **singleton**;
+lazily loads FaceAiSharp's bundled SCRFD detector + ArcFace embedder ONNX models once). `Embed`
+detects exactly one face (refuses zero or >1), rejects an over-40MP canvas from the header
+BEFORE decode (`Image.Identify` — decompression-bomb guard), aligns by landmarks, returns a
+512-float unit vector; `BestSimilarity` is cosine against the closest 512-dim template only.
+**Two NuGet packages are required and BOTH must be present** (from nuget.org — the machine's broken
+`https://packagesource` source must be skipped with `-s https://api.nuget.org/v3/index.json`):
+`FaceAiSharp.Bundle` pulls only `Microsoft.ML.OnnxRuntime.Managed` (managed wrapper), so
+`Microsoft.ML.OnnxRuntime` (the native CPU runtime, same version) is referenced explicitly —
+without it `runtimes/win-x64/native/onnxruntime.dll` is absent and the first inference throws
+`DllNotFoundException` at runtime while the build stays green. Verified end-to-end: two different
+staff photos score cosine 0.233 (< 0.42 threshold → correctly rejected); same photo scores 1.000.
+Also holds `AuthSessionRegistry` (the session→user cache-key helper).
+
+`src/APIs/UserManagementAPI/Services/FaceMatcher.cs` — encode/decode/compare. Distance is
+**Euclidean**, not cosine: face-api emits L2-normalised descriptors and its published threshold is
+a Euclidean one, so any other measure makes that number meaningless. `BestDistance` matches the
+CLOSEST enrolled sample, never the average — averaging poses produces a vector resembling none of
+them. `IsWellFormed` rejects wrong lengths and vectors whose magnitude is not ~1.
+- **`Face:MatchThreshold` defaults to 0.45 and has NOT been tuned on real faces.** face-api
+  documents 0.6, but that is tuned for photo tagging where a false accept costs a mislabel. Tune it
+  by reading the distances the API logs on every verify (both success and failure log
+  `distance {Distance:F3}`), not by nudging it until one test passes.
+
 `src/APIs/UserManagementAPI/Controllers/UserManagementController.cs` — route `api/UserManagement`.
 Admin-facing user CRUD (no class-level `[Authorize]` — check individual actions/frontend gating).
 - `GetAllUsers(page, pageSize)` — GET `` — paginated list with roles + full profile picture URLs.
@@ -277,6 +411,17 @@ DbSets (→ DB tables):
 - `LeaveBalances` (`LeaveBalance`) → table (default schema, no explicit `ToTable`)
 - `AppSettings` (`AppSetting`) → table `dbo.AppSettings` — single fixed row (`Id = 1`),
   seeded by the `AddAppSettings` migration.
+- `UserFaceDevices` (`UserFaceDevice`) → table `security.UserFaceDevices` — phones paired for
+  face sign-in. `TokenHash` is unique and is the lookup path for every phone login; the token
+  itself is never stored.
+- `UserFaceTemplates` (`UserFaceTemplate`) → table `security.UserFaceTemplates` — face
+  descriptors, several rows per user. Indexed on `UserId` only: there is no query that finds a user
+  FROM a descriptor and there must not be, because that is face *search* over the whole staff list,
+  which is a different feature with different consent.
+- `UserCredentials` (`UserCredential`) → table `security.UserCredentials` — WebAuthn passkeys.
+  Unique index on `CredentialId` (**not** per-user: login resolves the account FROM the credential
+  id, so a collision would be an authentication bug), index on `UserId`, cascade delete from
+  `ApplicationUser`.
 - Inherited from `IdentityDbContext<ApplicationUser>`: Identity's `Users`, `Roles`,
   `UserRoles`, `UserClaims`, `UserLogins`, `RoleClaims`, `UserTokens` — all remapped in
   `OnModelCreating` to schema `security` (e.g. `security.Users`, `security.Roles`).
@@ -309,6 +454,20 @@ in `Controllers/`.
 `src/APIs/UserManagementAPI/Models/ApplicationUser.cs` — `ApplicationUser : IdentityUser`.
 Adds `FirstName`, `LastName` (required), `ProfilePictureUrl` (relative path, max 500),
 `Messages` (nav collection, initialized in ctor).
+
+`src/APIs/UserManagementAPI/Models/UserCredential.cs` — `UserCredential`: `Id`, `UserId`,
+`CredentialId`, `PublicKey`, `UserHandle`, `SignCount`, `CredType`, `AaGuid`, `Transports`,
+`IsBackedUp`, `DeviceName`, `CreatedAt`, `LastUsedAt`, `User` (nav). **Contains no secret and no
+biometric data** — `PublicKey` is the public half of a keypair whose private half never leaves the
+user's device, and no face image or template is stored anywhere in this system. `SignCount` is
+`long` rather than the spec's `uint` because SQL Server has no unsigned integer type; cast at the
+boundary. A counter that never moves is normal — every synced passkey reports 0.
+
+`src/APIs/UserManagementAPI/Models/UserFaceTemplate.cs` — `UserFaceTemplate`: `Id`, `UserId`,
+`Embedding` (raw float32), `Dimensions`, `SampleIndex`, `CreatedAt`, `User` (nav). **Unlike
+`UserCredential`, this IS sensitive personal data** — a descriptor is derived from a biometric and
+cannot be reissued. No image is ever stored, enrolment is opt-in and user-removable, and the
+descriptor is not reversible into a recognisable photograph.
 
 `src/APIs/UserManagementAPI/Models/Article.cs` — `Article` entity: `Id`, `ArticleHeading`,
 `ArticleContent`, `Username`, `ProfilePicture`, `Timestamp` (UTC), `IsRead`, `IsActionVisible`.
@@ -359,6 +518,15 @@ local disk under `wwwroot/uploads/profile-pictures`. Registered scoped in `Progr
 - `SaveProfilePictureAsync(IFormFile, userId)` — saves as `{userId}_{ticks}{ext}`, returns
   relative URL `/uploads/profile-pictures/{fileName}`. Handles null `WebRootPath` (Docker).
 - `DeleteProfilePictureAsync(filePath)` — accepts relative or full URL.
+
+`src/APIs/UserManagementAPI/Services/ITokenIssuer.cs` /
+`src/APIs/UserManagementAPI/Services/TokenIssuer.cs` — mints the JWT (name/id/email/jti + every role
++ every permission claim those roles carry) and the persisted refresh token. Registered scoped.
+Exists so passkey login produces a token indistinguishable from the password path's.
+- **`AuthController` still has its own private copies of both methods and was deliberately NOT
+  changed to call this.** Rewiring the password login path was more risk than the passkey feature
+  justified. They are duplicates and can drift — if you add a claim, add it in BOTH, or collapse
+  them as a separate change with its own verification against a real login.
 
 `src/APIs/UserManagementAPI/Services/RefreshTokenCleanupService.cs` — `BackgroundService`,
 registered as hosted service. Runs daily at 2 AM local time; deletes `RefreshToken` rows expired
@@ -483,9 +651,25 @@ directly, not this view model — likely unused.
 
 ## Migrations/
 
-`src/APIs/UserManagementAPI/Migrations/` — EF Core migration history (3 migrations:
-`AddRefreshTokenTable`, `AddLeaveManagement`, `AddAppSettings`, plus
-`UserManagementContextModelSnapshot.cs`). Skip Designer/snapshot files — regenerate
+`src/APIs/UserManagementAPI/Migrations/` — EF Core migration history (5 migrations:
+`AddRefreshTokenTable`, `AddLeaveManagement`, `AddAppSettings`, `AddWebAuthnCredentials`,
+`AddFaceTemplates`, plus `UserManagementContextModelSnapshot.cs`). Both 2026-08-22 migrations have
+been APPLIED via `sql/webauthn-usercredentials.sql` and `sql/face-templates.sql`.
+
+`AddFaceTemplates` scaffolded clean — no AppSettings drift, because `AddWebAuthnCredentials`'s
+snapshot fix (below) absorbed it.
+
+**`AddWebAuthnCredentials` was hand-edited after scaffolding, and the reason matters.** EF also
+emitted `AddColumn` for `AppSettings.AccentColor` / `LogoScale` / `SurfaceStyle` plus an
+`UpdateData` resetting the settings row — that was EF's "may result in the loss of data" warning.
+Those three columns are **pre-existing drift**: they are in `Models/AppSetting.cs` and are read and
+written by `AppSettingsController` and the frontend's `services/appSettings.ts`, all shipping code,
+so they already exist in the database, added out-of-band the same way the `Leave*` tables were.
+Replaying them would fail the migration on "column already exists", and the `UpdateData` would have
+overwritten the live branding row. All four operations were removed; only `CREATE TABLE
+security.UserCredentials` + its two indexes remain. The regenerated snapshot DOES describe those
+columns, which brings EF's bookkeeping in line with the database instead of leaving them to be
+re-proposed forever. Skip Designer/snapshot files — regenerate
 from `Data/UserManagementContext.cs` if needed.
 
 **`dotnet ef database update` cannot be run blindly against the real remote DB
@@ -510,6 +694,11 @@ dotnet-ef migrations script 20260421022411_AddLeaveManagement <new-migration-id>
   --idempotent -o migration.sql
 sqlcmd -S <host> -U SA -P '<password>' -d EngineerUserDB -C -i migration.sql
 ```
+
+The script for `AddWebAuthnCredentials` is already generated and committed at
+`sql/webauthn-usercredentials.sql` (from `AddAppSettings`, `--idempotent`). **Not yet run** — until
+it is, every passkey endpoint that touches the table answers 500 with
+`Invalid object name 'security.UserCredentials'`.
 
 — which both applies the new migration and correctly records it in
 `__EFMigrationsHistory`, without touching `AddLeaveManagement` at all. Do the

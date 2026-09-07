@@ -86,6 +86,8 @@ const ACCENT_HELPERS = {
   accentTokensToCssVars,
 };
 
+import Script from "next/script";
+
 export default function ThemeScript() {
   const accentHelperVars = Object.entries(ACCENT_HELPERS)
     .map(([name, fn]) => `var ${name}=${fn.toString()};`)
@@ -122,7 +124,5 @@ if(p.accentColor){
 }
 }catch(e){}})();`;
 
-  // `suppressHydrationWarning` because this script mutates <html> before React
-  // hydrates: the attributes it writes are, by design, not in the server HTML.
-  return <script suppressHydrationWarning dangerouslySetInnerHTML={{ __html: js }} />;
+  return <Script id="theme-init" strategy="beforeInteractive" dangerouslySetInnerHTML={{ __html: js }} />;
 }

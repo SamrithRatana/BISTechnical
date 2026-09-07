@@ -186,9 +186,8 @@ const CUSTOMER_FIELDS: ActionField[] = [
   {
     name: "customerType",
     label: "Customer type",
-    type: "enum",
-    options: ["Corporate", "Individual"],
-    description: "Whether the customer is a company or a private individual.",
+    type: "text",
+    description: "Customer classification or industry type.",
   },
 ];
 

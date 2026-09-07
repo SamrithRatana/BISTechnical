@@ -1,9 +1,11 @@
 "use client";
 
+import BrandLogo from "@/components/BrandLogo";
+import { useBrandLogo, publishBrandLogo } from "@/services/brandLogoStore";
 import React, { memo, useCallback, useEffect, useState, useRef } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { motion, AnimatePresence, type Variants } from "framer-motion";
+import { motion, AnimatePresence } from "framer-motion";
 import {
   Home,
   Package,
@@ -33,30 +35,33 @@ import {
   ChevronDown,
   ChevronRight,
   ChevronLeft,
-  ChevronsRight,
   ChevronsLeft,
+  SlidersHorizontal,
   Cpu,
-  Server,
   Search,
-  Layers,
   BarChart3,
   Box,
-  Compass,
-  ChevronsUpDown,
-  LogOut,
-  User as UserIcon,
-  Menu,
+  ChevronsUpDown, Boxes,
+  FolderTree,
+  Tags,
+  BadgeCheck,
 } from "lucide-react";
 import { useI18n } from "@/i18n/LanguageProvider";
 import { useTheme } from "@/theme/ThemeProvider";
 import { useActionHandler } from "@/components/ActionBus";
 import { fetchAppLogoUrl } from "@/services/appSettings";
-import { fetchHealthSnapshot, subscribeToHealth, type HealthSnapshot } from "@/services/healthSnapshot";
-import { NAV_GROUPS, HOME_ITEM, SETTINGS_ITEM, type NavSubGroup, type NavItem, type NavGroup } from "@/config/navigation";
+import { fetchHealthSnapshot, subscribeToHealth, readHealth, publishHealth, type HealthSnapshot } from "@/services/healthSnapshot";
+import { prefetchRouteData } from "@/services/routePrefetch";
+import { NAV_GROUPS, HOME_ITEM, SETTINGS_ITEM, findNavItem, type NavSubGroup } from "@/config/navigation";
+import { useUserPermissions } from "@/hooks/useUserPermissions";
+import { hasAnyRole } from "@/services/authSession";
 import { ProgressBar } from "@/components/av";
 import { cn } from "@/lib/utils";
+import toast from "react-hot-toast";
 
 const ICONS: Record<string, React.ElementType> = {
+  "/templates-settings": SlidersHorizontal,
+  "/service-tickets": FileText,
   "/pending-repairs": Clock,
   "/completed-repairs": CheckCircle,
   "/stage-report": Activity,
@@ -88,6 +93,9 @@ const ICONS: Record<string, React.ElementType> = {
   "/stock-dead": AlertTriangle,
   "/received-inventory": Package,
   "/spareparts": Wrench,
+  "/spareparts/categories": FolderTree,
+  "/spareparts/types": Tags,
+  "/spareparts/brands": BadgeCheck,
   "/customers": Users,
   "/receive-item": ClipboardList,
   "/inspect-item": Clock,
@@ -112,11 +120,13 @@ const GROUP_ICONS: Record<string, React.ElementType> = {
 };
 
 const SUBGROUP_ICONS: Record<string, React.ElementType> = {
+  "nav.subgroupReportDesign": SlidersHorizontal,
   "nav.subgroupOperations": Wrench,
   "nav.subgroupDiagnostics": AlertCircle,
   "nav.subgroupEngineerKpi": Award,
   "nav.subgroupSalesCrm": TrendingUp,
   "nav.subgroupStockParts": Package,
+  "nav.subgroupSpareParts": Boxes,
 };
 
 const RAIL_CATEGORIES = [
@@ -128,6 +138,9 @@ const RAIL_CATEGORIES = [
     items: [
       { href: "/received-inventory", name: "Receive Inventory" },
       { href: "/spareparts", name: "Spare Parts Catalog" },
+      { href: "/spareparts/categories", name: "Part Categories" },
+      { href: "/spareparts/types", name: "Part Types" },
+      { href: "/spareparts/brands", name: "Part Brands" },
       { href: "/stock-transactions", name: "Stock Transactions" },
       { href: "/stock-movement", name: "Stock Movement" },
       { href: "/stock-adjustments", name: "Stock Adjustments" },
@@ -167,6 +180,8 @@ const RAIL_CATEGORIES = [
     title: "28 Core Reports",
     icon: BarChart3,
     items: [
+      { href: "/service-tickets", name: "Service Tickets & Reports" },
+      { href: "/templates-settings", name: "Report Designer" },
       { href: "/daily-report", name: "Daily Operations" },
       { href: "/monthly-report", name: "Monthly Performance" },
       { href: "/monthly-technical-matrix", name: "Technical Matrix" },
@@ -210,6 +225,9 @@ const DUAL_DOMAINS = [
     items: [
       { href: "/received-inventory", name: "Received Inventory" },
       { href: "/spareparts", name: "Spare Parts Catalog" },
+      { href: "/spareparts/categories", name: "Part Categories" },
+      { href: "/spareparts/types", name: "Part Types" },
+      { href: "/spareparts/brands", name: "Part Brands" },
       { href: "/stock-transactions", name: "Stock Transactions" },
       { href: "/stock-movement", name: "Stock Movement" },
       { href: "/stock-adjustments", name: "Stock Adjustments" },
@@ -223,6 +241,8 @@ const DUAL_DOMAINS = [
     title: "28 Core Reports",
     icon: BarChart3,
     items: [
+      { href: "/service-tickets", name: "Service Tickets & Reports" },
+      { href: "/templates-settings", name: "Report Designer" },
       { href: "/daily-report", name: "Daily Operations" },
       { href: "/monthly-report", name: "Monthly Performance" },
       { href: "/monthly-technical-matrix", name: "Technical Matrix" },
@@ -263,7 +283,6 @@ const DUAL_DOMAINS = [
 const NAV_PILL_SPRING = { type: "spring", stiffness: 450, damping: 32 } as const;
 const NAV_ACCENT_SPRING = { type: "spring", stiffness: 500, damping: 30 } as const;
 
-let hasInitialSidebarAnimated = false;
 let savedSidebarScrollTop = 0;
 // Default all parent groups to COLLAPSED (false)
 let savedOpenParentGroups: Record<string, boolean> = {
@@ -277,6 +296,9 @@ let savedOpenParentGroups: Record<string, boolean> = {
 };
 
 let savedOpenSubgroups: Record<string, boolean> = {
+  // Collapsed by default: user can click to expand when needed
+  "nav.subgroupSpareParts": false,
+  "nav.subgroupReportDesign": false,
   "nav.subgroupOperations": false,
   "nav.subgroupDiagnostics": false,
   "nav.subgroupEngineerKpi": false,
@@ -297,21 +319,39 @@ interface HealthState {
 }
 
 function readStoredUser(): { name: string; role: string; picture: string | null } {
-  if (typeof window === "undefined") return { name: "Administrator", role: "Super Admin", picture: null };
+  if (typeof window === "undefined") return { name: "User", role: "Member", picture: null };
   try {
     const raw = localStorage.getItem("user_info");
-    if (!raw) return { name: "Administrator", role: "Super Admin", picture: null };
-    const p = JSON.parse(raw);
-    const full = `${(p.firstName || "").trim()} ${(p.lastName || "").trim()}`.trim();
+    if (!raw) return { name: "User", role: "Member", picture: null };
+    const p = JSON.parse(raw) as Record<string, unknown>;
+    const fn = String(p.firstName || p.FirstName || "").trim();
+    const ln = String(p.lastName || p.LastName || "").trim();
+    const full = `${fn} ${ln}`.trim();
+    const un = String(p.userName || p.UserName || "");
+    const rawRoles = p.roles || p.Roles || (p.role ? [p.role] : []);
+    const roles = Array.isArray(rawRoles) ? rawRoles : [];
     return {
-      name: full || p.userName || "Administrator",
-      role: p.roles?.[0] || p.role || "Super Admin",
-      picture: p.profilePictureUrl || null,
+      name: full || un || "User",
+      role: String(roles[0] || "Member"),
+      picture: (p.profilePictureUrl || p.ProfilePictureUrl || null) as string | null,
     };
   } catch {
-    return { name: "Administrator", role: "Super Admin", picture: null };
+    return { name: "User", role: "Member", picture: null };
   }
 }
+
+const DEFAULT_HEALTH: HealthState = {
+  pct: 100,
+  label: "2/2",
+  memory: {
+    frontendMb: 42,
+    technicalApiMb: 206,
+    userManagementApiMb: 297,
+    customerEmployeeApiMb: 88,
+    totalMb: 633,
+    pct: 31,
+  },
+};
 
 const HealthWidget = memo(function HealthWidget({
   collapsed,
@@ -320,8 +360,11 @@ const HealthWidget = memo(function HealthWidget({
   collapsed: boolean;
   sidebarStyle?: string;
 }) {
-  const [health, setHealth] = useState<HealthState | null>(null);
+  const [health, setHealth] = useState<HealthState>(() => (readHealth() as HealthState) || DEFAULT_HEALTH);
   const isCarbon = sidebarStyle === "carbon";
+  // This widget rendered entirely in English before 2026-08-25 — it was the one
+  // block of the sidebar that never called useI18n().
+  const { t, lang } = useI18n();
 
   useEffect(() => {
     let alive = true;
@@ -399,89 +442,266 @@ const HealthWidget = memo(function HealthWidget({
   const memPct = mem?.pct ?? Math.round((memTotal / 2048) * 100);
   const memTone = memPct < 75 ? "accent" : memPct < 90 ? "warning" : "danger";
 
+  const [isCleaningRam, setIsCleaningRam] = useState(false);
+
+  // By default, keep health & RAM collapsed/small as requested by user.
+  // When user clicks, it expands into full details view. State persists across navigations.
+  const [isExpanded, setIsExpanded] = useState<boolean>(() => {
+    if (typeof window === "undefined") return false;
+    try {
+      return localStorage.getItem("sidebar_health_expanded") === "true";
+    } catch {
+      return false;
+    }
+  });
+
+  const toggleExpanded = useCallback((e?: React.MouseEvent) => {
+    e?.stopPropagation();
+    setIsExpanded((prev) => {
+      const next = !prev;
+      try {
+        localStorage.setItem("sidebar_health_expanded", String(next));
+      } catch {
+        // ignore
+      }
+      return next;
+    });
+  }, []);
+
+  const handleCleanRam = useCallback(async (e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (isCleaningRam) return;
+    setIsCleaningRam(true);
+    try {
+      // 1. Client-side SWR & Session cache purge
+      if (typeof window !== "undefined") {
+        for (const key of Object.keys(sessionStorage)) {
+          if (key.startsWith("cache:") || key.startsWith("inf_list_")) {
+            sessionStorage.removeItem(key);
+          }
+        }
+      }
+      // 2. Server-side V8 GC & API cache purge
+      const res = await fetch("/api/health", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+      });
+      const data = await res.json();
+      if (data.report) {
+        publishHealth(data.report);
+      }
+      toast.success(
+        lang === "km"
+          ? "🧹 បានសម្អាត RAM & System Cache ជោគជ័យ!"
+          : "🧹 System RAM & Cache Purged Successfully!",
+        { id: "clean-ram-toast", duration: 3000 }
+      );
+    } catch {
+      toast.error(
+        lang === "km"
+          ? "❌ មិនអាចសម្អាត RAM បានទេ"
+          : "❌ Failed to clean RAM"
+      );
+    } finally {
+      setIsCleaningRam(false);
+    }
+  }, [isCleaningRam, lang]);
+
   if (collapsed) {
     return (
-      <div className="grid place-items-center py-2 space-y-2" title={`System Health ${Math.round(pct)}% • RAM: ${memTotal}MB`}>
+      <div className="grid place-items-center py-2 space-y-2" title={t("sysmon.tooltipSummary", { pct: String(Math.round(pct)), mb: String(memTotal) })}>
         <Activity
           className={cn(
             "w-5 h-5",
             tone === "success" ? "text-success" : tone === "warning" ? "text-warning" : "text-danger"
           )}
         />
-        <Cpu className={cn("w-4 h-4", isCarbon ? "text-cyan-400" : "text-accent")} />
+        <button
+          type="button"
+          onClick={handleCleanRam}
+          disabled={isCleaningRam}
+          title={lang === "km" ? "ចុចដើម្បីសម្អាត RAM" : "Click to Clean RAM"}
+          className="cursor-pointer"
+        >
+          <Cpu className={cn("w-4 h-4", isCarbon ? "text-cyan-400" : "text-accent", isCleaningRam && "animate-spin")} />
+        </button>
       </div>
     );
   }
 
   return (
     <div className={cn(
-      "rounded-xl p-2 lg:p-2 xl:p-2.5 space-y-2 lg:space-y-2 xl:space-y-2.5 border",
+      "rounded-xl border transition-all duration-200 select-none",
       isCarbon
         ? "bg-slate-900/90 border-slate-800 text-slate-200"
-        : "bg-cushion border-subtle"
+        : "bg-cushion border-subtle",
+      !isExpanded && "hover:border-accent/30 hover:bg-cushion-hover/60 shadow-2xs"
     )}>
-      {/* ── 1. SYSTEM SERVICES HEALTH PROGRESS ── */}
-      <div>
-        <div className="flex items-center gap-1.5 mb-1">
-          <Activity className={cn("w-3 h-3 shrink-0", isCarbon ? "text-emerald-400" : "text-accent")} />
-          <span className={cn("text-[10.5px] font-semibold", isCarbon ? "text-slate-200" : "text-ink")}>System Health</span>
-          <span className={cn("ml-auto text-[10.5px] font-semibold tabular-nums", isCarbon ? "text-slate-200" : "text-ink")}>
+      {/* ── 1. HEADER ROW (CLICKABLE TOGGLE) ── */}
+      <button
+        type="button"
+        onClick={toggleExpanded}
+        aria-expanded={isExpanded}
+        className={cn(
+          "w-full flex items-center justify-between text-left cursor-pointer transition-colors group",
+          isExpanded
+            ? "p-2 lg:p-2 xl:p-2.5 pb-1 lg:pb-1 xl:pb-1"
+            : "p-2 lg:p-2 xl:p-2.5"
+        )}
+        title={
+          isExpanded
+            ? (lang === "km" ? "ចុចដើម្បីបង្រួមតូច" : "Click to collapse")
+            : (lang === "km" ? "ចុចដើម្បីមើលព័ត៌មានលម្អិត System & RAM" : "Click to expand System Health & RAM details")
+        }
+      >
+        <div className="flex items-center gap-1.5 min-w-0">
+          <div className="relative flex items-center shrink-0">
+            <Activity
+              className={cn(
+                "w-3.5 h-3.5 shrink-0",
+                tone === "success"
+                  ? isCarbon ? "text-emerald-400" : "text-accent"
+                  : tone === "warning"
+                    ? "text-warning"
+                    : "text-danger"
+              )}
+            />
+            {tone !== "success" && (
+              <span className="absolute -top-0.5 -right-0.5 flex h-1.5 w-1.5">
+                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-danger opacity-75" />
+                <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-danger" />
+              </span>
+            )}
+          </div>
+          <span className={cn("text-xs font-semibold truncate", isCarbon ? "text-slate-200" : "text-ink")}>
+            {t("sysmon.systemHealth")}
+          </span>
+        </div>
+
+        <div className="flex items-center gap-1.5 shrink-0">
+          <span
+            className={cn(
+              "text-xs font-semibold tabular-nums",
+              tone === "success"
+                ? isCarbon ? "text-emerald-400" : "text-emerald-600 dark:text-emerald-400 font-bold"
+                : "text-warning font-bold"
+            )}
+          >
             {health ? `${Math.round(pct)}%` : "…"}
           </span>
-        </div>
-        <ProgressBar value={pct} tone={tone} />
-        <div className={cn("mt-0.5 text-[9.5px] flex items-center justify-between", isCarbon ? "text-slate-400" : "text-ink-muted")}>
-          <span>{health ? `${health.label} services responding` : "Checking…"}</span>
-          <span className="font-mono text-[8.5px] text-emerald-500 font-semibold">API + DB Online</span>
-        </div>
-      </div>
 
-      {/* Subtle Divider */}
-      <div className={cn("h-px", isCarbon ? "bg-slate-800" : "bg-subtle/50")} />
+          {!isExpanded && (
+            <span
+              className={cn(
+                "text-[10px] font-semibold tabular-nums px-1.5 py-0.5 rounded flex items-center gap-1",
+                isCarbon
+                  ? "bg-slate-800/80 text-cyan-300 border border-slate-700/60"
+                  : "bg-surface text-ink-secondary border border-subtle"
+              )}
+            >
+              <Cpu className="w-3 h-3 text-accent shrink-0" />
+              <span>{memTotal} MB</span>
+            </span>
+          )}
 
-      {/* ── 2. SYSTEM RAM USAGE PROGRESS ── */}
-      <div className="relative group cursor-pointer">
-        <div className="flex items-center gap-1.5 mb-1">
-          <Cpu className={cn("w-3 h-3 shrink-0", isCarbon ? "text-cyan-400" : "text-accent")} />
-          <span className={cn("text-[10.5px] font-semibold", isCarbon ? "text-slate-200" : "text-ink")}>System RAM Usage</span>
-          <span className={cn("ml-auto text-[10.5px] font-semibold tabular-nums", isCarbon ? "text-cyan-400" : "text-accent font-bold")}>
-            {memTotal} MB
-          </span>
+          <ChevronDown
+            className={cn(
+              "w-3.5 h-3.5 text-ink-muted group-hover:text-ink transition-transform duration-200",
+              isExpanded && "rotate-180"
+            )}
+          />
         </div>
-        <ProgressBar value={memPct} tone={memTone} />
-        <div className={cn("mt-0.5 text-[9.5px] flex items-center justify-between", isCarbon ? "text-slate-400" : "text-ink-muted")}>
-          <span>{memPct}% of 2 GB allocated</span>
-          <span className={cn("text-[8.5px] font-medium", isCarbon ? "text-cyan-400/80 group-hover:text-cyan-300" : "text-accent/80 group-hover:text-accent")}>
-            Hover for details
-          </span>
-        </div>
+      </button>
 
-        {/* Floating Tooltip Breakdown on Mouse Hover */}
-        <div className="absolute bottom-full left-0 right-0 mb-2 hidden group-hover:block z-50 p-2.5 rounded-xl bg-slate-900/95 text-white border border-white/15 shadow-2xl backdrop-blur-xl pointer-events-none transition-all duration-200 min-w-[235px]">
-          <div className="text-[10px] font-bold text-slate-300 border-b border-white/10 pb-1 mb-1.5 flex items-center justify-between whitespace-nowrap gap-2">
-            <span>⚡ Live Microservices</span>
-            <span className="text-emerald-400 font-mono font-bold">{memTotal} MB Total</span>
-          </div>
-          <div className="space-y-1.5 text-[10px] font-mono">
-            <div className="flex items-center justify-between text-slate-300 whitespace-nowrap">
-              <span className="flex items-center gap-1.5">🌐 <span>Frontend Web App:</span></span>
-              <span className="text-white font-bold">{mem?.frontendMb ?? 45} MB</span>
-            </div>
-            <div className="flex items-center justify-between text-slate-300 whitespace-nowrap">
-              <span className="flex items-center gap-1.5">⚙️ <span>Technical Core API:</span></span>
-              <span className="text-emerald-400 font-bold">{mem?.technicalApiMb ?? 98} MB</span>
-            </div>
-            <div className="flex items-center justify-between text-slate-300 whitespace-nowrap">
-              <span className="flex items-center gap-1.5">🔑 <span>User Auth API:</span></span>
-              <span className="text-teal-400 font-bold">{mem?.userManagementApiMb ?? 94} MB</span>
-            </div>
-            <div className="flex items-center justify-between text-slate-300 whitespace-nowrap">
-              <span className="flex items-center gap-1.5">👥 <span>Customer API:</span></span>
-              <span className="text-cyan-400 font-bold">{mem?.customerEmployeeApiMb ?? 88} MB</span>
+      {/* ── 2. EXPANDABLE DETAILS BODY (LIKE IMAGE 2) ── */}
+      {isExpanded && (
+        <div className="px-2 lg:px-2 xl:px-2.5 pb-2 lg:pb-2 xl:pb-2.5 space-y-2 lg:space-y-2 xl:space-y-2.5 pt-0.5">
+          {/* System Services Health Progress */}
+          <div>
+            <ProgressBar value={pct} tone={tone} />
+            <div className={cn("mt-0.5 text-[9.5px] flex items-center justify-between", isCarbon ? "text-slate-400" : "text-ink-muted")}>
+              <span>{health ? t("sysmon.servicesResponding", { label: health.label }) : t("sysmon.checking")}</span>
+              <span className={cn(
+                "font-mono text-[8.5px] font-semibold",
+                tone === "success" ? "text-emerald-500" : tone === "warning" ? "text-warning" : "text-danger"
+              )}>
+                {tone === "success"
+                  ? t("sysmon.allOnline")
+                  : tone === "warning"
+                    ? t("sysmon.degraded")
+                    : t("sysmon.offline")}
+              </span>
             </div>
           </div>
+
+          {/* Subtle Divider */}
+          <div className={cn("h-px", isCarbon ? "bg-slate-800" : "bg-subtle/50")} />
+
+          {/* System RAM Usage Progress */}
+          <div className="relative group cursor-pointer">
+            <div className="flex items-center gap-1.5 mb-1">
+              <Cpu className={cn("w-3 h-3 shrink-0", isCarbon ? "text-cyan-400" : "text-accent")} />
+              <span className={cn("text-[10.5px] font-semibold", isCarbon ? "text-slate-200" : "text-ink")}>{t("sysmon.ramUsage")}</span>
+              <button
+                type="button"
+                onClick={handleCleanRam}
+                disabled={isCleaningRam}
+                title={lang === "km" ? "ចុចដើម្បីសម្អាត RAM & System Cache" : "Click to Purge System RAM & Cache"}
+                className={cn(
+                  "ml-auto px-1.5 py-0.5 text-[9px] font-bold rounded-md flex items-center gap-1 transition-all cursor-pointer border shadow-sm",
+                  isCarbon
+                    ? "bg-cyan-950/70 text-cyan-300 border-cyan-800/70 hover:bg-cyan-900"
+                    : "bg-accent-soft text-accent border-accent/30 hover:bg-accent hover:text-white"
+                )}
+              >
+                <Sparkles className={cn("w-2.5 h-2.5", isCleaningRam && "animate-spin")} />
+                <span>{isCleaningRam ? (lang === "km" ? "សម្អាត..." : "Cleaning...") : (lang === "km" ? "សម្អាត RAM" : "Clean RAM")}</span>
+              </button>
+              <span className={cn("text-[10.5px] font-semibold tabular-nums", isCarbon ? "text-cyan-400" : "text-accent font-bold")}>
+                {memTotal} MB
+              </span>
+            </div>
+            <ProgressBar value={memPct} tone={memTone} />
+            <div className={cn("mt-0.5 text-[9.5px] flex items-center justify-between", isCarbon ? "text-slate-400" : "text-ink-muted")}>
+              <span>{t("sysmon.ramAllocated", { pct: String(memPct) })}</span>
+              <span className={cn("text-[8.5px] font-medium", isCarbon ? "text-cyan-400/80 group-hover:text-cyan-300" : "text-accent/80 group-hover:text-accent")}>
+                {t("sysmon.hoverForDetails")}
+              </span>
+            </div>
+
+            {/* Floating Tooltip Breakdown on Mouse Hover */}
+            <div className="absolute bottom-full left-0 right-0 mb-2 hidden group-hover:block z-50 p-2.5 rounded-xl bg-slate-900/95 text-white border border-white/15 shadow-2xl backdrop-blur-xl pointer-events-none transition-all duration-200 min-w-[235px]">
+              <div className="text-[10px] font-bold text-slate-300 border-b border-white/10 pb-1 mb-1.5 flex items-center justify-between whitespace-nowrap gap-2">
+                <span>⚡ {t("sysmon.liveMicroservices")}</span>
+                <span className="text-emerald-400 font-mono font-bold">{t("sysmon.mbTotal", { mb: String(memTotal) })}</span>
+              </div>
+              <div className="space-y-1.5 text-[10px] font-mono">
+                <div className="flex items-center justify-between text-slate-300 whitespace-nowrap">
+                  <span className="flex items-center gap-1.5">🌐 <span>{t("sysmon.svcFrontend")}</span></span>
+                  <span className="text-white font-bold">{mem?.frontendMb ?? 45} MB</span>
+                </div>
+                <div className="flex items-center justify-between text-slate-300 whitespace-nowrap">
+                  <span className="flex items-center gap-1.5">⚙️ <span>{t("sysmon.svcTechnical")}</span></span>
+                  <span className="text-emerald-400 font-bold">{mem?.technicalApiMb ?? 98} MB</span>
+                </div>
+                <div className="flex items-center justify-between text-slate-300 whitespace-nowrap">
+                  <span className="flex items-center gap-1.5">🔑 <span>{t("sysmon.svcUserAuth")}</span></span>
+                  <span className="text-teal-400 font-bold">{mem?.userManagementApiMb ?? 94} MB</span>
+                </div>
+                <div className="flex items-center justify-between text-slate-300 whitespace-nowrap">
+                  <span className="flex items-center gap-1.5">👥 <span>{t("sysmon.svcCustomer")}</span></span>
+                  <span className="text-cyan-400 font-bold">{mem?.customerEmployeeApiMb ?? 88} MB</span>
+                </div>
+              </div>
+              <div className="mt-2 pt-1.5 border-t border-white/10 flex items-center justify-between text-[9px] text-slate-400">
+                <span>V8 Memory Collector</span>
+                <span className="text-emerald-400 font-semibold">Active & Monitored</span>
+              </div>
+            </div>
+          </div>
         </div>
-      </div>
+      )}
     </div>
   );
 });
@@ -505,7 +725,7 @@ const NavRow = memo(function NavRow({
   compact?: boolean;
   subItem?: boolean;
   sidebarStyle?: string;
-  onNavigate?: (href: string) => void;
+  onNavigate?: () => void;
 }) {
   const isCarbon = sidebarStyle === "carbon";
   const isEnterprise = sidebarStyle === "enterprise-erp";
@@ -518,18 +738,12 @@ const NavRow = memo(function NavRow({
     <div className="w-full">
     <Link
       href={href}
-      prefetch={true}
-      onClick={(e) => {
-        if (
-          e.metaKey ||
-          e.ctrlKey ||
-          e.shiftKey ||
-          e.altKey ||
-          e.button !== 0
-        ) {
-          return;
-        }
-        onNavigate?.(href);
+      prefetch={false}
+      onMouseEnter={() => prefetchRouteData(href)}
+      onFocus={() => prefetchRouteData(href)}
+      onTouchStart={() => prefetchRouteData(href)}
+      onClick={() => {
+        onNavigate?.();
       }}
       title={collapsed ? label : undefined}
       aria-current={active ? "page" : undefined}
@@ -545,10 +759,10 @@ const NavRow = memo(function NavRow({
           ? "rounded-xl px-3 py-2 gap-2.5"
           : "rounded-xl px-3 py-2 gap-3",
         subItem
-          ? "text-xs gap-2"
+          ? "text-[13px] gap-2.5 py-1"
           : compact
-          ? "py-1.5 text-xs px-2.5"
-          : "text-xs lg:text-xs xl:text-sm",
+          ? "py-2 text-[13.5px] px-2.5"
+          : "text-[13.5px] lg:text-[13.5px] xl:text-[14px]",
         // Text & Active styling
         isEnterprise
           ? active
@@ -607,7 +821,7 @@ const NavRow = memo(function NavRow({
           aria-hidden
           layoutId="sidebar-active-pill"
           className={cn(
-            "absolute inset-0 rounded-xl",
+            "absolute inset-0 rounded-xl pointer-events-none",
             isCarbon
               ? "bg-cyan-500/15 border border-cyan-500/30 shadow-[0_0_12px_rgba(6,182,212,0.25)]"
               : isFloating
@@ -624,7 +838,7 @@ const NavRow = memo(function NavRow({
           aria-hidden
           layoutId="sidebar-accent-bar"
           className={cn(
-            "absolute",
+            "absolute pointer-events-none",
             isCarbon
               ? "left-0 top-1.5 bottom-1.5 w-[3px] rounded-r-full bg-cyan-400"
               : "left-0 top-1.5 bottom-1.5 w-[3px] rounded-r-full bg-accent"
@@ -637,7 +851,7 @@ const NavRow = memo(function NavRow({
         <Icon
           className={cn(
             "relative shrink-0 transition-colors",
-            subItem ? "w-3.5 h-3.5" : compact ? "w-3.5 h-3.5" : "w-4 h-4 xl:w-5 xl:h-5",
+            subItem ? "w-4 h-4" : compact ? "w-4 h-4" : "w-4 h-4 xl:w-5 xl:h-5",
             isEnterprise
               ? active
                 ? "text-accent-fg"
@@ -656,8 +870,8 @@ const NavRow = memo(function NavRow({
         {!collapsed && (
           <span
             className={cn(
-              "relative truncate",
-              active ? "font-bold" : "text-slate-700 dark:text-slate-200"
+              "relative truncate leading-snug tracking-normal",
+              active ? "font-bold" : "text-slate-700 dark:text-slate-200 font-medium"
             )}
           >
             {label}
@@ -689,7 +903,7 @@ const SubGroupSection = memo(function SubGroupSection({
   isExpanded: boolean;
   sidebarStyle?: string;
   onToggle: () => void;
-  onNavigate?: (href: string) => void;
+  onNavigate?: () => void;
 }) {
   const { t } = useI18n();
   const Icon = SUBGROUP_ICONS[subGroup.titleKey] ?? FileSpreadsheet;
@@ -730,7 +944,7 @@ const SubGroupSection = memo(function SubGroupSection({
         type="button"
         onClick={onToggle}
         className={cn(
-          "relative w-full flex items-center justify-between gap-2 px-2.5 py-1.5 rounded-xl text-xs font-semibold select-none",
+          "relative w-full flex items-center justify-between gap-2 px-2.5 py-1.5 rounded-xl text-[13.5px] font-semibold select-none",
           "transition-all duration-150 text-left cursor-pointer",
           isEnterprise
             ? hasActiveChild
@@ -764,7 +978,7 @@ const SubGroupSection = memo(function SubGroupSection({
         <div className="flex items-center gap-2 min-w-0 truncate pl-1">
           <Icon
             className={cn(
-              "w-3.5 h-3.5 shrink-0 transition-colors",
+              "w-4 h-4 shrink-0 transition-colors",
               isEnterprise
                 ? "text-accent"
                 : isCarbon
@@ -774,12 +988,12 @@ const SubGroupSection = memo(function SubGroupSection({
                 : hasActiveChild ? "text-accent" : "text-ink-muted"
             )}
           />
-          <span className="truncate tracking-tight">{t(subGroup.titleKey)}</span>
+          <span className="truncate tracking-normal">{t(subGroup.titleKey)}</span>
         </div>
         <div className="flex items-center gap-1.5 shrink-0">
           <span
             className={cn(
-              "px-2 py-0.5 text-[10px] font-bold rounded-full tabular-nums leading-tight",
+              "px-2 py-0.5 text-[11px] font-bold rounded-full tabular-nums leading-tight",
               isEnterprise
                 ? hasActiveChild
                   ? "bg-accent text-accent-fg shadow-xs"
@@ -804,7 +1018,7 @@ const SubGroupSection = memo(function SubGroupSection({
             transition={{ duration: 0.2 }}
             className={isCarbon ? "text-slate-500" : isEnterprise ? "text-accent" : "text-ink-muted"}
           >
-            <ChevronDown className="w-3.5 h-3.5" />
+            <ChevronDown className="w-4 h-4" />
           </motion.div>
         </div>
       </button>
@@ -844,15 +1058,6 @@ const SubGroupSection = memo(function SubGroupSection({
   );
 });
 
-function readStoredLogo(): string | null {
-  if (typeof window === "undefined") return null;
-  try {
-    return localStorage.getItem("system_brand_logo") || null;
-  } catch {
-    return null;
-  }
-}
-
 export default function Sidebar({
   isOpen,
   setIsOpen,
@@ -866,7 +1071,11 @@ export default function Sidebar({
   const { t } = useI18n();
   const collapsed = !isOpen;
 
-  const [brandLogo, setBrandLogo] = useState<string | null>(() => readStoredLogo());
+  // Brand logo comes from the shared store (services/brandLogoStore) rather
+  // than local state: the old fetch-then-setState here had no unmount guard,
+  // and Sidebar remounts on every navigation. Publishing to the store after
+  // an unmount is harmless, so there is nothing left to guard.
+  const brandLogo = useBrandLogo();
   const [currentUser] = useState(() => readStoredUser());
   const [activeFlyoutGroup, setActiveFlyoutGroup] = useState<string | null>(null);
   const [flyoutSearch, setFlyoutSearch] = useState("");
@@ -878,36 +1087,79 @@ export default function Sidebar({
   // Track single selected key in Enterprise ERP mode with smooth Framer Motion transition
   const [selectedErpKey, setSelectedErpKey] = useState<string>(() => (pathname === "/" ? "home" : ""));
 
+  const { hasPermission } = useUserPermissions();
+
+  // Dynamically filter navigation groups based on current user's role permissions
+  const filteredNavGroups = React.useMemo(() => {
+    return NAV_GROUPS.map((group) => {
+      // 1. Filter top-level items in this group
+      const filteredItems = group.items?.filter((item) => {
+        if (item.requiredRoles && !hasAnyRole(item.requiredRoles)) return false;
+        if (item.requiredModule && !hasPermission(item.requiredModule)) return false;
+        return true;
+      });
+
+      // 2. Filter sub-groups in this group
+      const filteredSubGroups = group.subGroups
+        ?.map((sub) => {
+          if (sub.requiredRoles && !hasAnyRole(sub.requiredRoles)) return null;
+          if (sub.requiredModule && !hasPermission(sub.requiredModule)) return null;
+          const subItems = sub.items.filter((item) => {
+            if (item.requiredRoles && !hasAnyRole(item.requiredRoles)) return false;
+            if (item.requiredModule && !hasPermission(item.requiredModule)) return false;
+            return true;
+          });
+          if (subItems.length === 0) return null;
+          return { ...sub, items: subItems };
+        })
+        .filter((sub): sub is NonNullable<typeof sub> => sub !== null);
+
+      if (group.requiredRoles && !hasAnyRole(group.requiredRoles)) return null;
+      if (group.requiredModule && !hasPermission(group.requiredModule)) return null;
+
+      const hasItems = Boolean(filteredItems && filteredItems.length > 0);
+      const hasSubs = Boolean(filteredSubGroups && filteredSubGroups.length > 0);
+      if (!hasItems && !hasSubs) return null;
+
+      return {
+        ...group,
+        items: filteredItems,
+        subGroups: filteredSubGroups,
+      };
+    }).filter((g): g is NonNullable<typeof g> => g !== null);
+  }, [hasPermission]);
+
+  // Dynamically filter DUAL_DOMAINS for dual sidebar mode
+  const filteredDualDomains = React.useMemo(() => {
+    return DUAL_DOMAINS.map((dom) => {
+      if (!dom.items) return dom;
+      const filteredItems = dom.items.filter((item) => {
+        const nav = findNavItem(item.href);
+        if (!nav) return true;
+        if (nav.requiredRoles && !hasAnyRole(nav.requiredRoles)) return false;
+        if (nav.requiredModule && !hasPermission(nav.requiredModule)) return false;
+        return true;
+      });
+      return { ...dom, items: filteredItems };
+    }).filter((dom) => dom.directHref || (dom.items && dom.items.length > 0));
+  }, [hasPermission]);
+
   useEffect(() => {
-    const handleUpdate = () => {
-      setBrandLogo(readStoredLogo());
-    };
-    window.addEventListener("system_brand_logo_updated", handleUpdate);
-    window.addEventListener("storage", handleUpdate);
-
+    // Refresh the stored logo from the server once per mount; the store
+    // fans the result out to every subscriber (login page included).
     fetchAppLogoUrl().then((url) => {
-      if (url) {
-        setBrandLogo(url);
-        localStorage.setItem("system_brand_logo", url);
-      }
+      if (url) publishBrandLogo(url);
     }).catch(() => {});
-
-    return () => {
-      window.removeEventListener("system_brand_logo_updated", handleUpdate);
-      window.removeEventListener("storage", handleUpdate);
-    };
   }, []);
 
-  const [isInitialMount] = useState(() => {
-    if (typeof window === "undefined") return false;
-    if (!hasInitialSidebarAnimated) {
-      hasInitialSidebarAnimated = true;
-      return true;
-    }
-    return false;
-  });
+  const [prevPathname, setPrevPathname] = useState(pathname);
+  const [optimisticPath, setOptimisticPath] = useState<string | null>(null);
+  if (prevPathname !== pathname) {
+    setPrevPathname(pathname);
+    setOptimisticPath(null);
+  }
 
-  const activeHref = pathname;
+  const activeHref = optimisticPath || pathname;
 
   const [openParentGroups, setOpenParentGroups] = useState<Record<string, boolean>>(
     () => savedOpenParentGroups
@@ -938,7 +1190,7 @@ export default function Sidebar({
       return;
     }
 
-    for (const dom of DUAL_DOMAINS) {
+    for (const dom of filteredDualDomains) {
       if (dom.directHref === activeHref || dom.items?.some((i) => i.href === activeHref)) {
         setDualSelectedDomain(dom.id);
         break;
@@ -946,7 +1198,7 @@ export default function Sidebar({
     }
 
     // 2. Synchronize Parent Groups & Subgroups
-    for (const group of NAV_GROUPS) {
+    for (const group of filteredNavGroups) {
       let isInsideGroup = group.items?.some((i) => i.href === activeHref);
       if (group.subGroups) {
         for (const sub of group.subGroups) {
@@ -972,7 +1224,7 @@ export default function Sidebar({
         });
       }
     }
-  }, [activeHref]);
+  }, [activeHref, filteredNavGroups, filteredDualDomains]);
 
   const toggleParentGroup = useCallback((key: string) => {
     setOpenParentGroups((prev) => {
@@ -1007,6 +1259,11 @@ export default function Sidebar({
     if (window.matchMedia("(max-width: 1023px)").matches) setIsOpen(false);
   }, [setIsOpen]);
 
+  const handleNavRowClick = useCallback(() => {
+    if (window.matchMedia("(max-width: 1023px)").matches) setIsOpen(false);
+    setActiveFlyoutGroup(null);
+  }, [setIsOpen]);
+
   const handleNavigate = useCallback(
     (href: string) => {
       if (window.matchMedia("(max-width: 1023px)").matches) setIsOpen(false);
@@ -1026,8 +1283,60 @@ export default function Sidebar({
   const isRadiant = sidebarStyle === "radiant";
   const isMotion = sidebarStyle === "motion-expansion";
 
+  /**
+   * `av-sidebar-enter`, but only the first time the app paints — never again.
+   *
+   * The sidebar is not a persistent shell here: every page renders its own
+   * `PageWrapper`, so React unmounts and remounts this component on EVERY
+   * navigation. Measured, not assumed — the `<aside>` after a route change is a
+   * different DOM node, which means an unconditional entrance class re-runs its
+   * keyframes on every single menu click. That is what made the chrome look
+   * restless: the frame around the app kept re-introducing itself while only the
+   * content inside it was supposed to be changing.
+   *
+   * A module-scope flag rather than state, for the same reason
+   * `services/sidebarPreference.ts` uses one: it has to outlive the unmount, and
+   * component state cannot.
+   *
+   * The flag is read into a ref during render because the class must already be
+   * on the element in its first committed frame — an effect runs after paint,
+   * which is too late for an entrance. Setting the flag stays in the effect so
+   * render itself has no side effect.
+   *
+   * Dev-only caveat: React StrictMode mounts, unmounts and remounts once, so the
+   * flag is spent on the discarded first mount and the fade is skipped in dev.
+   * Production mounts once and plays it.
+   */
+  /**
+   * ...and yet the fade plays on EVERY mount, not just the first. That is a
+   * deliberate reversal, and the reason is worth writing down so it is not
+   * "cleaned up" again.
+   *
+   * Gating it to the first mount was tried and made clicking a menu item feel
+   * WORSE, not better. The active highlight is two framer shared-layout
+   * elements — `layoutId="sidebar-active-pill"` and `layoutId="sidebar-accent-bar"`
+   * further down this file. A `layoutId` transition can only interpolate when
+   * the old and the new element are both inside a tree that stayed mounted
+   * across the change. This sidebar does not: it is remounted wholesale on every
+   * navigation (verified — the `<aside>` is a different DOM node afterwards),
+   * so framer has no previous snapshot to animate from and the pill TELEPORTS
+   * to its new row instead of sliding to it.
+   *
+   * The fade was never really an entrance. It was covering that teleport, and
+   * removing it did not create the jank — it uncovered it.
+   *
+   * So this is a mask, honestly labelled as one. The actual fix is to stop the
+   * shell remounting: move Sidebar + Header into a shared layout above the
+   * pages, at which point the pill genuinely travels and this class can go back
+   * to firing once, or drop away entirely.
+   * Note `PageWrapper`'s own comments before attempting it — the sidebar's
+   * collapsed width currently avoids a first-paint flash only because AuthGuard
+   * keeps the shell out of the server HTML.
+   */
+  const entranceClass = "av-sidebar-enter";
+
   const currentFlyoutCategory = RAIL_CATEGORIES.find((c) => c.id === activeFlyoutGroup);
-  const currentDomain = DUAL_DOMAINS.find((d) => d.id === dualSelectedDomain) || DUAL_DOMAINS[1];
+  const currentDomain = filteredDualDomains.find((d) => d.id === dualSelectedDomain) || filteredDualDomains[1] || filteredDualDomains[0];
 
   // ══════════════════════════════════════════════════════════════════════════
   // DISTINCT EXPANDED TEMPLATE RENDERERS
@@ -1058,7 +1367,7 @@ export default function Sidebar({
         <Link href="/" className="flex items-center gap-2.5 overflow-hidden min-w-0 group">
           {brandLogo ? (
             <span className="w-8 h-8 rounded-xl grid place-items-center shrink-0 overflow-hidden bg-gradient-to-br from-white via-white to-accent-soft/40 border border-accent/30 shadow-soft-sm p-1 group-hover:border-accent transition-all duration-200">
-              <img
+              <BrandLogo
                 src={brandLogo}
                 alt="Logo"
                 style={{ transform: `scale(${(prefs.logoScale ?? 130) / 100})` }}
@@ -1170,7 +1479,7 @@ export default function Sidebar({
         )}
 
         {/* Parent Groups with L-Shaped Tree Hierarchy */}
-        {NAV_GROUPS.map((group) => {
+        {filteredNavGroups.map((group) => {
           const GroupIcon = GROUP_ICONS[group.titleKey] ?? Package;
           const isParentOpen = openParentGroups[group.titleKey] ?? false;
           const isAnyChildActive =
@@ -1256,7 +1565,9 @@ export default function Sidebar({
                         <span className="absolute -left-3.5 top-1/2 -translate-y-1/2 w-3 h-3 border-b-[1.5px] border-l-[1.5px] rounded-bl-lg border-slate-200 dark:border-slate-700 pointer-events-none" />
                         <Link
                           href={item.href}
-                          prefetch={true}
+                          prefetch={false}
+                          onMouseEnter={() => prefetchRouteData(item.href)}
+                          onFocus={() => prefetchRouteData(item.href)}
                           onClick={() => {
                             if (window.matchMedia("(max-width: 1023px)").matches) setIsOpen(false);
                             setActiveFlyoutGroup(null);
@@ -1283,7 +1594,7 @@ export default function Sidebar({
                       isExpanded={openSubgroups[subGroup.titleKey] ?? false}
                       sidebarStyle="motion-expansion"
                       onToggle={() => toggleSubgroup(subGroup.titleKey)}
-                      onNavigate={handleNavigate}
+                      onNavigate={handleNavRowClick}
                     />
                   ))}
                 </div>
@@ -1309,7 +1620,7 @@ export default function Sidebar({
             <div className="flex items-center gap-2 min-w-0">
               <div className="w-7 h-7 rounded-full bg-slate-200 dark:bg-slate-750 flex items-center justify-center text-[10px] font-bold text-slate-800 dark:text-slate-100 ring-1 ring-white dark:ring-slate-800">
                 {currentUser.picture ? (
-                  <img src={currentUser.picture} alt={currentUser.name} className="w-full h-full object-cover rounded-full" />
+                  <BrandLogo src={currentUser.picture} alt={currentUser.name} className="w-full h-full object-cover rounded-full" />
                 ) : (
                   currentUser.name.slice(0, 2).toUpperCase()
                 )}
@@ -1337,7 +1648,7 @@ export default function Sidebar({
 
       {/* 5. Unclipped Floating Submenu Popover in Collapsed Mode (Image 3!) */}
       {!isOpen && motionFlyout && (() => {
-        const activeGroup = NAV_GROUPS.find((g) => g.titleKey === motionFlyout.titleKey);
+        const activeGroup = filteredNavGroups.find((g) => g.titleKey === motionFlyout.titleKey);
         if (!activeGroup) return null;
         /*
           `top` used to be clamped to `innerHeight - 280`, i.e. on the
@@ -1380,7 +1691,9 @@ export default function Sidebar({
                     <span className="absolute -left-3 top-1/2 -translate-y-1/2 w-2.5 h-2.5 border-b-[1.5px] border-l-[1.5px] rounded-bl-md border-slate-200 dark:border-slate-700 pointer-events-none" />
                     <Link
                       href={item.href}
-                      prefetch={true}
+                      prefetch={false}
+                      onMouseEnter={() => prefetchRouteData(item.href)}
+                      onFocus={() => prefetchRouteData(item.href)}
                       onClick={() => {
                         setMotionFlyout(null);
                         if (window.matchMedia("(max-width: 1023px)").matches) setIsOpen(false);
@@ -1410,7 +1723,9 @@ export default function Sidebar({
                         <span className="absolute -left-3 top-1/2 -translate-y-1/2 w-2.5 h-2.5 border-b-[1.5px] border-l-[1.5px] rounded-bl-md border-slate-200 dark:border-slate-700 pointer-events-none" />
                         <Link
                           href={item.href}
-                          prefetch={true}
+                          prefetch={false}
+                          onMouseEnter={() => prefetchRouteData(item.href)}
+                          onFocus={() => prefetchRouteData(item.href)}
                           onClick={() => {
                             setMotionFlyout(null);
                             if (window.matchMedia("(max-width: 1023px)").matches) setIsOpen(false);
@@ -1445,7 +1760,7 @@ export default function Sidebar({
           <div className="flex items-center gap-2.5 min-w-0">
             <span className="w-8 h-8 rounded-xl bg-accent text-white font-bold text-xs grid place-items-center shrink-0 shadow-xs">
               {brandLogo ? (
-                <img src={brandLogo} alt="Logo" className="w-full h-full object-contain p-0.5 rounded-xl" />
+                <BrandLogo src={brandLogo} alt="Logo" className="w-full h-full object-contain p-0.5 rounded-xl" />
               ) : (
                 "CAM"
               )}
@@ -1484,19 +1799,19 @@ export default function Sidebar({
           active={activeHref === "/"}
           collapsed={false}
           sidebarStyle={sidebarStyle}
-          onNavigate={handleNavigate}
+          onNavigate={handleNavRowClick}
         />
 
-        {NAV_GROUPS.map((group) => {
+        {filteredNavGroups.map((group) => {
           const itemCount =
             (group.items?.length || 0) +
             (group.subGroups?.reduce((acc, s) => acc + s.items.length, 0) || 0);
 
           return (
             <div key={group.titleKey} className="space-y-1">
-              <div className="flex items-center justify-between px-2 text-[10.5px] font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider mb-1">
+              <div className="flex items-center justify-between px-2 text-[11.5px] lg:text-xs font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wide mb-1">
                 <span>{t(group.titleKey)}</span>
-                <span className="px-1.5 py-0.2 rounded-md bg-cushion dark:bg-slate-800 text-[9.5px] text-slate-600 dark:text-slate-300">
+                <span className="px-1.5 py-0.5 rounded-md bg-cushion dark:bg-slate-800 text-[10px] font-semibold text-slate-600 dark:text-slate-300">
                   {itemCount}
                 </span>
               </div>
@@ -1510,7 +1825,7 @@ export default function Sidebar({
                   collapsed={false}
                   compact
                   sidebarStyle={sidebarStyle}
-                  onNavigate={handleNavigate}
+                  onNavigate={handleNavRowClick}
                 />
               ))}
               {group.subGroups?.map((subGroup) => (
@@ -1522,7 +1837,7 @@ export default function Sidebar({
                   isExpanded={openSubgroups[subGroup.titleKey] ?? false}
                   sidebarStyle={sidebarStyle}
                   onToggle={() => toggleSubgroup(subGroup.titleKey)}
-                  onNavigate={handleNavigate}
+                  onNavigate={handleNavRowClick}
                 />
               ))}
             </div>
@@ -1538,7 +1853,7 @@ export default function Sidebar({
           <div className="flex items-center gap-2 min-w-0">
             <div className="w-8 h-8 rounded-full bg-accent text-white font-bold text-xs grid place-items-center shrink-0 shadow-xs ring-2 ring-accent/20">
               {currentUser.picture ? (
-                <img src={currentUser.picture} alt={currentUser.name} className="w-full h-full object-cover rounded-full" />
+                <BrandLogo src={currentUser.picture} alt={currentUser.name} className="w-full h-full object-cover rounded-full" />
               ) : (
                 currentUser.name.slice(0, 2).toUpperCase()
               )}
@@ -1569,7 +1884,7 @@ export default function Sidebar({
         <Link href="/" className="flex items-center gap-2.5 overflow-hidden min-w-0">
           <span className="w-8 h-8 lg:w-8 lg:h-8 xl:w-9 xl:h-9 rounded-xl grid place-items-center shrink-0 overflow-hidden bg-gradient-to-br from-white via-white to-accent-soft border border-accent/25 shadow-soft-sm p-1">
             {brandLogo ? (
-              <img
+              <BrandLogo
                 src={brandLogo}
                 alt="Logo"
                 style={{ transform: `scale(${(prefs.logoScale ?? 130) / 100})` }}
@@ -1634,7 +1949,7 @@ export default function Sidebar({
             {selectedErpKey === "home" && (
               <motion.div
                 layoutId="erp-active-capsule"
-                className="absolute inset-0 rounded-2xl ring-1 ring-white/30"
+                className="absolute inset-0 rounded-2xl ring-1 ring-white/30 pointer-events-none"
                 style={{
                   background: "linear-gradient(95deg, var(--accent) 0%, color-mix(in srgb, var(--accent) 80%, white 20%) 55%, color-mix(in srgb, var(--accent) 65%, white 35%) 100%)",
                   boxShadow: "0 6px 18px -2px rgba(var(--accent-rgb), 0.45)",
@@ -1667,7 +1982,7 @@ export default function Sidebar({
         </div>
 
         {/* Parent Module Groups with Matching Uniform Height and Animated Selection Capsule */}
-        {NAV_GROUPS.map((group) => {
+        {filteredNavGroups.map((group) => {
           const GroupIcon = GROUP_ICONS[group.titleKey] ?? Package;
           const isExpanded = openParentGroups[group.titleKey] ?? false;
           const isSelected = selectedErpKey === group.titleKey;
@@ -1696,7 +2011,7 @@ export default function Sidebar({
                   {isSelected && (
                     <motion.div
                       layoutId="erp-active-capsule"
-                      className="absolute inset-0 rounded-2xl ring-1 ring-white/30"
+                      className="absolute inset-0 rounded-2xl ring-1 ring-white/30 pointer-events-none"
                       style={{
                         background: "linear-gradient(95deg, var(--accent) 0%, color-mix(in srgb, var(--accent) 80%, white 20%) 55%, color-mix(in srgb, var(--accent) 65%, white 35%) 100%)",
                         boxShadow: "0 6px 18px -2px rgba(var(--accent-rgb), 0.45)",
@@ -1772,7 +2087,7 @@ export default function Sidebar({
                           subItem
                           compact
                           sidebarStyle="enterprise-erp"
-                          onNavigate={handleNavigate}
+                          onNavigate={handleNavRowClick}
                         />
                       ))}
                       {group.subGroups?.map((subGroup) => (
@@ -1784,7 +2099,7 @@ export default function Sidebar({
                           isExpanded={openSubgroups[subGroup.titleKey] ?? false}
                           sidebarStyle="enterprise-erp"
                           onToggle={() => toggleSubgroup(subGroup.titleKey)}
-                          onNavigate={handleNavigate}
+                          onNavigate={handleNavRowClick}
                         />
                       ))}
                     </div>
@@ -1807,7 +2122,7 @@ export default function Sidebar({
           collapsed={false}
           compact
           sidebarStyle="enterprise-erp"
-          onNavigate={handleNavigate}
+          onNavigate={handleNavRowClick}
         />
       </div>
     </div>
@@ -1837,7 +2152,7 @@ export default function Sidebar({
               : "bg-accent text-accent-fg shadow-soft-sm"
           )}>
             {brandLogo ? (
-              <img
+              <BrandLogo
                 src={brandLogo}
                 alt="Logo"
                 style={{ transform: `scale(${(prefs.logoScale ?? 130) / 100})` }}
@@ -1850,13 +2165,13 @@ export default function Sidebar({
           {isOpen && (
             <span className="flex flex-col min-w-0">
               <span className={cn(
-                "font-semibold tracking-tight text-xs lg:text-xs xl:text-sm leading-none truncate",
+                "font-bold tracking-tight text-[13.5px] lg:text-sm xl:text-[15px] leading-none truncate",
                 isCarbon ? "text-slate-100" : "text-ink"
               )}>
                 {t("app.brand")}
               </span>
               <span className={cn(
-                "text-[9px] lg:text-[9px] xl:text-[10px] font-medium tracking-wider uppercase mt-1 truncate",
+                "text-[10px] lg:text-[10px] xl:text-[11px] font-medium tracking-wider uppercase mt-1 truncate",
                 isCarbon ? "text-cyan-400" : "text-accent"
               )}>
                 {t("app.brandTagline")}
@@ -1882,10 +2197,10 @@ export default function Sidebar({
           active={activeHref === "/"}
           collapsed={collapsed}
           sidebarStyle={sidebarStyle}
-          onNavigate={handleNavigate}
+          onNavigate={handleNavRowClick}
         />
 
-        {NAV_GROUPS.map((group) => {
+        {filteredNavGroups.map((group) => {
           const GroupIcon = GROUP_ICONS[group.titleKey] ?? Package;
           const isParentOpen = openParentGroups[group.titleKey] ?? false;
           const itemCount =
@@ -1909,13 +2224,13 @@ export default function Sidebar({
                       )}
                     >
                       <div className="flex items-center gap-1.5 min-w-0 flex-1">
-                        <GroupIcon className="w-3.5 h-3.5 shrink-0 text-slate-600 dark:text-slate-400 transition-colors" />
-                        <span className="text-[10px] xl:text-[10.5px] font-bold uppercase tracking-wider truncate text-slate-800 dark:text-slate-100">
+                        <GroupIcon className="w-4 h-4 shrink-0 text-slate-600 dark:text-slate-400 transition-colors" />
+                        <span className="text-[11.5px] xl:text-xs font-bold uppercase tracking-wide truncate text-slate-800 dark:text-slate-100">
                           {t(group.titleKey)}
                         </span>
                       </div>
                       <div className="flex items-center gap-1 shrink-0 pl-1">
-                        <span className="px-1.5 py-0.5 rounded-md text-[9px] font-bold tabular-nums leading-none bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 border border-slate-200/80 dark:border-slate-700">
+                        <span className="px-1.5 py-0.5 rounded-md text-[10px] font-bold tabular-nums leading-none bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 border border-slate-200/80 dark:border-slate-700">
                           {itemCount}
                         </span>
                         <motion.div
@@ -1950,7 +2265,7 @@ export default function Sidebar({
                               collapsed={collapsed}
                               compact
                               sidebarStyle={sidebarStyle}
-                              onNavigate={handleNavigate}
+                              onNavigate={handleNavRowClick}
                             />
                           ))}
                           {group.subGroups?.map((subGroup) => (
@@ -1962,7 +2277,7 @@ export default function Sidebar({
                               isExpanded={openSubgroups[subGroup.titleKey] ?? false}
                               sidebarStyle={sidebarStyle}
                               onToggle={() => toggleSubgroup(subGroup.titleKey)}
-                              onNavigate={handleNavigate}
+                              onNavigate={handleNavRowClick}
                             />
                           ))}
                         </motion.div>
@@ -1980,7 +2295,7 @@ export default function Sidebar({
                           collapsed={collapsed}
                           compact
                           sidebarStyle={sidebarStyle}
-                          onNavigate={handleNavigate}
+                          onNavigate={handleNavRowClick}
                         />
                       ))}
                       {group.subGroups?.map((subGroup) => (
@@ -1992,7 +2307,7 @@ export default function Sidebar({
                           isExpanded={openSubgroups[subGroup.titleKey] ?? false}
                           sidebarStyle={sidebarStyle}
                           onToggle={() => toggleSubgroup(subGroup.titleKey)}
-                          onNavigate={handleNavigate}
+                          onNavigate={handleNavRowClick}
                         />
                       ))}
                     </>
@@ -2002,10 +2317,10 @@ export default function Sidebar({
                 /* ── B. AURA CLASSIC (DEFAULT), CARBON, FLOATING: Direct Non-Collapsible Original Listing ── */
                 <>
                   {isOpen ? (
-                    <div className="flex items-center justify-between px-2 text-[10px] lg:text-[10.5px] font-bold text-ink-muted uppercase tracking-wider mb-1">
+                    <div className="flex items-center justify-between px-2 text-[11.5px] lg:text-xs font-bold text-ink-muted uppercase tracking-wide mb-1">
                       <span className={isCarbon ? "text-slate-400" : ""}>{t(group.titleKey)}</span>
                       <span className={cn(
-                        "px-1.5 py-0.2 rounded-md text-[9px] font-medium",
+                        "px-1.5 py-0.5 rounded-md text-[10px] font-semibold",
                         isCarbon ? "bg-slate-800 text-slate-400" : "bg-cushion text-ink-secondary"
                       )}>
                         {itemCount}
@@ -2024,7 +2339,7 @@ export default function Sidebar({
                       collapsed={collapsed}
                       compact
                       sidebarStyle={sidebarStyle}
-                      onNavigate={handleNavigate}
+                      onNavigate={handleNavRowClick}
                     />
                   ))}
 
@@ -2038,7 +2353,7 @@ export default function Sidebar({
                       isExpanded={openSubgroups[subGroup.titleKey] ?? false}
                       sidebarStyle={sidebarStyle}
                       onToggle={() => toggleSubgroup(subGroup.titleKey)}
-                      onNavigate={handleNavigate}
+                      onNavigate={handleNavRowClick}
                     />
                   ))}
                 </>
@@ -2066,7 +2381,7 @@ export default function Sidebar({
           collapsed={collapsed}
           compact
           sidebarStyle={sidebarStyle}
-          onNavigate={handleNavigate}
+          onNavigate={handleNavRowClick}
         />
       </div>
     </>
@@ -2116,7 +2431,7 @@ export default function Sidebar({
             <Link href="/" className="mb-4">
               <span className="w-10 h-10 rounded-2xl grid place-items-center shrink-0 overflow-hidden bg-gradient-to-br from-white via-white to-accent-soft/40 border border-accent/30 shadow-soft-sm ring-1 ring-accent/20 p-1 hover:border-accent/50 transition-all duration-200">
                 {brandLogo ? (
-                  <img
+                  <BrandLogo
                     src={brandLogo}
                     alt="Logo"
                     style={{ transform: `scale(${(prefs.logoScale ?? 130) / 100})` }}
@@ -2129,7 +2444,7 @@ export default function Sidebar({
             </Link>
 
             <div className="flex-1 space-y-2 w-full px-2 flex flex-col items-center">
-              {DUAL_DOMAINS.map((dom) => {
+              {filteredDualDomains.map((dom) => {
                 const Icon = dom.icon;
                 const isSelected = dualSelectedDomain === dom.id;
                 return (
@@ -2155,7 +2470,7 @@ export default function Sidebar({
                     {isSelected && (
                       <motion.div
                         layoutId="dual-rail-active"
-                        className="absolute inset-0 rounded-2xl bg-accent shadow-md shadow-accent/30"
+                        className="absolute inset-0 rounded-2xl bg-accent shadow-md shadow-accent/30 pointer-events-none"
                         transition={{ type: "spring", stiffness: 450, damping: 32 }}
                       />
                     )}
@@ -2233,7 +2548,9 @@ export default function Sidebar({
                       <Link
                         key={item.href}
                         href={item.href}
-                        prefetch={true}
+                        prefetch={false}
+                        onMouseEnter={() => prefetchRouteData(item.href)}
+                        onFocus={() => prefetchRouteData(item.href)}
                         onClick={() => {
                           if (window.matchMedia("(max-width: 1023px)").matches) setIsOpen(false);
                         }}
@@ -2262,6 +2579,7 @@ export default function Sidebar({
         /* ── 2. FLOATING ISLAND GLASS ── */
         <aside
           className={cn(
+            entranceClass,
             "fixed top-0 left-0 z-40 h-screen pointer-events-none p-2 sm:p-2.5 lg:p-3",
             "transition-[width,transform] duration-300 ease-out",
             "w-64",
@@ -2278,6 +2596,7 @@ export default function Sidebar({
         /* ── 3. ENTERPRISE ERP PRO (DYNAMIC BRANDING ACCENT ADAPTIVE!) ── */
         <aside
           className={cn(
+            entranceClass,
             "fixed top-0 left-0 z-40 h-screen flex flex-col transition-[width,transform] duration-300 ease-out shadow-lg",
             "w-72 xl:w-76",
             isOpen ? "translate-x-0" : "-translate-x-full",
@@ -2292,6 +2611,7 @@ export default function Sidebar({
         <>
           <aside
             className={cn(
+              entranceClass,
               "fixed top-0 left-0 z-40 h-screen w-20 bg-surface dark:bg-slate-900 border-r border-subtle dark:border-slate-800 flex flex-col items-center py-3 select-none transition-[transform] duration-300 ease-out",
               isOpen ? "translate-x-0" : "-translate-x-full lg:translate-x-0"
             )}
@@ -2300,7 +2620,7 @@ export default function Sidebar({
             <Link href="/" className="mb-4">
               <span className="w-10 h-10 rounded-2xl grid place-items-center shrink-0 overflow-hidden bg-gradient-to-br from-white via-white to-accent-soft/40 border border-accent/30 shadow-soft-md ring-1 ring-accent/20 p-1 hover:border-accent/50 transition-all duration-200">
                 {brandLogo ? (
-                  <img
+                  <BrandLogo
                     src={brandLogo}
                     alt="Logo"
                     style={{ transform: `scale(${(prefs.logoScale ?? 130) / 100})` }}
@@ -2426,7 +2746,9 @@ export default function Sidebar({
                         <Link
                           key={item.href}
                           href={item.href}
-                          prefetch={true}
+                          prefetch={false}
+                          onMouseEnter={() => prefetchRouteData(item.href)}
+                          onFocus={() => prefetchRouteData(item.href)}
                           onClick={() => {
                             setActiveFlyoutGroup(null);
                             if (window.matchMedia("(max-width: 1023px)").matches) setIsOpen(false);
@@ -2452,6 +2774,7 @@ export default function Sidebar({
         /* ── 5. UNTITLED UI EXPANDED WORKSPACE SIDEBAR (Like Image 2!) ── */
         <aside
           className={cn(
+            entranceClass,
             "fixed top-0 left-0 z-40 h-screen flex flex-col transition-[width,transform] duration-300 ease-out border-r border-subtle dark:border-slate-800 bg-surface dark:bg-slate-900 shadow-soft-xl",
             "w-64",
             isOpen ? "translate-x-0" : "-translate-x-full",
@@ -2465,6 +2788,7 @@ export default function Sidebar({
         /* ── 6. STANDARD DOCK FOR CLASSIC, CARBON, RADIANT, FLOATING, ETC. ── */
         <aside
           className={cn(
+            entranceClass,
             "fixed top-0 left-0 z-40 h-screen flex flex-col",
             "transition-[width,transform] duration-300 ease-out",
             isCarbon

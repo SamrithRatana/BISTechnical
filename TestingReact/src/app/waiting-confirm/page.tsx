@@ -24,6 +24,7 @@ export default function WaitingConfirmPage() {
         activeTabKey={activeTabKey}
         tabs={WAITING_CONFIRM_TABS}
         onTabChange={setActiveTabKey}
+        disableStatusDropdown={activeTabKey !== "Awaiting Customer Confirm"}
       />
     </PageWrapper>
   );

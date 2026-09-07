@@ -29,12 +29,16 @@
  */
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import dynamic from "next/dynamic";
 import { useRouter, usePathname } from "next/navigation";
 import {
   Search, Loader2, FileText, Wrench, Users, Package, Sparkles,
-  Home, BarChart2, ArrowRight, Command, Smartphone,
+  Home, BarChart2, ArrowRight, Command, Smartphone, Table as TableIcon,
 } from "lucide-react";
 import { useCompanionScanner } from "@/context/CompanionScannerContext";
+import HighlightText from "./HighlightText";
+
+const AllTicketsSearchModal = dynamic(() => import("./AllTicketsSearchModal"), { ssr: false });
 import {
   fetchRepairServices,
   fetchSparePartsInventory,
@@ -154,6 +158,8 @@ export default function GlobalSearch() {
   const { openPairingModal } = useCompanionScanner();
   const [term, setTerm] = useState("");
   const [open, setOpen] = useState(false);
+  const [isTableModalOpen, setIsTableModalOpen] = useState(false);
+  const [tableSearchQuery, setTableSearchQuery] = useState("");
   const [selectedNavIndex, setSelectedNavIndex] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
   const { t, lang } = useI18n();
@@ -167,6 +173,13 @@ export default function GlobalSearch() {
 
   const debouncedTerm = useDebouncedValue(term, 300);
   const ai = useAiAssistant();
+
+  const openTableModal = useCallback((queryToPass?: string) => {
+    const q = (queryToPass !== undefined ? queryToPass : (debouncedTerm.trim() || term.trim())).trim();
+    setTableSearchQuery(q);
+    setIsTableModalOpen(true);
+    setOpen(false);
+  }, [debouncedTerm, term]);
 
   // ── Open with Ctrl+K / Cmd+K / Ctrl+/ / Alt+K / Ctrl+J (Conflict-free with Chrome) ──
   useEffect(() => {
@@ -211,8 +224,10 @@ export default function GlobalSearch() {
       const id = setTimeout(() => inputRef.current?.focus(), 60);
       return () => clearTimeout(id);
     } else {
-      setTerm("");
-      setSelectedNavIndex(0);
+      queueMicrotask(() => {
+        setTerm("");
+        setSelectedNavIndex(0);
+      });
     }
   }, [open]);
 
@@ -237,6 +252,14 @@ export default function GlobalSearch() {
 
   // ── Navigation shortcuts (empty state) ────────────────────────────────────
   const navShortcuts: NavShortcut[] = useMemo(() => [
+    {
+      id: "nav-all-tickets-table",
+      title: isKhmer ? "តារាងស្វែងរកសំបុត្រទាំងអស់ (All Tickets Search)" : "All Tickets Table Search",
+      category: "Action",
+      icon: TableIcon,
+      shortcut: "G T",
+      run: () => openTableModal(""),
+    },
     {
       id: "nav-scanner",
       title: isKhmer ? "ស្កេន Barcode ដោយទូរស័ព្ទ (Mobile Scanner)" : "Mobile Companion Barcode Scanner",
@@ -309,7 +332,11 @@ export default function GlobalSearch() {
   }, [open, searchActive, navShortcuts, selectedNavIndex]);
 
   // Reset nav selection when filter changes
-  useEffect(() => { setSelectedNavIndex(0); }, [term]);
+  useEffect(() => {
+    queueMicrotask(() => {
+      setSelectedNavIndex(0);
+    });
+  }, [term]);
 
   // ── Search data ────────────────────────────────────────────────────────────
   const query = debouncedTerm.trim();
@@ -581,6 +608,21 @@ export default function GlobalSearch() {
                     </p>
                   ) : (
                     <div className={LIST_CLS}>
+                      {/* Full Table View Quick Action Banner */}
+                      <div className="flex items-center justify-between px-3 py-2 bg-indigo-500/10 border border-indigo-500/20 rounded-xl mb-1.5 text-[11px]">
+                        <span className="font-semibold text-indigo-700 dark:text-indigo-300">
+                          {isKhmer ? `សំបុត្រសរុប ${ticketsTotal} ត្រូវនឹង "${query}"` : `${ticketsTotal} tickets match "${query}"`}
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => openTableModal(query)}
+                          className="inline-flex items-center gap-1.5 text-[11px] font-bold text-indigo-600 dark:text-indigo-400 hover:text-indigo-800 dark:hover:text-indigo-200 hover:underline"
+                        >
+                          <TableIcon className="w-3.5 h-3.5" />
+                          {isKhmer ? "មើលក្នុងទម្រង់តារាងពេញ →" : "View in Full Table →"}
+                        </button>
+                      </div>
+
                       {tickets.map((ticket) => (
                         <button
                           key={ticket.id}
@@ -593,10 +635,13 @@ export default function GlobalSearch() {
                           </div>
                           <div className="flex-1 min-w-0">
                             <p className="text-[13px] font-bold font-mono text-slate-900 dark:text-slate-100 truncate">
-                              {ticket.reportNo || "—"}
+                              <HighlightText text={ticket.reportNo || "—"} query={query} />
                             </p>
                             <p className="text-[11.5px] font-medium text-slate-700 dark:text-slate-200 truncate mt-0.5">
-                              {[ticket.companyName, ticket.itemName, ticket.serialNumber].filter(Boolean).join(" · ")}
+                              <HighlightText
+                                text={[ticket.companyName, ticket.itemName, ticket.serialNumber].filter(Boolean).join(" · ")}
+                                query={query}
+                              />
                             </p>
                           </div>
                           <span
@@ -637,9 +682,14 @@ export default function GlobalSearch() {
                             <Wrench className="w-4 h-4" />
                           </div>
                           <div className="flex-1 min-w-0">
-                            <p className="text-[13px] font-bold text-slate-900 dark:text-slate-100 truncate">{part.itemName || "—"}</p>
+                            <p className="text-[13px] font-bold text-slate-900 dark:text-slate-100 truncate">
+                              <HighlightText text={part.itemName || "—"} query={query} />
+                            </p>
                             <p className="text-[11.5px] font-medium text-slate-700 dark:text-slate-200 truncate mt-0.5">
-                              {[part.partNumber || part.serialNumber, part.useFor].filter(Boolean).join(" · ")}
+                              <HighlightText
+                                text={[part.partNumber || part.serialNumber, part.useFor].filter(Boolean).join(" · ")}
+                                query={query}
+                              />
                             </p>
                           </div>
                         </button>
@@ -670,9 +720,14 @@ export default function GlobalSearch() {
                             <Users className="w-4 h-4" />
                           </div>
                           <div className="flex-1 min-w-0">
-                            <p className="text-[13px] font-bold text-slate-900 dark:text-slate-100 truncate">{cust.companyName || "—"}</p>
+                            <p className="text-[13px] font-bold text-slate-900 dark:text-slate-100 truncate">
+                              <HighlightText text={cust.companyName || "—"} query={query} />
+                            </p>
                             <p className="text-[11.5px] font-medium text-slate-700 dark:text-slate-200 truncate mt-0.5">
-                              {[cust.contactName, cust.phoneNumber].filter(Boolean).join(" · ")}
+                              <HighlightText
+                                text={[cust.contactName, cust.phoneNumber].filter(Boolean).join(" · ")}
+                                query={query}
+                              />
                             </p>
                           </div>
                         </button>
@@ -703,9 +758,14 @@ export default function GlobalSearch() {
                             <Package className="w-4 h-4" />
                           </div>
                           <div className="flex-1 min-w-0">
-                            <p className="text-[13px] font-bold text-slate-900 dark:text-slate-100 truncate">{item.itemName || "—"}</p>
+                            <p className="text-[13px] font-bold text-slate-900 dark:text-slate-100 truncate">
+                              <HighlightText text={item.itemName || "—"} query={query} />
+                            </p>
                             <p className="text-[11.5px] font-medium text-slate-700 dark:text-slate-200 truncate mt-0.5">
-                              {[item.serialNumber, item.itemType].filter(Boolean).join(" · ")}
+                              <HighlightText
+                                text={[item.serialNumber, item.itemType].filter(Boolean).join(" · ")}
+                                query={query}
+                              />
                             </p>
                           </div>
                         </button>
@@ -741,10 +801,16 @@ export default function GlobalSearch() {
                             </div>
                             <div className="flex-1 min-w-0">
                               <p className="text-[13px] font-bold text-slate-900 dark:text-slate-100 truncate">
-                                {fullName} <span className="text-[10px] font-semibold text-slate-500">(@{user.userName})</span>
+                                <HighlightText text={fullName} query={query} />{" "}
+                                <span className="text-[10px] font-semibold text-slate-500">
+                                  (@<HighlightText text={user.userName} query={query} />)
+                                </span>
                               </p>
                               <p className="text-[11.5px] font-medium text-slate-700 dark:text-slate-200 truncate mt-0.5">
-                                {[user.email, user.roles?.join(", ")].filter(Boolean).join(" · ")}
+                                <HighlightText
+                                  text={[user.email, user.roles?.join(", ")].filter(Boolean).join(" · ")}
+                                  query={query}
+                                />
                               </p>
                             </div>
                           </button>
@@ -778,6 +844,15 @@ export default function GlobalSearch() {
           </span>
         </div>
       </ModalWrapper>
+
+      {/* ── All Tickets Search Table Modal ── */}
+      {isTableModalOpen && (
+        <AllTicketsSearchModal
+          open={isTableModalOpen}
+          onClose={() => setIsTableModalOpen(false)}
+          initialQuery={tableSearchQuery}
+        />
+      )}
     </>
   );
 }

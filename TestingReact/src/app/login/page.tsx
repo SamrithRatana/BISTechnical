@@ -38,7 +38,7 @@ import { LoginFooter, LoginTopBar, MobileMethodHeader } from "@/components/login
 
 export default function LoginPage() {
   const router = useRouter();
-  const { prefs } = useTheme();
+  const { prefs, isDark } = useTheme();
   const accentHex = prefs.accentColor || "#10b981";
   // The prism: one accent in, a hue-shifted triad out (see login/color.ts).
   const holo = useMemo(() => deriveHolo(accentHex), [accentHex]);
@@ -105,7 +105,7 @@ export default function LoginPage() {
   return (
     /* `clip` not `hidden`: an overflow-hidden ancestor flattens the 3D rig
        (the download page root uses overflow-x-clip for the same reason). */
-    <div className="min-h-screen h-screen w-full bg-[#03060c] text-slate-100 flex flex-col items-center justify-between lg:justify-center p-1.5 sm:p-2.5 lg:p-3 xl:p-6 relative overflow-x-clip overflow-y-auto font-sans select-none">
+    <div className="min-h-screen h-screen w-full bg-slate-50 dark:bg-[#03060c] text-slate-900 dark:text-slate-100 flex flex-col items-center justify-between lg:justify-center p-1.5 sm:p-2.5 lg:p-3 xl:p-6 relative overflow-x-clip overflow-y-auto font-sans select-none transition-colors duration-300">
       <LoginBackdrop
         mode={motionMode}
         curtainSide={mode === "signin" ? "right" : "left"}
@@ -130,26 +130,30 @@ export default function LoginPage() {
         <div className="relative rounded-2xl sm:rounded-3xl">
           <CardRim rig={rig} holo={holo} mode={motionMode} frozen={qrOrCameraVisible} flipKey={mode} />
           <div
-            className="w-full bg-gradient-to-b from-[#0c1526] via-[#0a111f] to-[#0b1424] border border-white/[0.08] rounded-2xl sm:rounded-3xl overflow-hidden relative flex flex-col"
+            className="w-full bg-white dark:bg-gradient-to-b dark:from-[#0c1526] dark:via-[#0a111f] dark:to-[#0b1424] border border-slate-200/80 dark:border-white/[0.08] rounded-2xl sm:rounded-3xl overflow-hidden relative flex flex-col transition-colors duration-300"
             style={{
-              boxShadow: `0 30px 90px -15px rgba(0,0,0,0.9), 0 0 40px ${holo.a}14`,
+              boxShadow: isDark
+                ? `0 30px 90px -15px rgba(0,0,0,0.9), 0 0 40px ${holo.a}14`
+                : "0 0 0 1px rgba(15, 23, 42, 0.05), 0 2px 4px rgba(15, 23, 42, 0.02), 0 10px 24px -4px rgba(15, 23, 42, 0.04), 0 24px 48px -10px rgba(15, 23, 42, 0.06), 0 50px 100px -20px rgba(15, 23, 42, 0.07)",
             }}
           >
           {/* Faint accent wash so the form side reads lit, not flat */}
           <div
             className="pointer-events-none absolute inset-0 z-0"
             style={{
-              background: `radial-gradient(circle at 18% -10%, ${holo.a}14, transparent 55%)`,
+              background: isDark
+                ? `radial-gradient(circle at 18% -10%, ${holo.a}14, transparent 55%)`
+                : `radial-gradient(circle at 18% -10%, ${holo.a}08, transparent 40%)`,
             }}
           />
 
           {/* Interference lobes, film grain and the rim beam */}
           <CardAtmosphere rig={rig} holo={holo} mode={motionMode} frozen={qrOrCameraVisible} />
 
-          {/* Edge lights: white top rim, triad bottom rim */}
-          <div className="pointer-events-none absolute top-0 inset-x-10 h-px bg-gradient-to-r from-transparent via-white/35 to-transparent z-30" />
+          {/* Edge lights: crisp specular top rim, triad bottom rim in dark mode */}
+          <div className="pointer-events-none absolute top-0 inset-x-10 h-px bg-gradient-to-r from-transparent via-slate-200/70 dark:via-white/35 to-transparent z-30" />
           <div
-            className="pointer-events-none absolute bottom-0 inset-x-16 h-px z-30"
+            className="pointer-events-none absolute bottom-0 inset-x-16 h-px z-30 hidden dark:block"
             style={{
               background: `linear-gradient(to right, transparent, ${holo.a}59 35%, ${holo.b}47 65%, transparent)`,
             }}

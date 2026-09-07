@@ -21,14 +21,6 @@
     "Key": "your_jwt_signing_key",
     "Issuer": "https://user.example.com",
     "Audience": "https://technicalsystem.example.com"
-  },
-  // Sentry error + performance monitoring. Paste the DSN from
-  // Sentry → Settings → Projects → <project> → Client Keys. Empty = disabled.
-  "Sentry": {
-    "Dsn": "",
-    "TracesSampleRate": 0.1,
-    "AttachStacktrace": true
-  },
   "Logging": {
     "LogLevel": {
       "Default": "Information",

@@ -1,4 +1,4 @@
-﻿using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.RateLimiting;
@@ -8,6 +8,7 @@ using System.IdentityModel.Tokens.Jwt;
 using System.Security.Claims;
 using System.Security.Cryptography;
 using System.Text;
+using System.Text.Json;
 using UserManagementAPI.Data;
 using UserManagementAPI.Models;
 using UserManagementAPI.Services;
@@ -248,6 +249,9 @@ namespace UserManagementAPI.Controllers
                         Email = user.Email,
                         FirstName = user.FirstName,
                         LastName = user.LastName,
+                        PhoneNumber = user.PhoneNumber ?? "",
+                        ProfilePictureUrl = GetFullImageUrl(user.ProfilePictureUrl),
+                        CoverUrl = user.CoverUrl ?? "",
                         Roles = userRoles.ToList()
                     }
                 });
@@ -697,6 +701,7 @@ namespace UserManagementAPI.Controllers
                         LastName = user.LastName,
                         PhoneNumber = user.PhoneNumber,
                         ProfilePictureUrl = profilePictureUrl,
+                        CoverUrl = user.CoverUrl ?? "",
                         Roles = roles
                     }
                 });
@@ -745,6 +750,12 @@ namespace UserManagementAPI.Controllers
                 user.LastName = model.LastName;
                 user.Email = model.Email;
                 user.PhoneNumber = model.PhoneNumber;
+                if (model.CoverUrl != null)
+                {
+                    // Optional on purpose: clients that do not know about the
+                    // cover keep sending the old shape and must not wipe it.
+                    user.CoverUrl = model.CoverUrl.Trim();
+                }
 
                 // Do NOT touch ProfilePictureUrl in this endpoint
                 // ProfilePictureUrl is managed ONLY by upload-profile-picture and delete-profile-picture endpoints

@@ -20,11 +20,11 @@
  */
 
 const TECHNICAL_API_BASE =
-  process.env.NEXT_PUBLIC_TECHNICAL_API_URL || "http://localhost:8000";
+  process.env.NEXT_PUBLIC_TECHNICAL_API_URL || "https://technicalservicesapi.camprotec.com.kh";
 const CUSTOMER_API_BASE =
   process.env.NEXT_PUBLIC_CUSTOMER_API_URL || "https://customerapi.camprotec.com.kh";
 const JWT_API_BASE =
-  process.env.NEXT_PUBLIC_JWT_API_URL || "http://localhost:8087";
+  process.env.NEXT_PUBLIC_JWT_API_URL || "https://user.camprotec.com.kh";
 const API_VERSION = process.env.NEXT_PUBLIC_API_VERSION || "1.0";
 
 /** Per-tool row cap. Enough to reason over, small enough to stay affordable. */

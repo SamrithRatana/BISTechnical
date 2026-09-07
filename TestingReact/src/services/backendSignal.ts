@@ -98,7 +98,10 @@ function notifyFailure(): void {
 function urlFromInput(input: RequestInfo | URL): string {
   if (typeof input === "string") return input;
   if (input instanceof URL) return input.toString();
-  return input.url;
+  if (input && typeof input === "object" && "url" in input) {
+    return (input as Request).url || "";
+  }
+  return String(input || "");
 }
 
 /**

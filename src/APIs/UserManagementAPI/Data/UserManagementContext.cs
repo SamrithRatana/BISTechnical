@@ -21,6 +21,10 @@ namespace UserManagementAPI.Data
         public DbSet<LeaveApproval> LeaveApprovals { get; set; }
         public DbSet<LeaveBalance> LeaveBalances { get; set; }
         public DbSet<AppSetting> AppSettings { get; set; }
+        public DbSet<UserCredential> UserCredentials { get; set; }
+        public DbSet<UserFaceTemplate> UserFaceTemplates { get; set; }
+        public DbSet<UserFaceDevice> UserFaceDevices { get; set; }
+        public DbSet<UserPreference> UserPreferences { get; set; }
         protected override void OnModelCreating(ModelBuilder builder)
         {
             base.OnModelCreating(builder);
@@ -49,6 +53,101 @@ namespace UserManagementAPI.Data
                     .HasForeignKey(e => e.UserId)
                     .OnDelete(DeleteBehavior.Cascade);
             });
+            // WebAuthn / FIDO2 credentials ("passkeys") — see Models/UserCredential.cs.
+            // Sits in the `security` schema beside RefreshTokens because it is
+            // authentication state, not application data.
+            builder.Entity<UserCredential>(entity =>
+            {
+                entity.ToTable("UserCredentials", "security");
+                entity.HasKey(e => e.Id);
+
+                entity.Property(e => e.UserId).IsRequired().HasMaxLength(450);
+                entity.Property(e => e.CredentialId).IsRequired().HasMaxLength(1024);
+                entity.Property(e => e.PublicKey).IsRequired().HasMaxLength(1024);
+                entity.Property(e => e.UserHandle).IsRequired().HasMaxLength(128);
+                entity.Property(e => e.CredType).HasMaxLength(32);
+                entity.Property(e => e.Transports).HasMaxLength(256);
+                entity.Property(e => e.DeviceName).HasMaxLength(120);
+                entity.Property(e => e.CreatedAt).HasColumnType("datetime2");
+                entity.Property(e => e.LastUsedAt).HasColumnType("datetime2");
+
+                // Unique across the whole table, not per user: a passkey login
+                // starts by looking a credential up by this id ALONE, before it
+                // knows whose account it is. Two users sharing one CredentialId
+                // would make that lookup ambiguous, which is an authentication
+                // bug, not a data-tidiness one.
+                //
+                // varbinary(1024) is within SQL Server's 1700-byte nonclustered
+                // index key limit, so this is indexable as-is.
+                entity.HasIndex(e => e.CredentialId)
+                    .IsUnique()
+                    .HasDatabaseName("IX_UserCredentials_CredentialId");
+
+                entity.HasIndex(e => e.UserId)
+                    .HasDatabaseName("IX_UserCredentials_UserId");
+
+                // Deleting a user takes their passkeys with them — leaving an
+                // orphan row would leave a credential that still verifies.
+                entity.HasOne(e => e.User)
+                    .WithMany()
+                    .HasForeignKey(e => e.UserId)
+                    .OnDelete(DeleteBehavior.Cascade);
+            });
+
+            // Face verification samples - see Models/UserFaceTemplate.cs.
+            // In the security schema beside the other authentication tables, and
+            // NOT alongside application data: this is biometric-derived personal
+            // data and its blast radius should be obvious from where it lives.
+            builder.Entity<UserFaceTemplate>(entity =>
+            {
+                entity.ToTable("UserFaceTemplates", "security");
+                entity.HasKey(e => e.Id);
+
+                entity.Property(e => e.UserId).IsRequired().HasMaxLength(450);
+                entity.Property(e => e.Embedding).IsRequired().HasMaxLength(2048);
+                entity.Property(e => e.CreatedAt).HasColumnType("datetime2");
+
+                // Every lookup is "all samples for this user" - there is no query
+                // in this system that finds a user FROM a descriptor, and there
+                // must not be: that would be face SEARCH over the whole staff
+                // list, which is a different feature with different consent.
+                entity.HasIndex(e => e.UserId)
+                    .HasDatabaseName("IX_UserFaceTemplates_UserId");
+
+                // Deleting a user deletes their biometric data with them.
+                entity.HasOne(e => e.User)
+                    .WithMany()
+                    .HasForeignKey(e => e.UserId)
+                    .OnDelete(DeleteBehavior.Cascade);
+            });
+
+            // Phones paired for face sign-in - see Models/UserFaceDevice.cs.
+            builder.Entity<UserFaceDevice>(entity =>
+            {
+                entity.ToTable("UserFaceDevices", "security");
+                entity.HasKey(e => e.Id);
+
+                entity.Property(e => e.UserId).IsRequired().HasMaxLength(450);
+                entity.Property(e => e.TokenHash).IsRequired().HasMaxLength(32);
+                entity.Property(e => e.DeviceName).HasMaxLength(120);
+                entity.Property(e => e.CreatedAt).HasColumnType("datetime2");
+                entity.Property(e => e.LastUsedAt).HasColumnType("datetime2");
+
+                // Unique, and the lookup path for every phone login: the token is
+                // presented alone and has to resolve to exactly one account.
+                entity.HasIndex(e => e.TokenHash)
+                    .IsUnique()
+                    .HasDatabaseName("IX_UserFaceDevices_TokenHash");
+
+                entity.HasIndex(e => e.UserId)
+                    .HasDatabaseName("IX_UserFaceDevices_UserId");
+
+                entity.HasOne(e => e.User)
+                    .WithMany()
+                    .HasForeignKey(e => e.UserId)
+                    .OnDelete(DeleteBehavior.Cascade);
+            });
+
             // Message Configuration
             builder.Entity<Message>(entity =>
             {
@@ -169,6 +268,22 @@ namespace UserManagementAPI.Data
                     SurfaceStyle = "cushion",
                     UpdatedAt = new DateTime(2026, 1, 1, 0, 0, 0, DateTimeKind.Utc)
                 });
+            });
+
+            // Per-user appearance and theme preferences
+            builder.Entity<UserPreference>(entity =>
+            {
+                entity.ToTable("UserPreferences", "security");
+                entity.HasKey(e => e.Id);
+                entity.Property(e => e.UserId).IsRequired().HasMaxLength(450);
+                entity.Property(e => e.UpdatedAt).HasColumnType("datetime2");
+                entity.HasIndex(e => e.UserId)
+                    .IsUnique()
+                    .HasDatabaseName("IX_UserPreferences_UserId");
+                entity.HasOne(e => e.User)
+                    .WithMany()
+                    .HasForeignKey(e => e.UserId)
+                    .OnDelete(DeleteBehavior.Cascade);
             });
         }  // ← end of OnModelCreating
 

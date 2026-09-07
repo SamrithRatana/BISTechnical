@@ -10,26 +10,33 @@ import React, { useState, useEffect, useCallback } from "react";
 import {
   Smartphone,
   Laptop,
-  Radio,
   CheckCircle2,
-  AlertCircle,
   Unlink,
   RefreshCw,
   ShieldCheck,
   QrCode,
   LogOut,
-  Clock,
-  Globe,
   KeyRound,
   Trash2,
-  Sparkles,
+  ScanFace,
+  Camera,
 } from "lucide-react";
 import toast from "react-hot-toast";
 import { useI18n } from "@/i18n/LanguageProvider";
 import { useCompanionScanner } from "@/context/CompanionScannerContext";
 import { clearSession } from "@/services/authSession";
 import { useRouter } from "next/navigation";
-import QRCodeSvg from "./QRCodeSvg";
+import {
+  listFaceDevices,
+  revokeFaceDevice,
+  getFaceStatus,
+  enrollFace,
+  toggleFaceTwoFactor,
+  type FaceDevice,
+  type FaceStatus,
+} from "@/services/faceAuth";
+import FaceLinkQr from "./FaceLinkQr";
+import FaceCapture from "./FaceCapture";
 import { ModalWrapper } from "./av/ModalWrapper";
 
 interface ScannerDeviceItem {
@@ -67,50 +74,87 @@ export default function DeviceSessionManager() {
 
   const {
     sessionId: currentScannerSessionId,
-    isPhoneConnected,
     scanCount,
-    lastScannedCode,
     openPairingModal,
     disconnectPhone,
   } = useCompanionScanner();
 
   const [scannerDevices, setScannerDevices] = useState<ScannerDeviceItem[]>([]);
   const [loginSessions, setLoginSessions] = useState<LoginSessionItem[]>([]);
-  const [isLoading, setIsLoading] = useState<boolean>(true);
-  const [currentBrowserSessionId, setCurrentBrowserSessionId] = useState<string>("");
-
-  useEffect(() => {
-    if (typeof window !== "undefined") {
+  const [faceDevices, setFaceDevices] = useState<FaceDevice[]>([]);
+  const [faceStatus, setFaceStatus] = useState<FaceStatus | null>(null);
+  const [isFacePairModalOpen, setIsFacePairModalOpen] = useState<boolean>(false);
+  const [isPcFaceModalOpen, setIsPcFaceModalOpen] = useState<boolean>(false);
+  const [savingFace, setSavingFace] = useState<boolean>(false);
+  const [toggling2fa, setToggling2fa] = useState<boolean>(false);
+  const [currentBrowserSessionId] = useState<string>(() => {
+    if (typeof window === "undefined") return "";
+    try {
       let id = sessionStorage.getItem("browser_login_session_id");
       if (!id) {
         id = "sess-" + Math.random().toString(36).substring(2, 9) + Date.now().toString(36);
         sessionStorage.setItem("browser_login_session_id", id);
       }
-      setCurrentBrowserSessionId(id);
+      return id;
+    } catch {
+      return "sess-" + Math.random().toString(36).substring(2, 9) + Date.now().toString(36);
+    }
+  });
+  const [now, setNow] = useState<number>(() => Date.now());
+
+  // Read current logged-in username for strict session isolation
+  const [currentUserName] = useState<string>(() => {
+    if (typeof window === "undefined") return "";
+    try {
+      const u = localStorage.getItem("user_info");
+      if (!u) return "";
+      const p = JSON.parse(u);
+      return String(p.userName || p.UserName || "").trim();
+    } catch {
+      return "";
+    }
+  });
+
+  // Fetch paired face authentication devices & enrollment status
+  const fetchFaceDevices = useCallback(async () => {
+    if (typeof document !== "undefined" && document.hidden) return;
+    try {
+      const [devices, status] = await Promise.all([
+        listFaceDevices().catch(() => [] as FaceDevice[]),
+        getFaceStatus().catch(() => null),
+      ]);
+      setFaceDevices(devices || []);
+      if (status) setFaceStatus(status);
+    } catch (err) {
+      console.warn("Failed to load face devices:", err);
     }
   }, []);
 
-  // Fetch active scanner sessions from API (skips when tab is in background)
+  // Fetch active scanner sessions from API (strictly scoped to this user's PC session)
   const fetchScannerDevices = useCallback(async () => {
     if (typeof document !== "undefined" && document.hidden) return;
     try {
-      const res = await fetch("/api/scanner/devices");
+      const url = currentScannerSessionId
+        ? `/api/scanner/devices?sessionId=${encodeURIComponent(currentScannerSessionId)}`
+        : `/api/scanner/devices`;
+      const res = await fetch(url);
       if (res.ok) {
         const data = await res.json();
         setScannerDevices(data.devices || []);
       }
     } catch (err) {
       console.warn("Failed to load scanner devices:", err);
-    } finally {
-      setIsLoading(false);
     }
-  }, []);
+  }, [currentScannerSessionId]);
 
-  // Fetch active login sessions from API (multi-browser & multi-device)
+  // Fetch active login sessions from API (strictly scoped to current user's account)
   const fetchLoginSessions = useCallback(async () => {
     if (typeof document !== "undefined" && document.hidden) return;
     try {
-      const res = await fetch("/api/auth/sessions");
+      const url = currentUserName
+        ? `/api/auth/sessions?userName=${encodeURIComponent(currentUserName)}`
+        : `/api/auth/sessions`;
+      const res = await fetch(url);
       if (res.ok) {
         const data = await res.json();
         setLoginSessions(data.sessions || []);
@@ -118,17 +162,78 @@ export default function DeviceSessionManager() {
     } catch (err) {
       console.warn("Failed to load login sessions:", err);
     }
-  }, []);
+  }, [currentUserName]);
 
   useEffect(() => {
-    fetchScannerDevices();
-    fetchLoginSessions();
+    queueMicrotask(() => {
+      void fetchScannerDevices();
+      void fetchLoginSessions();
+      void fetchFaceDevices();
+    });
     const timer = setInterval(() => {
-      fetchScannerDevices();
-      fetchLoginSessions();
+      setNow(Date.now());
+      void fetchScannerDevices();
+      void fetchLoginSessions();
+      void fetchFaceDevices();
     }, 4000);
     return () => clearInterval(timer);
-  }, [fetchScannerDevices, fetchLoginSessions]);
+  }, [fetchScannerDevices, fetchLoginSessions, fetchFaceDevices]);
+
+  // Handle 2FA Toggle for Face Authentication
+  const handleToggle2FA = async () => {
+    if (!faceStatus?.enrolled) {
+      toast.error(isKhmer ? "សូមចុះឈ្មោះស្កេនមុខជាមុនសិន មុននឹងបើក 2FA" : "Please set up your face scan first before enabling 2FA");
+      return;
+    }
+    const next = !faceStatus.twoFactorEnabled;
+    setToggling2fa(true);
+    try {
+      await toggleFaceTwoFactor(next);
+      setFaceStatus((prev) => (prev ? { ...prev, twoFactorEnabled: next } : null));
+      toast.success(
+        next
+          ? (isKhmer ? "បានបើក Two-Factor Face Login" : "Two-Factor Face Authentication is enabled")
+          : (isKhmer ? "បានបិទ Two-Factor Face Login" : "Two-Factor Face Authentication is disabled")
+      );
+    } catch (err: unknown) {
+      toast.error(err instanceof Error ? err.message : "Failed to update 2FA setting");
+    } finally {
+      setToggling2fa(false);
+    }
+  };
+
+  // Handle PC Camera Face Enrollment Complete
+  const handlePcFaceCaptured = async (descriptors: number[][]) => {
+    setSavingFace(true);
+    try {
+      const count = await enrollFace(descriptors);
+      setFaceStatus((prev) => ({
+        enrolled: true,
+        twoFactorEnabled: true,
+        sampleCount: count,
+        requiredSamples: prev?.requiredSamples ?? 3,
+        enrolledAt: new Date().toISOString(),
+      }));
+      setIsPcFaceModalOpen(false);
+      toast.success(isKhmer ? "បានចុះឈ្មោះស្កេនមុខលើ PC ជោគជ័យ!" : "Face enrolled successfully on PC!");
+      fetchFaceDevices();
+    } catch {
+      toast.error(isKhmer ? "មិនអាចរក្សាទុកទិន្នន័យមុខបានទេ" : "Could not save face data");
+    } finally {
+      setSavingFace(false);
+    }
+  };
+
+  // Handle unpairing a face verification device
+  const handleUnpairFaceDevice = async (id: number, name: string) => {
+    try {
+      await revokeFaceDevice(id);
+      toast.success(isKhmer ? `បានផ្តាច់ទូរស័ព្ទ ${name} ជោគជ័យ!` : `Unpaired ${name} successfully!`);
+      fetchFaceDevices();
+    } catch {
+      toast.error(isKhmer ? "មិនអាចផ្តាច់ទូរស័ព្ទស្កែនមុខបានទេ" : "Failed to unpair phone");
+    }
+  };
 
   // Handle remote device disconnect
   const handleDisconnectDevice = async (sid: string) => {
@@ -162,7 +267,7 @@ export default function DeviceSessionManager() {
 
   const formatTimeAgo = (ts?: number) => {
     if (!ts) return isKhmer ? "ទើបតែភ្ជាប់" : "Just now";
-    const diffSec = Math.floor((Date.now() - ts) / 1000);
+    const diffSec = Math.floor((now - ts) / 1000);
     if (diffSec < 60) return isKhmer ? `${diffSec} វិនាទីមុន` : `${diffSec}s ago`;
     const diffMin = Math.floor(diffSec / 60);
     if (diffMin < 60) return isKhmer ? `${diffMin} នាទីមុន` : `${diffMin}m ago`;
@@ -190,12 +295,12 @@ export default function DeviceSessionManager() {
   // Revoke all other login sessions
   const handleRevokeAllOtherSessions = async () => {
     try {
-      await fetch(
-        `/api/auth/sessions?revokeOthers=true&currentSessionId=${currentBrowserSessionId}`,
-        {
-          method: "DELETE",
-        }
-      );
+      const url = currentUserName
+        ? `/api/auth/sessions?revokeOthers=true&currentSessionId=${encodeURIComponent(currentBrowserSessionId)}&userName=${encodeURIComponent(currentUserName)}`
+        : `/api/auth/sessions?revokeOthers=true&currentSessionId=${encodeURIComponent(currentBrowserSessionId)}`;
+      await fetch(url, {
+        method: "DELETE",
+      });
       toast.success(isKhmer ? "បាន Sign Out គ្រប់ឧបករណ៍ផ្សេងទៀតជោគជ័យ!" : "Signed out all other sessions!");
       fetchLoginSessions();
     } catch {
@@ -204,21 +309,39 @@ export default function DeviceSessionManager() {
   };
 
   const activeScannerCount = scannerDevices.filter((d) => d.phoneConnected).length;
+  const activeFaceCount = faceDevices.length;
   const activeLoginCount = Math.max(loginSessions.length, 1);
+
+  const formatIsoDate = (iso?: string | null) => {
+    if (!iso) return isKhmer ? "មិនទាន់ប្រើ" : "Never";
+    try {
+      const d = new Date(iso);
+      if (isNaN(d.getTime())) return isKhmer ? "មិនទាន់ប្រើ" : "Never";
+      return d.toLocaleDateString(isKhmer ? "km-KH" : "en-GB", {
+        year: "numeric",
+        month: "short",
+        day: "numeric",
+        hour: "2-digit",
+        minute: "2-digit",
+      });
+    } catch {
+      return isKhmer ? "មិនទាន់ប្រើ" : "Never";
+    }
+  };
 
   return (
     <div className="space-y-6">
-      {/* ── Top Metric KPI Cards ── */}
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3.5">
-        <div className="p-4 rounded-2xl bg-surface border border-subtle shadow-xs flex items-center gap-3.5">
-          <div className="w-11 h-11 rounded-2xl bg-cyan-500/10 text-cyan-600 dark:text-cyan-400 flex items-center justify-center shrink-0">
-            <Smartphone className="w-6 h-6" />
+      {/* ── Top Metric KPI Boxes ── */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2.5 sm:gap-3">
+        <div className="p-3 sm:p-3.5 rounded-2xl bg-surface border border-subtle shadow-xs flex items-center gap-3">
+          <div className="w-9 h-9 sm:w-10 sm:h-10 rounded-xl bg-cyan-500/10 text-cyan-600 dark:text-cyan-400 flex items-center justify-center shrink-0">
+            <Smartphone className="w-5 h-5" />
           </div>
           <div>
-            <p className="text-[11px] font-semibold text-ink-secondary">
+            <p className="text-[10.5px] font-semibold text-ink-secondary">
               {isKhmer ? "ឧបករណ៍ស្កេន Barcode" : "Connected Scanners"}
             </p>
-            <p className="text-lg font-bold text-ink flex items-center gap-1.5 mt-0.5">
+            <p className="text-base sm:text-lg font-bold text-ink flex items-center gap-1.5 mt-0.5">
               <span>{activeScannerCount} {isKhmer ? "ឧបករណ៍" : "Device"}</span>
               {activeScannerCount > 0 ? (
                 <span className="w-2 h-2 rounded-full bg-emerald-500 animate-ping" />
@@ -229,15 +352,36 @@ export default function DeviceSessionManager() {
           </div>
         </div>
 
-        <div className="p-4 rounded-2xl bg-surface border border-subtle shadow-xs flex items-center gap-3.5">
-          <div className="w-11 h-11 rounded-2xl bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 flex items-center justify-center shrink-0">
-            <Laptop className="w-6 h-6" />
+        <div className="p-3 sm:p-3.5 rounded-2xl bg-surface border border-subtle shadow-xs flex items-center gap-3">
+          <div className="w-9 h-9 sm:w-10 sm:h-10 rounded-xl bg-violet-500/10 text-violet-600 dark:text-violet-400 flex items-center justify-center shrink-0">
+            <ScanFace className="w-5 h-5" />
           </div>
           <div>
-            <p className="text-[11px] font-semibold text-ink-secondary">
+            <p className="text-[10.5px] font-semibold text-ink-secondary">
+              {isKhmer ? "ទូរស័ព្ទស្កែនមុខ Login" : "Face Login Phones"}
+            </p>
+            <p className="text-base sm:text-lg font-bold text-ink flex items-center gap-1.5 mt-0.5">
+              <span>{activeFaceCount} {isKhmer ? "ឧបករណ៍" : "Device"}</span>
+              {activeFaceCount > 0 ? (
+                <span className="text-[10px] px-2 py-0.5 rounded-full bg-violet-500/15 text-violet-600 dark:text-violet-400 font-bold">
+                  {isKhmer ? "ភ្ជាប់រួច" : "Paired"}
+                </span>
+              ) : (
+                <span className="w-2 h-2 rounded-full bg-slate-300 dark:bg-slate-700" />
+              )}
+            </p>
+          </div>
+        </div>
+
+        <div className="p-3 sm:p-3.5 rounded-2xl bg-surface border border-subtle shadow-xs flex items-center gap-3">
+          <div className="w-9 h-9 sm:w-10 sm:h-10 rounded-xl bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 flex items-center justify-center shrink-0">
+            <Laptop className="w-5 h-5" />
+          </div>
+          <div>
+            <p className="text-[10.5px] font-semibold text-ink-secondary">
               {isKhmer ? "Session Login គណនី" : "Active Login Sessions"}
             </p>
-            <p className="text-lg font-bold text-ink flex items-center gap-1.5 mt-0.5">
+            <p className="text-base sm:text-lg font-bold text-ink flex items-center gap-1.5 mt-0.5">
               <span>{activeLoginCount} {isKhmer ? "ឧបករណ៍" : "Active"}</span>
               <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 font-bold">
                 Online
@@ -246,17 +390,17 @@ export default function DeviceSessionManager() {
           </div>
         </div>
 
-        <div className="p-4 rounded-2xl bg-surface border border-subtle shadow-xs flex items-center gap-3.5">
-          <div className="w-11 h-11 rounded-2xl bg-indigo-500/10 text-indigo-600 dark:text-indigo-400 flex items-center justify-center shrink-0">
-            <ShieldCheck className="w-6 h-6" />
+        <div className="p-3 sm:p-3.5 rounded-2xl bg-surface border border-subtle shadow-xs flex items-center gap-3">
+          <div className="w-9 h-9 sm:w-10 sm:h-10 rounded-xl bg-indigo-500/10 text-indigo-600 dark:text-indigo-400 flex items-center justify-center shrink-0">
+            <ShieldCheck className="w-5 h-5" />
           </div>
           <div>
-            <p className="text-[11px] font-semibold text-ink-secondary">
+            <p className="text-[10.5px] font-semibold text-ink-secondary">
               {isKhmer ? "កម្រិតសុវត្ថិភាព Session" : "Session Security"}
             </p>
             <p className="text-xs font-bold text-emerald-600 dark:text-emerald-400 flex items-center gap-1 mt-0.5">
               <CheckCircle2 className="w-3.5 h-3.5" />
-              <span>JWT Encrypted & Guarded</span>
+              <span>JWT & Biometrics</span>
             </p>
           </div>
         </div>
@@ -296,7 +440,7 @@ export default function DeviceSessionManager() {
               className="px-3 py-2 rounded-xl bg-gradient-to-r from-cyan-600 to-cyan-500 hover:from-cyan-500 hover:to-cyan-400 text-white text-xs font-bold shadow-xs transition-all flex items-center gap-1.5 cursor-pointer active:scale-95"
             >
               <QrCode className="w-3.5 h-3.5" />
-              <span>{isKhmer ? "ភ្ជាប់ទូរស័ព្ទថ្មី (Pair Phone)" : "Pair New Phone"}</span>
+              <span>{isKhmer ? "ភ្ជាប់ទូរស័ព្ទស្កេនថ្មី" : "Pair New Scanner"}</span>
             </button>
           </div>
         </div>
@@ -320,7 +464,7 @@ export default function DeviceSessionManager() {
                   <td colSpan={6} className="py-8 text-center text-ink-muted">
                     <Smartphone className="w-8 h-8 mx-auto mb-2 opacity-40" />
                     <p className="font-semibold">{isKhmer ? "មិនទាន់មានទូរស័ព្ទណាភ្ជាប់នៅឡើយទេ" : "No mobile scanners paired yet"}</p>
-                    <p className="text-[11px] mt-0.5">{isKhmer ? "ចុចប៊ូតុង «ភ្ជាប់ទូរស័ព្ទថ្មី» ខាងលើដើម្បី Scan QR Code" : "Click 'Pair New Phone' above to scan QR code"}</p>
+                    <p className="text-[11px] mt-0.5">{isKhmer ? "ចុចប៊ូតុង «ភ្ជាប់ទូរស័ព្ទស្កេនថ្មី» ខាងលើដើម្បី Scan QR Code" : "Click 'Pair New Scanner' above to scan QR code"}</p>
                   </td>
                 </tr>
               ) : (
@@ -426,7 +570,186 @@ export default function DeviceSessionManager() {
         </div>
       </div>
 
-      {/* ── SECTION 2: Active User Login Sessions Table ── */}
+      {/* ── SECTION 2: Paired Face Authentication Devices Table (UserFaceDevices) ── */}
+      <div className="rounded-2xl border border-subtle bg-surface shadow-xs overflow-hidden">
+        <div className="p-4 sm:p-5 border-b border-subtle flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-sunken/40">
+          <div className="flex items-center gap-2.5">
+            <div className="w-8 h-8 rounded-xl bg-violet-500/10 text-violet-600 dark:text-violet-400 flex items-center justify-center">
+              <ScanFace className="w-4 h-4" />
+            </div>
+            <div>
+              <h3 className="text-sm font-bold text-ink flex items-center gap-2 flex-wrap">
+                <span>{isKhmer ? "២. ឧបករណ៍ទូរស័ព្ទ & PC ភ្ជាប់ស្កែនមុខ (Face Authentication Devices)" : "2. Paired Face Authentication Devices"}</span>
+                <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-violet-500/15 text-violet-700 dark:text-violet-300 font-semibold">
+                  security.UserFaceDevices
+                </span>
+                {faceStatus?.enrolled ? (
+                  <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-500/15 text-emerald-600 dark:text-emerald-400">
+                    {isKhmer ? "បានចុះឈ្មោះមុខរួចរាល់ ✓" : "Face Enrolled ✓"}
+                  </span>
+                ) : (
+                  <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-slate-200 dark:bg-slate-800 text-slate-500">
+                    {isKhmer ? "មិនទាន់ចុះឈ្មោះមុខ" : "Not Enrolled"}
+                  </span>
+                )}
+              </h3>
+              <p className="text-[11px] text-ink-secondary">
+                {isKhmer ? "រាយនាមទូរស័ព្ទ និង PC ដែលបានភ្ជាប់សម្រាប់ស្កែនមុខ Login ជាមួយគណនីរបស់អ្នក" : "List of mobile phones and PCs paired for biometric face authentication login"}
+              </p>
+            </div>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2">
+            {/* 2FA Toggle Switch */}
+            <div className="flex items-center gap-2 px-3 py-1.5 rounded-xl bg-surface border border-subtle">
+              <span className="text-xs font-semibold text-ink">
+                2FA Face:
+              </span>
+              <button
+                type="button"
+                role="switch"
+                aria-checked={faceStatus?.twoFactorEnabled ?? false}
+                disabled={toggling2fa}
+                onClick={handleToggle2FA}
+                className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${
+                  faceStatus?.twoFactorEnabled ? "bg-accent" : "bg-slate-300 dark:bg-slate-700"
+                }`}
+              >
+                <span
+                  className={`pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow-lg ring-0 transition duration-200 ease-in-out ${
+                    faceStatus?.twoFactorEnabled ? "translate-x-4" : "translate-x-0"
+                  }`}
+                />
+              </button>
+              <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-md bg-accent-soft text-accent">
+                {faceStatus?.twoFactorEnabled ? (isKhmer ? "បើក" : "ON") : (isKhmer ? "បិទ" : "OFF")}
+              </span>
+            </div>
+
+            {/* Set up Face with PC Button */}
+            <button
+              type="button"
+              onClick={() => setIsPcFaceModalOpen(true)}
+              className="px-3 py-2 rounded-xl bg-accent text-white text-xs font-bold shadow-xs transition-all flex items-center gap-1.5 cursor-pointer active:scale-95 hover:bg-accent-hover"
+            >
+              <Camera className="w-3.5 h-3.5" />
+              <span>{isKhmer ? "ចុះឈ្មោះមុខលើ PC" : "Set up Face with PC"}</span>
+            </button>
+
+            {/* Pair New Face Phone Button */}
+            <button
+              type="button"
+              onClick={() => setIsFacePairModalOpen(true)}
+              className="px-3 py-2 rounded-xl bg-gradient-to-r from-violet-600 to-indigo-600 hover:from-violet-500 hover:to-indigo-500 text-white text-xs font-bold shadow-xs transition-all flex items-center gap-1.5 cursor-pointer active:scale-95"
+            >
+              <QrCode className="w-3.5 h-3.5" />
+              <span>{isKhmer ? "ភ្ជាប់ទូរស័ព្ទស្កែនមុខថ្មី" : "Pair New Face Phone"}</span>
+            </button>
+
+            {/* Refresh Button */}
+            <button
+              type="button"
+              onClick={fetchFaceDevices}
+              className="p-2 rounded-xl border border-subtle bg-surface hover:bg-cushion text-ink-secondary hover:text-ink transition-colors cursor-pointer text-xs font-semibold inline-flex items-center gap-1.5"
+              title="Refresh Face Devices"
+            >
+              <RefreshCw className="w-3.5 h-3.5" />
+            </button>
+          </div>
+        </div>
+
+        {/* Table Content */}
+        <div className="overflow-x-auto">
+          <table className="w-full text-left text-xs">
+            <thead>
+              <tr className="border-b border-subtle bg-sunken/60 text-ink-secondary font-semibold">
+                <th className="py-3 px-4">{isKhmer ? "ឈ្មោះឧបករណ៍ (Device / Model)" : "Device / Model"}</th>
+                <th className="py-3 px-4">{isKhmer ? "ប្រភេទសុវត្ថិភាព (Security)" : "Security Type"}</th>
+                <th className="py-3 px-4">{isKhmer ? "ស្ថានភាព (Status)" : "Status"}</th>
+                <th className="py-3 px-4">{isKhmer ? "ថ្ងៃភ្ជាប់ដំបូង (Linked Date)" : "Linked Date"}</th>
+                <th className="py-3 px-4">{isKhmer ? "ស្កែន Login ចុងក្រោយ" : "Last Face Login"}</th>
+                <th className="py-3 px-4 text-right">{isKhmer ? "សកម្មភាព (Actions)" : "Actions"}</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-subtle">
+              {faceDevices.length === 0 ? (
+                <tr>
+                  <td colSpan={6} className="py-8 text-center text-ink-muted">
+                    <ScanFace className="w-8 h-8 mx-auto mb-2 opacity-40 text-violet-500" />
+                    <p className="font-semibold text-ink">{isKhmer ? "មិនទាន់មានទូរស័ព្ទណាបានភ្ជាប់សម្រាប់ស្កែនមុខ Login នៅឡើយទេ" : "No face verification phones paired yet"}</p>
+                    <p className="text-[11px] mt-0.5 text-ink-secondary">{isKhmer ? "ចុចប៊ូតុង «ភ្ជាប់ទូរស័ព្ទស្កែនមុខថ្មី» ខាងលើដើម្បី Scan QR Code ចុះឈ្មោះមុខលើទូរស័ព្ទ" : "Click 'Pair New Face Phone' above to scan QR code and link your phone"}</p>
+                  </td>
+                </tr>
+              ) : (
+                faceDevices.map((device) => (
+                  <tr key={device.id} className="hover:bg-sunken/30 transition-colors">
+                    {/* Device Name */}
+                    <td className="py-3.5 px-4">
+                      <div className="flex items-center gap-2.5">
+                        <div className="w-8 h-8 rounded-xl bg-violet-500/10 text-violet-600 dark:text-violet-400 flex items-center justify-center shrink-0">
+                          <Smartphone className="w-4 h-4" />
+                        </div>
+                        <div>
+                          <div className="font-bold text-ink flex items-center gap-1.5">
+                            <span>{device.deviceName || (isKhmer ? "ទូរស័ព្ទដៃ Smartphone" : "Mobile Phone")}</span>
+                            <span className="text-[9px] px-1.5 py-0.2 rounded-full bg-violet-500/15 text-violet-700 dark:text-violet-300 font-bold">
+                              ID: #{device.id}
+                            </span>
+                          </div>
+                          <p className="text-[10.5px] text-ink-secondary">
+                            Token: SHA-256 Hashed (Encrypted)
+                          </p>
+                        </div>
+                      </div>
+                    </td>
+
+                    {/* Biometric Type */}
+                    <td className="py-3.5 px-4">
+                      <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-indigo-50 dark:bg-indigo-950/40 text-indigo-700 dark:text-indigo-300 text-[11px] font-semibold border border-indigo-500/20">
+                        <ScanFace className="w-3.5 h-3.5" />
+                        <span>128-float Face Descriptor</span>
+                      </span>
+                    </td>
+
+                    {/* Status */}
+                    <td className="py-3.5 px-4">
+                      <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300 text-[11px] font-semibold border border-emerald-500/20">
+                        <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-ping" />
+                        <span>{isKhmer ? "សកម្ម & ភ្ជាប់រួច 🟢" : "Active & Paired"}</span>
+                      </span>
+                    </td>
+
+                    {/* Created At */}
+                    <td className="py-3.5 px-4 text-ink-secondary text-[11px] font-medium">
+                      {formatIsoDate(device.createdAt)}
+                    </td>
+
+                    {/* Last Used At */}
+                    <td className="py-3.5 px-4 text-ink text-[11px] font-semibold">
+                      {formatIsoDate(device.lastUsedAt)}
+                    </td>
+
+                    {/* Actions */}
+                    <td className="py-3.5 px-4 text-right">
+                      <button
+                        type="button"
+                        onClick={() => handleUnpairFaceDevice(device.id, device.deviceName)}
+                        className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-xl bg-rose-500/10 hover:bg-rose-500/20 text-rose-600 dark:text-rose-400 text-xs font-semibold transition-colors cursor-pointer"
+                        title="Unpair Face Device"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                        <span>{isKhmer ? "ផ្តាច់ (Unpair)" : "Unpair"}</span>
+                      </button>
+                    </td>
+                  </tr>
+                ))
+              )}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      {/* ── SECTION 3: Active User Login Sessions Table ── */}
       <div className="rounded-2xl border border-subtle bg-surface shadow-xs overflow-hidden">
         <div className="p-4 sm:p-5 border-b border-subtle flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-sunken/40">
           <div className="flex items-center gap-2.5">
@@ -435,7 +758,7 @@ export default function DeviceSessionManager() {
             </div>
             <div>
               <h3 className="text-sm font-bold text-ink">
-                {isKhmer ? "២. Session គណនីដែលបាន Login (Active Account Login Sessions)" : "2. Active User Login Sessions"}
+                {isKhmer ? "៣. Session គណនីដែលបាន Login (Active Account Login Sessions)" : "3. Active User Login Sessions"}
               </h3>
               <p className="text-[11px] text-ink-secondary">
                 {isKhmer ? "រាយនាមឧបករណ៍កុំព្យូទ័រ និង Tablet ដែលបាន Login ចូលគណនីរបស់អ្នក" : "Devices currently authenticated with your user account credentials"}
@@ -601,6 +924,75 @@ export default function DeviceSessionManager() {
           </table>
         </div>
       </div>
+
+      {/* ── Face Pairing QR Modal ── */}
+      <ModalWrapper
+        open={isFacePairModalOpen}
+        onClose={() => setIsFacePairModalOpen(false)}
+        maxWidth="max-w-md"
+        placement="center"
+      >
+        <div className="p-6">
+          <div className="flex items-center justify-between mb-4 border-b border-subtle pb-3">
+            <div className="flex items-center gap-2.5">
+              <div className="w-9 h-9 rounded-xl bg-violet-500/10 text-violet-600 dark:text-violet-400 flex items-center justify-center">
+                <ScanFace className="w-5 h-5" />
+              </div>
+              <div>
+                <h2 className="text-base font-bold text-ink">
+                  {isKhmer ? "ភ្ជាប់ទូរស័ព្ទស្កែនមុខ (Face Authentication Link)" : "Pair Phone for Face Login"}
+                </h2>
+                <p className="text-xs text-ink-secondary">
+                  {isKhmer ? "Scan QR Code ខាងក្រោមដើម្បីចុះឈ្មោះ និងភ្ជាប់ទូរស័ព្ទជាមួយគណនីរបស់អ្នក" : "Scan the QR code below on your phone to link biometric face credentials"}
+                </p>
+              </div>
+            </div>
+          </div>
+
+          <FaceLinkQr
+            mode="enroll"
+            onDone={() => {
+              setIsFacePairModalOpen(false);
+              fetchFaceDevices();
+              toast.success(isKhmer ? "បានភ្ជាប់ទូរស័ព្ទស្កែនមុខជោគជ័យ!" : "Phone paired for face login successfully!");
+            }}
+            onCancel={() => setIsFacePairModalOpen(false)}
+          />
+        </div>
+      </ModalWrapper>
+
+      {/* ── PC Face Enrolment Modal (Camera Scan) ── */}
+      <ModalWrapper
+        open={isPcFaceModalOpen}
+        onClose={() => setIsPcFaceModalOpen(false)}
+        maxWidth="max-w-lg"
+        placement="center"
+      >
+        <div className="p-6">
+          <div className="flex items-center justify-between mb-4 border-b border-subtle pb-3">
+            <div className="flex items-center gap-2.5">
+              <div className="w-9 h-9 rounded-xl bg-accent-soft text-accent flex items-center justify-center">
+                <Camera className="w-5 h-5" />
+              </div>
+              <div>
+                <h2 className="text-base font-bold text-ink">
+                  {isKhmer ? "ចុះឈ្មោះស្កេនមុខលើកុំព្យូទ័រ (PC Face Enrolment)" : "Enroll Face via PC Camera"}
+                </h2>
+                <p className="text-xs text-ink-secondary">
+                  {isKhmer ? "សូមមើលចំកាមេរ៉ា និងងាកបន្តិចបន្តួចដើម្បីចុះឈ្មោះទិន្នន័យមុខ" : "Follow on-screen guidance to capture 3D facial biometrics"}
+                </p>
+              </div>
+            </div>
+          </div>
+
+          <FaceCapture
+            mode="enroll"
+            onComplete={handlePcFaceCaptured}
+            onCancel={() => setIsPcFaceModalOpen(false)}
+            busy={savingFace}
+          />
+        </div>
+      </ModalWrapper>
     </div>
   );
 }

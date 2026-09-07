@@ -16,6 +16,8 @@ export interface ActiveLoginSession {
   loginTime: number;
   lastActiveTime: number;
   isRevoked?: boolean;
+  /** When `isRevoked` was set — the sweeper keeps the row visible for a while. */
+  revokedAt?: number;
 }
 
 // Global session store across Next.js API route invocations
@@ -30,6 +32,17 @@ const loginSessions: Map<string, ActiveLoginSession> =
   globalThis.__login_sessions__ ?? new Map<string, ActiveLoginSession>();
 globalThis.__login_sessions__ = loginSessions;
 
+/**
+ * How long a revoked row stays visible before the sweeper removes it.
+ *
+ * Long enough for at least three 15s heartbeats: the SSE force_logout can be
+ * missed (reconnect window, dropped tab connection), and the heartbeat's
+ * `isRevoked` reply is the fallback that actually signs that browser out. The
+ * old 1s delete-after-revoke meant a missed broadcast made revocation silently
+ * fail — the next heartbeat re-registered the session as brand new.
+ */
+const REVOKED_VISIBLE_MS = 60 * 1000;
+
 // Auto-cleanup stale sessions inactive for more than 15 minutes
 if (typeof setInterval !== "undefined" && !globalThis.__login_sessions_cleanup__) {
   const CLEANUP_INTERVAL = 30 * 1000;
@@ -38,7 +51,11 @@ if (typeof setInterval !== "undefined" && !globalThis.__login_sessions_cleanup__
   globalThis.__login_sessions_cleanup__ = setInterval(() => {
     const now = Date.now();
     for (const [id, s] of loginSessions.entries()) {
-      if (now - s.lastActiveTime > MAX_INACTIVE_MS || s.isRevoked) {
+      // Revoked rows are kept visible for a grace window so the 15s heartbeat
+      // can still observe `isRevoked` when the SSE broadcast was missed.
+      const revokedLongEnough =
+        s.isRevoked === true && now - (s.revokedAt ?? 0) > REVOKED_VISIBLE_MS;
+      if (now - s.lastActiveTime > MAX_INACTIVE_MS || revokedLongEnough) {
         loginSessions.delete(id);
       }
     }
@@ -128,16 +145,22 @@ export function recordLoginHeartbeat(
 }
 
 /**
- * Get all active login sessions
+ * Get active login sessions (optionally filtered by userName for strict privacy isolation)
  */
-export function getActiveLoginSessions(): ActiveLoginSession[] {
+export function getActiveLoginSessions(filterUserName?: string): ActiveLoginSession[] {
   const now = Date.now();
   const list: ActiveLoginSession[] = [];
 
   for (const s of loginSessions.values()) {
     // Active if heartbeat within last 15 minutes and not revoked
     if (now - s.lastActiveTime <= 15 * 60 * 1000 && !s.isRevoked) {
-      list.push(s);
+      if (filterUserName) {
+        if (s.userName.toLowerCase() === filterUserName.toLowerCase()) {
+          list.push(s);
+        }
+      } else {
+        list.push(s);
+      }
     }
   }
 
@@ -146,28 +169,41 @@ export function getActiveLoginSessions(): ActiveLoginSession[] {
 }
 
 /**
- * Revoke/Logout a session by ID
+ * Revoke/Logout a session by ID. The row is only FLAGGED here — the periodic
+ * sweeper deletes it once it has been revoked for {@link REVOKED_VISIBLE_MS}.
  */
 export function revokeLoginSession(sessionId: string): boolean {
   const session = loginSessions.get(sessionId);
   if (session) {
     session.isRevoked = true;
-    setTimeout(() => {
-      loginSessions.delete(sessionId);
-    }, 1000);
+    session.revokedAt = Date.now();
     return true;
   }
   return false;
 }
 
 /**
- * Revoke all other sessions except current
+ * Revoke all other sessions for a user except current
  */
-export function revokeAllOtherLoginSessions(currentSessionId: string): void {
-  for (const [id, s] of loginSessions.entries()) {
-    if (id !== currentSessionId) {
+export function revokeAllOtherLoginSessions(currentSessionId: string, forUserName?: string): void {
+  for (const s of loginSessions.values()) {
+    if (s.sessionId !== currentSessionId) {
+      if (!forUserName || s.userName.toLowerCase() === forUserName.toLowerCase()) {
+        s.isRevoked = true;
+        s.revokedAt = Date.now();
+      }
+    }
+  }
+}
+
+/**
+ * Revoke all sessions for a user (Emergency Kill Switch)
+ */
+export function revokeAllLoginSessionsForUser(userName?: string): void {
+  for (const s of loginSessions.values()) {
+    if (!userName || userName.toLowerCase() === "all" || s.userName.toLowerCase() === userName.toLowerCase()) {
       s.isRevoked = true;
-      loginSessions.delete(id);
+      s.revokedAt = Date.now();
     }
   }
 }

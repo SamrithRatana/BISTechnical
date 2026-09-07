@@ -10,8 +10,7 @@ Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "03. Core Domain", "03. Core
 EndProject
 Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "04. Infrastructure & Shared", "04. Infrastructure & Shared", "{A4444444-4444-4444-4444-444444444444}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "ServiceMaintenance", "src\Apps\ServiceMaintenance\ServiceMaintenance.csproj", "{34CE7C94-E717-42FD-9839-04454C3E23C1}"
-EndProject
+
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "ServiceMaintenance.Models", "src\Core\ServiceMaintenance.Models\ServiceMaintenance.Models.csproj", "{B526C7F3-8D1B-4AAC-807D-A98C36287CCF}"
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "UserManagementAPI", "src\APIs\UserManagementAPI\UserManagementAPI.csproj", "{4B2C12EE-F78C-4CE8-8A6C-FB05FE4A0B50}"
@@ -34,10 +33,6 @@ Global
 		Release|Any CPU = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(ProjectConfigurationPlatforms) = postSolution
-		{34CE7C94-E717-42FD-9839-04454C3E23C1}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
-		{34CE7C94-E717-42FD-9839-04454C3E23C1}.Debug|Any CPU.Build.0 = Debug|Any CPU
-		{34CE7C94-E717-42FD-9839-04454C3E23C1}.Release|Any CPU.ActiveCfg = Release|Any CPU
-		{34CE7C94-E717-42FD-9839-04454C3E23C1}.Release|Any CPU.Build.0 = Release|Any CPU
 		{B526C7F3-8D1B-4AAC-807D-A98C36287CCF}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
 		{B526C7F3-8D1B-4AAC-807D-A98C36287CCF}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{B526C7F3-8D1B-4AAC-807D-A98C36287CCF}.Release|Any CPU.ActiveCfg = Release|Any CPU
@@ -75,7 +70,6 @@ Global
 		HideSolutionNode = FALSE
 	EndGlobalSection
 	GlobalSection(NestedProjects) = preSolution
-		{34CE7C94-E717-42FD-9839-04454C3E23C1} = {A1111111-1111-1111-1111-111111111111}
 		{B526C7F3-8D1B-4AAC-807D-A98C36287CCF} = {A3333333-3333-3333-3333-333333333333}
 		{4B2C12EE-F78C-4CE8-8A6C-FB05FE4A0B50} = {A2222222-2222-2222-2222-222222222222}
 		{3693841F-8C6A-4C99-CE17-BBA9D0E6476D} = {A3333333-3333-3333-3333-333333333333}

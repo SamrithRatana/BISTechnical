@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { broadcast } from '@/services/eventBus';
 import { beginWrite } from '@/services/activityTracker';
 
-const BASE = process.env.NEXT_PUBLIC_TECHNICAL_API_URL || 'http://localhost:8000';
+const BASE = process.env.NEXT_PUBLIC_TECHNICAL_API_URL || 'https://technicalservicesapi.camprotec.com.kh';
 const VER  = process.env.NEXT_PUBLIC_API_VERSION        || '1.0';
 
 /**
@@ -27,7 +27,7 @@ function forwardHeaders(req: NextRequest): Record<string, string> {
 function broadcastInspection(): void {
   broadcast({
     type: 'status_changed',
-    resource: 'ticket',
+    resource: 'all',
     status: 'Inspection',
     at: new Date().toISOString(),
   });

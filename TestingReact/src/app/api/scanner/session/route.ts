@@ -39,7 +39,9 @@ export async function GET(req: NextRequest) {
     }
   } else {
     // Register or keep alive PC session
-    registerPcSession(sessionId);
+    const ownerUserName = searchParams.get("userName") || undefined;
+    const ownerUserId = searchParams.get("userId") || undefined;
+    registerPcSession(sessionId, ownerUserName, ownerUserId);
   }
 
   const encoder = new TextEncoder();

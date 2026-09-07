@@ -1,4 +1,4 @@
-﻿using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
@@ -110,7 +110,7 @@ namespace UserManagementAPI.Controllers
         // Admin-only: this writes the claims that the whole permission system
         // is evaluated against, so leaving it at plain [Authorize] let any
         // signed-in user grant themselves anything.
-        [Authorize(Roles = "Admin")]
+        [Authorize(Roles = "Admin,SuperAdmin")]
         [HttpPut("roles/{roleId}/permissions")]
         public async Task<IActionResult> UpdateRolePermissions(string roleId, [FromBody] UpdateRolePermissionsRequest request)
         {

@@ -15,6 +15,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import PageWrapper from "@/components/PageWrapper";
 import { useI18n } from "@/i18n/LanguageProvider";
+import { useRealtimeTickets } from "@/hooks/useRealtimeTickets";
 import {
   fetchAnnualTechnicalMatrix,
   type AnnualTechnicalAutoData,
@@ -28,10 +29,7 @@ import {
   Download,
   Printer,
   RotateCcw,
-  Save,
   CheckCircle2,
-  Sparkles,
-  Info,
   ChevronLeft,
   ChevronRight,
 } from "lucide-react";
@@ -39,6 +37,7 @@ import {
 interface ManualMatrixState {
   doubleTT: number[];
   tonerIssues: number[];
+  onsiteService: number[];
   dailyResolved: number[];
   inHouseResolved: number[];
   pendingUnresolved: number[];
@@ -49,6 +48,7 @@ interface ManualMatrixState {
 const DEFAULT_MANUAL_STATE: ManualMatrixState = {
   doubleTT: Array(12).fill(0),
   tonerIssues: Array(12).fill(0),
+  onsiteService: Array(12).fill(0),
   dailyResolved: Array(12).fill(0),
   inHouseResolved: Array(12).fill(0),
   pendingUnresolved: Array(12).fill(0),
@@ -96,38 +96,58 @@ export default function MonthlyTechnicalMatrixPage() {
   useEffect(() => {
     if (typeof window === "undefined") return;
 
-    try {
-      const savedMatrix = localStorage.getItem(`monthly_tech_matrix_${year}`);
-      if (savedMatrix) {
-        setManualData(JSON.parse(savedMatrix));
-      } else {
-        setManualData(DEFAULT_MANUAL_STATE);
-      }
+    queueMicrotask(() => {
+      try {
+        const savedMatrix = localStorage.getItem(`monthly_tech_matrix_${year}`);
+        const cachedAuto = localStorage.getItem(`monthly_tech_autodb_${year}`);
+        const parsedCachedAuto = cachedAuto ? JSON.parse(cachedAuto) : null;
+        if (cachedAuto) {
+          setAutoData(parsedCachedAuto);
+        }
 
-      // Instant DB cache recovery (0ms instant render — never show blank 0s)
-      const cachedAuto = localStorage.getItem(`monthly_tech_autodb_${year}`);
-      if (cachedAuto) {
-        setAutoData(JSON.parse(cachedAuto));
-      }
+        if (savedMatrix) {
+          const parsed = JSON.parse(savedMatrix);
+          // If onsiteService was previously auto-seeded from backend DB, reset to 0 for user manual entry
+          const legacyAutoPattern = [57, 46, 39, 58, 68, 80, 79, 57];
+          const isLegacyAuto =
+            (parsed.onsiteService && parsedCachedAuto?.onsiteService &&
+              JSON.stringify(parsed.onsiteService) === JSON.stringify(parsedCachedAuto.onsiteService)) ||
+            (Array.isArray(parsed.onsiteService) &&
+              legacyAutoPattern.every((v, i) => parsed.onsiteService[i] === v));
 
-      const savedMeta = localStorage.getItem(`monthly_tech_meta_${year}`);
-      if (savedMeta) {
-        const parsed = JSON.parse(savedMeta);
-        setSummaryNotes(parsed.summaryNotes || "");
-        setPreparedDate(parsed.preparedDate || "");
-        setPreparedBy(parsed.preparedBy || "");
-        setHeadDate(parsed.headDate || "");
-        setHeadOfTechnical(parsed.headOfTechnical || "");
-      } else {
-        setSummaryNotes("");
-        setPreparedDate(`01 / 05 / ${year}`);
-        setPreparedBy("");
-        setHeadDate(`01 / 04 / ${year}`);
-        setHeadOfTechnical("");
+          const cleanOnsite = isLegacyAuto ? Array(12).fill(0) : (parsed.onsiteService ?? Array(12).fill(0));
+          const cleanMatrix = {
+            ...DEFAULT_MANUAL_STATE,
+            ...parsed,
+            onsiteService: cleanOnsite,
+          };
+          setManualData(cleanMatrix);
+          if (isLegacyAuto && typeof window !== "undefined") {
+            localStorage.setItem(`monthly_tech_matrix_${year}`, JSON.stringify(cleanMatrix));
+          }
+        } else {
+          setManualData(DEFAULT_MANUAL_STATE);
+        }
+
+        const savedMeta = localStorage.getItem(`monthly_tech_meta_${year}`);
+        if (savedMeta) {
+          const parsed = JSON.parse(savedMeta);
+          setSummaryNotes(parsed.summaryNotes || "");
+          setPreparedDate(parsed.preparedDate || "");
+          setPreparedBy(parsed.preparedBy || "");
+          setHeadDate(parsed.headDate || "");
+          setHeadOfTechnical(parsed.headOfTechnical || "");
+        } else {
+          setSummaryNotes("");
+          setPreparedDate(`01 / 05 / ${year}`);
+          setPreparedBy("");
+          setHeadDate(`01 / 04 / ${year}`);
+          setHeadOfTechnical("");
+        }
+      } catch (e) {
+        console.error("Failed to load local persistence", e);
       }
-    } catch (e) {
-      console.error("Failed to load local persistence", e);
-    }
+    });
   }, [year]);
 
   // Fetch automated DB data for this year and save to cache
@@ -147,8 +167,12 @@ export default function MonthlyTechnicalMatrixPage() {
   }, [year]);
 
   useEffect(() => {
-    void loadDatabaseData();
+    queueMicrotask(() => {
+      void loadDatabaseData();
+    });
   }, [loadDatabaseData]);
+
+  useRealtimeTickets("All", loadDatabaseData);
 
   // Helper to update manual cell value
   const handleCellChange = useCallback(
@@ -209,7 +233,7 @@ export default function MonthlyTechnicalMatrixPage() {
         awaitingConfirm: autoData?.awaitingConfirm || Array(12).fill(0),
         doubleTT: manualData.doubleTT,
         tonerIssues: manualData.tonerIssues,
-        onsiteService: autoData?.onsiteService || Array(12).fill(0),
+        onsiteService: manualData.onsiteService,
         dailyResolved: manualData.dailyResolved,
         inHouseResolved: manualData.inHouseResolved,
         pendingUnresolved: manualData.pendingUnresolved,
@@ -232,7 +256,7 @@ export default function MonthlyTechnicalMatrixPage() {
 
   // Reset Year manual data
   const handleReset = () => {
-    if (!window.confirm(`តើអ្នកពិតជាចង់សម្អាតទិន្នន័យ Manual សម្រាប់ឆ្នាំ ${year} មែនទេ?`)) return;
+    if (!window.confirm(t("matrix.confirmClear", { year: String(year) }))) return;
     setManualData(DEFAULT_MANUAL_STATE);
     setSummaryNotes("");
     if (typeof window !== "undefined") {
@@ -246,7 +270,7 @@ export default function MonthlyTechnicalMatrixPage() {
       titleKey="nav.monthlyReport"
       subtitleKey="report.monthlyTitle"
     >
-      <div className="space-y-6 print:space-y-4">
+      <div className="flex-1 min-h-0 overflow-y-auto space-y-6 print:space-y-4 print:overflow-visible print:h-auto pr-1">
         {/* ── Top Bar Controls ──────────────────────────────────────────────── */}
         <div className="bg-white dark:bg-gray-800 rounded-xl shadow-sm border border-gray-200 dark:border-gray-700 p-4 print:hidden flex flex-wrap items-center justify-between gap-4">
           <div className="flex items-center gap-3">
@@ -255,7 +279,7 @@ export default function MonthlyTechnicalMatrixPage() {
                 type="button"
                 onClick={() => setYear((y) => y - 1)}
                 className="p-1.5 hover:bg-white dark:hover:bg-gray-600 rounded-md transition-colors text-gray-700 dark:text-gray-200"
-                title="Previous Year"
+                title={t("matrix.prevYear")}
               >
                 <ChevronLeft className="w-4 h-4" />
               </button>
@@ -267,7 +291,7 @@ export default function MonthlyTechnicalMatrixPage() {
                 type="button"
                 onClick={() => setYear((y) => y + 1)}
                 className="p-1.5 hover:bg-white dark:hover:bg-gray-600 rounded-md transition-colors text-gray-700 dark:text-gray-200"
-                title="Next Year"
+                title={t("matrix.nextYear")}
               >
                 <ChevronRight className="w-4 h-4" />
               </button>
@@ -280,13 +304,13 @@ export default function MonthlyTechnicalMatrixPage() {
               className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 text-gray-700 dark:text-gray-200 rounded-lg transition-colors"
             >
               <RotateCcw className={`w-3.5 h-3.5 ${loading ? "animate-spin" : ""}`} />
-              <span>{loading ? "Refreshing..." : "Refresh DB"}</span>
+              <span>{loading ? t("matrix.refreshing") : t("matrix.refreshDb")}</span>
             </button>
 
             {savedBadge && (
               <span className="inline-flex items-center gap-1 text-xs text-emerald-600 dark:text-emerald-400 animate-fade-in font-medium">
                 <CheckCircle2 className="w-3.5 h-3.5" />
-                Auto-saved
+                {t("matrix.autoSaved")}
               </span>
             )}
           </div>
@@ -296,9 +320,9 @@ export default function MonthlyTechnicalMatrixPage() {
               type="button"
               onClick={handleReset}
               className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-red-600 hover:bg-red-50 dark:hover:bg-red-950/30 rounded-lg transition-colors"
-              title="Reset manual inputs"
+              title={t("matrix.resetManual")}
             >
-              Clear Manual
+              {t("matrix.clearManual")}
             </button>
 
             <button
@@ -307,7 +331,7 @@ export default function MonthlyTechnicalMatrixPage() {
               className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 text-gray-700 dark:text-gray-200 rounded-lg transition-colors"
             >
               <Printer className="w-3.5 h-3.5" />
-              Print / PDF
+              {t("matrix.printPdf")}
             </button>
 
             <button
@@ -317,7 +341,7 @@ export default function MonthlyTechnicalMatrixPage() {
               className="inline-flex items-center gap-1.5 px-4 py-1.5 text-xs font-semibold bg-emerald-600 hover:bg-emerald-700 active:bg-emerald-800 text-white rounded-lg transition-colors shadow-sm"
             >
               <Download className="w-3.5 h-3.5" />
-              {exporting ? "Generating..." : "Export Excel (.xlsx)"}
+              {exporting ? t("matrix.generating") : t("matrix.exportExcel")}
             </button>
           </div>
         </div>
@@ -469,20 +493,24 @@ export default function MonthlyTechnicalMatrixPage() {
                   ))}
                 </tr>
 
-                {/* 7. ឆែក&ជួសជុលម៉ាស៊ីនខាងក្រៅ (Auto OnSite) */}
-                <tr className="hover:bg-gray-50/50 dark:hover:bg-gray-800/50">
+                {/* 7. ឆែក&ជួសជុលម៉ាស៊ីនខាងក្រៅ (Manual) */}
+                <tr className="hover:bg-amber-50/30 dark:hover:bg-amber-950/20">
                   <td className="p-2 font-medium border-r border-gray-300 dark:border-gray-700 flex items-center justify-between">
                     <span>ឆែក&ជួសជុលម៉ាស៊ីនខាងក្រៅ</span>
-                    <span className="text-[10px] px-1 py-0.5 bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300 rounded font-semibold print:hidden">
-                      Auto
+                    <span className="text-[10px] px-1 py-0.5 bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300 rounded font-medium print:hidden">
+                      Manual
                     </span>
                   </td>
                   {Array.from({ length: 12 }).map((_, idx) => (
-                    <td
-                      key={idx}
-                      className="p-1.5 border-r border-gray-300 dark:border-gray-700 text-center font-semibold text-gray-800 dark:text-gray-200"
-                    >
-                      {autoData?.onsiteService[idx] ?? 0}
+                    <td key={idx} className="p-0.5 border-r border-gray-300 dark:border-gray-700">
+                      <input
+                        type="number"
+                        min="0"
+                        value={manualData.onsiteService[idx] || ""}
+                        onChange={(e) => handleCellChange("onsiteService", idx, e.target.value)}
+                        placeholder="0"
+                        className="w-full min-h-6 text-center py-1 bg-transparent hover:bg-amber-50/50 focus:bg-white dark:focus:bg-gray-800 focus:outline-none focus:ring-1 focus:ring-amber-500 rounded font-semibold text-gray-900 dark:text-gray-100"
+                      />
                     </td>
                   ))}
                 </tr>
@@ -628,7 +656,7 @@ export default function MonthlyTechnicalMatrixPage() {
               <textarea
                 value={summaryNotes}
                 onChange={(e) => handleMetaChange("notes", e.target.value)}
-                placeholder="សរសេរការសង្ខេប បញ្ហាប្រឈម ឬការព្យាករណ៍សកម្មភាពការងារបច្ចេកទេសនៅទីនេះ (Summary/Forecast notes)..."
+                placeholder={t("matrix.notesPlaceholder")}
                 rows={4}
                 className="w-full p-2.5 text-xs bg-white dark:bg-gray-900 border border-gray-300 dark:border-gray-700 rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none text-gray-900 dark:text-gray-100 placeholder:text-gray-400"
               />
@@ -639,7 +667,7 @@ export default function MonthlyTechnicalMatrixPage() {
               {/* Left: Prepared By */}
               <div className="space-y-2">
                 <div className="flex items-center gap-2 text-xs font-semibold text-gray-800 dark:text-gray-200">
-                  <span>Date:</span>
+                  <span>{t("matrix.date")}</span>
                   <input
                     type="text"
                     value={preparedDate}
@@ -656,7 +684,7 @@ export default function MonthlyTechnicalMatrixPage() {
                     type="text"
                     value={preparedBy}
                     onChange={(e) => handleMetaChange("preparedBy", e.target.value)}
-                    placeholder="ឈ្មោះអ្នករៀបចំ (e.g. Navin)"
+                    placeholder={t("matrix.preparedByPlaceholder")}
                     className="px-2 py-1 text-xs bg-transparent border-b border-gray-400 dark:border-gray-600 focus:border-blue-500 focus:outline-none w-48 font-medium"
                   />
                 </div>
@@ -665,7 +693,7 @@ export default function MonthlyTechnicalMatrixPage() {
               {/* Right: Head of Technical */}
               <div className="space-y-2">
                 <div className="flex items-center gap-2 text-xs font-semibold text-gray-800 dark:text-gray-200">
-                  <span>Date:</span>
+                  <span>{t("matrix.date")}</span>
                   <input
                     type="text"
                     value={headDate}
@@ -682,7 +710,7 @@ export default function MonthlyTechnicalMatrixPage() {
                     type="text"
                     value={headOfTechnical}
                     onChange={(e) => handleMetaChange("headOfTechnical", e.target.value)}
-                    placeholder="ឈ្មោះប្រធានផ្នែកបច្ចេកទេស"
+                    placeholder={t("matrix.headOfTechPlaceholder")}
                     className="px-2 py-1 text-xs bg-transparent border-b border-gray-400 dark:border-gray-600 focus:border-blue-500 focus:outline-none w-48 font-medium"
                   />
                 </div>

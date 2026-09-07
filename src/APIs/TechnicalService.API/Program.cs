@@ -1,37 +1,8 @@
 using Microsoft.AspNetCore.Diagnostics.HealthChecks;
+using TechnicalService.API.Apis;
 using TechnicalService.API.Extensions;
 
 var builder = WebApplication.CreateBuilder(args);
-
-// Error + performance monitoring. Opt-in: with no DSN in configuration the SDK
-// is never attached, so a clone without the Sentry project set up runs exactly
-// as before instead of failing on a missing setting. Options live under the
-// "Sentry" section of appsettings.json.
-var sentryEnabled = !string.IsNullOrWhiteSpace(builder.Configuration["Sentry:Dsn"]);
-
-if (sentryEnabled)
-{
-    builder.WebHost.UseSentry(options =>
-    {
-        options.Environment = builder.Environment.EnvironmentName;
-
-        // Request bodies here are inspection records and customer details, and
-        // the Authorization header is a live token. A stack trace plus the
-        // route is what actually diagnoses a 500.
-        options.SendDefaultPii = false;
-        options.MaxRequestBodySize = Sentry.Extensibility.RequestSize.None;
-
-        // Anything the app logs at Error or above becomes a Sentry issue, so
-        // the existing ILogger calls in the command handlers report themselves
-        // without being rewritten.
-        options.MinimumEventLevel = LogLevel.Error;
-        options.MinimumBreadcrumbLevel = LogLevel.Information;
-
-        // Free text the user typed (customer names, serial numbers) rides in
-        // the query string of every search; it is not needed to debug a crash.
-        options.SetBeforeSend(SentryScrubbing.Scrub);
-    });
-}
 
 // Add services to the container.
 builder.AddApplicationServices();
@@ -45,6 +16,10 @@ builder.Services.AddExceptionHandler<NotFoundExceptionHandler>();
 // handler as ArgumentException and were reported as server faults.
 builder.Services.AddExceptionHandler<ValidationExceptionHandler>();
 
+// Maps a state conflict (duplicate lookup name, a category/type/brand still in
+// use, or a raced FK/unique/CHECK violation from SQL Server) to 409.
+builder.Services.AddExceptionHandler<ConflictExceptionHandler>();
+
 var withApiVersioning = builder.Services.AddApiVersioning();
 
 builder.AddDefaultOpenApi(withApiVersioning);
@@ -57,16 +32,6 @@ var app = builder.Build();
 // document that the Next.js proxy can surface.
 app.UseExceptionHandler();
 app.UseStatusCodePages();
-
-// Tags each Sentry event with the matched route template ("/api/technicalservices/search")
-// instead of the raw URL, so issues group per endpoint rather than per ticket id.
-// Gated on the same condition as the SDK itself: this middleware resolves
-// Sentry services from DI, so adding it unconditionally fails startup on any
-// deployment that has no DSN configured.
-if (sentryEnabled)
-{
-    app.UseSentryTracing();
-}
 
 // Order matters: compression wraps the response body, so it goes first;
 // rate limiting rejects before any handler work happens; output caching must
@@ -102,6 +67,8 @@ app.MapGet("/health/metrics", () =>
 
 var repairs = app.NewVersionedApi("Repairs");
 repairs.MapRepairsApiV1();
+// Same versioned builder, so the RequireAuthorization() below covers it.
+repairs.MapSparepartTaxonomyApiV1();
 
 // `UseAuthentication()`/`UseAuthorization()` above enforce nothing on their
 // own. Authentication only *reads* a token if one is presented; authorization
@@ -128,4 +95,169 @@ if (app.Configuration.GetSection("Jwt").GetValue("Enabled", false))
 }
 
 app.UseDefaultOpenApi();
+
+// Ensure ServiceTelegramMessages tracking table exists in SQL Server & FK constraints allow service deletion
+using (var scope = app.Services.CreateScope())
+{
+    var dbContext = scope.ServiceProvider.GetRequiredService<TechnicalService.Infrastructure.TechnicalServiceContext>();
+    try
+    {
+        await dbContext.Database.ExecuteSqlRawAsync(@"
+IF NOT EXISTS (SELECT * FROM sys.tables WHERE name = 'ServiceTelegramMessages')
+BEGIN
+    CREATE TABLE dbo.ServiceTelegramMessages (
+        Id UNIQUEIDENTIFIER NOT NULL PRIMARY KEY DEFAULT NEWID(),
+        ServiceId UNIQUEIDENTIFIER NOT NULL,
+        TopicKey NVARCHAR(50) NOT NULL,
+        MessageId INT NOT NULL,
+        CreatedAt DATETIME2 NOT NULL DEFAULT SYSUTCDATETIME(),
+        DeletedAt DATETIME2 NULL
+    );
+
+    CREATE INDEX IX_ServiceTelegramMessages_ServiceId_TopicKey ON dbo.ServiceTelegramMessages (ServiceId, TopicKey);
+    CREATE INDEX IX_ServiceTelegramMessages_MessageId ON dbo.ServiceTelegramMessages (MessageId);
+END
+
+-- Ensure FK_AuditLog_Services allows deletion of services by setting ServiceId to NULL
+IF EXISTS (SELECT 1 FROM sys.foreign_keys WHERE name = 'FK_AuditLog_Services')
+BEGIN
+    ALTER TABLE dbo.SparepartStockAuditLog DROP CONSTRAINT FK_AuditLog_Services;
+    ALTER TABLE dbo.SparepartStockAuditLog ADD CONSTRAINT FK_AuditLog_Services
+        FOREIGN KEY (ServiceId) REFERENCES dbo.Services(Id) ON DELETE SET NULL;
+END
+
+-- Ensure StockNotificationOutbox FK to Services is CASCADE if exists
+DECLARE @fkOutbox NVARCHAR(200);
+SELECT TOP 1 @fkOutbox = name FROM sys.foreign_keys 
+WHERE parent_object_id = OBJECT_ID('dbo.StockNotificationOutbox') 
+  AND referenced_object_id = OBJECT_ID('dbo.Services');
+IF @fkOutbox IS NOT NULL
+BEGIN
+    EXEC('ALTER TABLE dbo.StockNotificationOutbox DROP CONSTRAINT ' + @fkOutbox);
+    EXEC('ALTER TABLE dbo.StockNotificationOutbox ADD CONSTRAINT ' + @fkOutbox + ' FOREIGN KEY (ServiceId) REFERENCES dbo.Services(Id) ON DELETE CASCADE');
+END
+
+-- Ensure SparepartItems FK to Services is CASCADE
+DECLARE @fkSpareItems NVARCHAR(200);
+SELECT TOP 1 @fkSpareItems = name FROM sys.foreign_keys 
+WHERE parent_object_id = OBJECT_ID('dbo.SparepartItems') 
+  AND referenced_object_id = OBJECT_ID('dbo.Services');
+IF @fkSpareItems IS NOT NULL AND EXISTS (SELECT 1 FROM sys.foreign_keys WHERE name = @fkSpareItems AND delete_referential_action = 0)
+BEGIN
+    EXEC('ALTER TABLE dbo.SparepartItems DROP CONSTRAINT ' + @fkSpareItems);
+    EXEC('ALTER TABLE dbo.SparepartItems ADD CONSTRAINT ' + @fkSpareItems + ' FOREIGN KEY (ServiceId) REFERENCES dbo.Services(Id) ON DELETE CASCADE');
+END
+
+-- Ensure Covering Indexes for fast Spareparts search and pagination
+IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_Spareparts_ItemName' AND object_id = OBJECT_ID('dbo.Spareparts'))
+BEGIN
+    CREATE NONCLUSTERED INDEX IX_Spareparts_ItemName ON dbo.Spareparts (ItemName) INCLUDE (Quantity, DefaultPrice, PictureUrl, SerialNumber, UserFor);
+END
+IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_Spareparts_SerialNumber' AND object_id = OBJECT_ID('dbo.Spareparts'))
+BEGIN
+    CREATE NONCLUSTERED INDEX IX_Spareparts_SerialNumber ON dbo.Spareparts (SerialNumber);
+END
+IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_Spareparts_UserFor' AND object_id = OBJECT_ID('dbo.Spareparts'))
+BEGIN
+    CREATE NONCLUSTERED INDEX IX_Spareparts_UserFor ON dbo.Spareparts (UserFor);
+END
+IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_Spareparts_Quantity' AND object_id = OBJECT_ID('dbo.Spareparts'))
+BEGIN
+    CREATE NONCLUSTERED INDEX IX_Spareparts_Quantity ON dbo.Spareparts (Quantity);
+END
+
+-- Update trg_Sparepartitems_AfterDelete_StockIn: when a sparepart is removed from a service,
+-- restore actual stock (if live movement) and delete its audit log rows & outbox rows
+EXEC('
+CREATE OR ALTER TRIGGER trg_Sparepartitems_AfterDelete_StockIn
+ON SparepartItems
+AFTER DELETE
+AS
+BEGIN
+    SET NOCOUNT ON
+    SET XACT_ABORT ON
+
+    IF NOT EXISTS (
+        SELECT 1 FROM deleted
+        WHERE SparepartId IS NOT NULL
+          AND SparepartId != ''00000000-0000-0000-0000-000000000000''
+    )
+        RETURN
+
+    BEGIN TRY
+        EXEC sp_set_session_context N''SkipDirectQuantityAudit'', 1
+
+        -- Restore stock if real movement occurred
+        UPDATE sp
+        SET sp.Quantity = sp.Quantity + d.Quantity
+        FROM Spareparts sp WITH (UPDLOCK, ROWLOCK)
+        INNER JOIN deleted d ON sp.Id = d.SparepartId
+        WHERE d.SparepartId IS NOT NULL
+          AND d.SparepartId != ''00000000-0000-0000-0000-000000000000''
+          AND ISNULL(d.IsHoldStatus, 0) = 0
+          AND d.Quantity > 0
+          AND ISNULL(d.Condition, '''') != ''Fix''
+
+        EXEC sp_set_session_context N''SkipDirectQuantityAudit'', 0
+
+        -- 🗑️ Delete draft/hold tracking rows (QuantityChange = 0) when removed
+        DELETE a
+        FROM SparepartStockAuditLog a
+        INNER JOIN deleted d ON a.ServiceId = d.ServiceId AND a.SparepartId = d.SparepartId
+        WHERE ISNULL(d.IsHoldStatus, 0) = 1 OR a.QuantityChange = 0;
+
+        -- 🗑️ Delete pending outbox notifications for the removed sparepart
+        DELETE o
+        FROM StockNotificationOutbox o
+        INNER JOIN deleted d ON o.ServiceId = d.ServiceId AND o.SparepartId = d.SparepartId;
+
+        -- 📦 If real stock was restored (IsHoldStatus = 0), log STOCK_IN so stock tracking is complete and not lost!
+        INSERT INTO SparepartStockAuditLog (
+            Id, SparepartId, ServiceId, OperationType, QuantityChange,
+            StockBalanceBefore, StockBalanceAfter, Timestamp, Remarks
+        )
+        SELECT
+            NEWID(),
+            d.SparepartId,
+            d.ServiceId,
+            'STOCK_IN',
+            d.Quantity,
+            sp.Quantity - d.Quantity,
+            sp.Quantity,
+            SYSUTCDATETIME(),
+            CONCAT(N'Stock restored: Item removed from service (Report: ', ISNULL(svc.ReportNo, 'N/A'), N') | Restored: +', d.Quantity)
+        FROM deleted d
+        INNER JOIN Spareparts sp ON d.SparepartId = sp.Id
+        LEFT JOIN Services svc ON d.ServiceId = svc.Id
+        WHERE ISNULL(d.IsHoldStatus, 0) = 0
+          AND d.Quantity > 0
+          AND ISNULL(d.Condition, '''') != 'Fix';
+
+    END TRY
+    BEGIN CATCH
+        EXEC sp_set_session_context N''SkipDirectQuantityAudit'', 0
+        DECLARE @Error NVARCHAR(4000) = ERROR_MESSAGE()
+        RAISERROR(@Error, 16, 1)
+    END CATCH
+END
+');
+
+-- Clean up orphan tracking rows (QuantityChange = 0) where sparepart was removed from the service
+DELETE a
+FROM dbo.SparepartStockAuditLog a
+WHERE a.ServiceId IS NOT NULL
+  AND a.QuantityChange = 0
+  AND NOT EXISTS (
+      SELECT 1 FROM dbo.SparepartItems spi
+      WHERE spi.ServiceId = a.ServiceId
+        AND spi.SparepartId = a.SparepartId
+  );
+");
+    }
+    catch (Exception ex)
+    {
+        Console.WriteLine($"[Database Schema Init Warning]: {ex.Message}");
+    }
+}
+
 app.Run();

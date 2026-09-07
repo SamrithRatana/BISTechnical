@@ -34,12 +34,16 @@ export default function DailyReportPage() {
         serviceType: filters.serviceType,
         serviceLocation: filters.serviceLocation,
       });
+      const rawGroups = groupBy(
+        rows as unknown as Record<string, unknown>[],
+        (row) => (row.status ? translateStatus(String(row.status), t) : ""),
+        t("report.ungroupedStatus")
+      );
       return {
-        groups: groupBy(
-          rows as unknown as Record<string, unknown>[],
-          (row) => (row.status ? translateStatus(String(row.status), t) : ""),
-          t("report.ungroupedStatus")
-        ),
+        groups: rawGroups.map((g, idx) => ({
+          name: `${idx + 1}. ${g.name}`,
+          rows: g.rows,
+        })),
       };
     },
     [t]
@@ -47,7 +51,11 @@ export default function DailyReportPage() {
 
   const format = useCallback(
     (field: string, value: unknown) => {
-      if (field === "serviceDate") return formatDayTime(value);
+      if (field === "serviceDate") return formatDay(value);
+      if (field === "finishedDate") return value ? formatDay(value) : "—";
+      if (field === "daysTaken") return value === null || value === undefined ? "0" : String(value);
+      if (field === "sparePartsSummary") return value ? String(value) : "N/A";
+      if (field === "repairByName") return value ? String(value) : "—";
       if (field === "status" && value) return translateStatus(String(value), t);
       return value === null || value === undefined ? "" : String(value);
     },

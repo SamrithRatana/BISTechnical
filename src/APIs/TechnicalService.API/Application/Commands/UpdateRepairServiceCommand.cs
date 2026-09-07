@@ -1,4 +1,4 @@
-﻿using MediatR;
+using MediatR;
 using TechnicalService.API.Application.DTOs;
 namespace TechnicalService.API.Application.Commands;
 
@@ -20,4 +20,9 @@ public record UpdateRepairServiceCommand(
     int ServicePriorityId,
     int StatusId,
     bool HasContract,
-    IEnumerable<SparepartItemDTO> SparepartItems) : IRequest<bool>;
+    IEnumerable<SparepartItemDTO> SparepartItems,
+    DateTime? FinishedDate = null,
+    Guid? RepairBy = null,
+    Guid? VerifiedBy = null,
+    string? ItemName = null,
+    string? SerialNumber = null) : IRequest<bool>;

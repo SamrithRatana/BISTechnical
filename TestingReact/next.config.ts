@@ -70,6 +70,21 @@ const nextConfig: NextConfig = {
     "192.168.*.*",
     ...Array.from({ length: 16 }, (_, i) => `172.${16 + i}.*.*`),
   ],
+
+  async redirects() {
+    return [
+      {
+        source: "/identity/account/login",
+        destination: "/login",
+        permanent: true,
+      },
+      {
+        source: "/Identity/Account/Login",
+        destination: "/login",
+        permanent: true,
+      },
+    ];
+  },
 };
 
 export default nextConfig;

@@ -11,6 +11,7 @@ import React, {
   ReactNode,
 } from "react";
 import toast from "react-hot-toast";
+import { usePathname } from "next/navigation";
 import { useI18n } from "@/i18n/LanguageProvider";
 
 interface CompanionScannerContextType {
@@ -30,12 +31,32 @@ interface CompanionScannerContextType {
 const CompanionScannerContext = createContext<CompanionScannerContextType | null>(null);
 
 const STORAGE_SESSION_KEY = "bis_companion_scanner_session";
+const SCANNER_CHANNEL_NAME = "bis_companion_scanner_bus";
+const SCANNER_LEADER_KEY = "bis_scanner_leader_tab_id";
+const SCANNER_HEARTBEAT_KEY = "bis_scanner_leader_heartbeat";
+const TAB_ID = "scan_tab_" + Math.random().toString(36).substring(2, 9) + Date.now().toString(36);
+
+function getOrCreateSessionId(): string {
+  if (typeof window === "undefined") return "";
+  try {
+    let sid = localStorage.getItem(STORAGE_SESSION_KEY) || "";
+    if (!sid) {
+      sid = "scan-" + Math.random().toString(36).substring(2, 9) + Date.now().toString(36);
+      localStorage.setItem(STORAGE_SESSION_KEY, sid);
+    }
+    return sid;
+  } catch {
+    return "scan-" + Math.random().toString(36).substring(2, 9) + Date.now().toString(36);
+  }
+}
 
 export function CompanionScannerProvider({ children }: { children: ReactNode }) {
   const { lang } = useI18n();
   const isKhmer = lang === "km";
+  const pathname = usePathname();
+  const inWorkspace = pathname !== "/login" && pathname !== "/scanner";
 
-  const [sessionId, setSessionId] = useState<string>("");
+  const [sessionId, setSessionId] = useState<string>(() => getOrCreateSessionId());
   const [mobileUrl, setMobileUrl] = useState<string>("");
   const [lanIp, setLanIp] = useState<string>("");
   const [isPhoneConnected, setIsPhoneConnected] = useState<boolean>(false);
@@ -44,8 +65,9 @@ export function CompanionScannerProvider({ children }: { children: ReactNode }) 
   const [isPairingModalOpen, setIsPairingModalOpen] = useState<boolean>(false);
 
   const eventSourceRef = useRef<EventSource | null>(null);
+  const broadcastChannelRef = useRef<BroadcastChannel | null>(null);
+  const isLeaderRef = useRef<boolean>(false);
 
-  // Web Audio Synthetic High-Tone PC Confirmation Beep
   const playPcBeep = useCallback(() => {
     try {
       const AudioCtx =
@@ -65,19 +87,15 @@ export function CompanionScannerProvider({ children }: { children: ReactNode }) 
       gain.connect(ctx.destination);
       osc.start();
       osc.stop(ctx.currentTime + 0.15);
-    } catch {
-      // Audio not permitted yet
-    }
+    } catch {}
   }, []);
 
-  // ── Global Active Element Injector (Virtual Hardware Scanner) ──
   const injectBarcodeIntoActiveInput = useCallback(
     (barcode: string, format?: string) => {
       playPcBeep();
       setLastScannedCode(barcode);
       setScanCount((c) => c + 1);
 
-      // Broadcast custom event for pages / dialogs with specific listeners
       if (typeof window !== "undefined") {
         window.dispatchEvent(
           new CustomEvent("companion-barcode-scanned", {
@@ -107,11 +125,9 @@ export function CompanionScannerProvider({ children }: { children: ReactNode }) 
           target.value = barcode;
         }
 
-        // Dispatch synthetic React input & change events
         target.dispatchEvent(new Event("input", { bubbles: true }));
         target.dispatchEvent(new Event("change", { bubbles: true }));
 
-        // Subtle green flash highlight on the active field
         target.classList.add("ring-2", "ring-cyan-400", "transition-all");
         setTimeout(() => {
           target.classList.remove("ring-2", "ring-cyan-400");
@@ -135,66 +151,80 @@ export function CompanionScannerProvider({ children }: { children: ReactNode }) 
     [isKhmer, playPcBeep]
   );
 
-  // Initialize or restore persistent session ID from localStorage
-  const initSession = useCallback(() => {
-    let sid = "";
-    if (typeof window !== "undefined") {
-      sid = localStorage.getItem(STORAGE_SESSION_KEY) || "";
-      if (!sid) {
-        sid = "scan-" + Math.random().toString(36).substring(2, 9) + Date.now().toString(36);
-        localStorage.setItem(STORAGE_SESSION_KEY, sid);
-      }
-    } else {
-      sid = "scan-" + Math.random().toString(36).substring(2, 9) + Date.now().toString(36);
+  function getStoredUserInfo(): { userName?: string; userId?: string } {
+    if (typeof window === "undefined") return {};
+    try {
+      const raw = localStorage.getItem("user_info");
+      if (!raw) return {};
+      const parsed = JSON.parse(raw) as Record<string, unknown>;
+      return {
+        userName: (parsed.userName || parsed.UserName || "") as string,
+        userId: (parsed.id || parsed.userId || parsed.Id || "") as string,
+      };
+    } catch {
+      return {};
     }
-    setSessionId(sid);
-    return sid;
-  }, []);
+  }
 
-  // Update mobile URL with actual LAN IP (in local dev) or Public Domain (in Production)
   const updateMobileUrl = useCallback(
     (sid: string) => {
-      const protocol = typeof window !== "undefined" ? window.location.protocol : "http:";
-      const port = typeof window !== "undefined" && window.location.port ? `:${window.location.port}` : "";
-      const hostname = typeof window !== "undefined" ? window.location.hostname : "localhost";
+      if (typeof window === "undefined") return;
+      const protocol = window.location.protocol;
+      const port = window.location.port ? `:${window.location.port}` : "";
+      const hostname = window.location.hostname;
+      const { userName } = getStoredUserInfo();
+      const userQuery = userName ? `&user=${encodeURIComponent(userName)}` : "";
 
-      // 1. In Production (or custom domain): directly use the current origin with zero latency
       if (hostname !== "localhost" && hostname !== "127.0.0.1") {
-        setMobileUrl(`${protocol}//${hostname}${port}/scanner?session=${sid}`);
+        setMobileUrl(`${protocol}//${hostname}${port}/scanner?session=${sid}${userQuery}`);
         return;
       }
 
-      // 2. In Local Development: resolve primary Wi-Fi LAN IP so phone on same Wi-Fi can connect
       fetch("/api/scanner/network-ip")
-        .then((res) => res.json())
+        .then((r) => (r.ok ? r.json() : null))
         .then((data) => {
-          const ip = data?.primaryIp || hostname;
-          setLanIp(ip);
-          const targetHost =
-            (hostname === "localhost" || hostname === "127.0.0.1") && ip !== "127.0.0.1"
-              ? ip
-              : hostname;
-          setMobileUrl(`${protocol}//${targetHost}${port}/scanner?session=${sid}`);
+          const resolvedIp = data?.primaryIp || data?.ip;
+          if (resolvedIp && resolvedIp !== "127.0.0.1") {
+            setLanIp(resolvedIp);
+            setMobileUrl(`http://${resolvedIp}${port}/scanner?session=${sid}${userQuery}`);
+          } else {
+            setMobileUrl(`${protocol}//${hostname}${port}/scanner?session=${sid}${userQuery}`);
+          }
         })
         .catch(() => {
-          const origin = typeof window !== "undefined" ? window.location.origin : "";
-          setMobileUrl(`${origin}/scanner?session=${sid}`);
+          setMobileUrl(`${protocol}//${hostname}${port}/scanner?session=${sid}${userQuery}`);
         });
     },
     []
   );
 
-  // Connect background SSE stream for persistent session
+  // Connect SSE only when required (deferred after page load complete)
   const connectSSE = useCallback(
     (sid: string) => {
+      if (typeof window === "undefined") return;
       if (eventSourceRef.current) {
         eventSourceRef.current.close();
         eventSourceRef.current = null;
       }
 
-      if (!sid) return;
+      if (document.readyState !== "complete") {
+        window.addEventListener("load", () => connectSSE(sid), { once: true });
+        return;
+      }
 
-      const es = new EventSource(`/api/scanner/session?sessionId=${sid}&role=pc`);
+      const { userName, userId } = getStoredUserInfo();
+      const userQuery = userName
+        ? `&userName=${encodeURIComponent(userName)}&userId=${encodeURIComponent(userId || "")}`
+        : "";
+
+    const safeBroadcast = (msg: unknown) => {
+      try {
+        broadcastChannelRef.current?.postMessage(msg);
+      } catch {}
+    };
+
+    try {
+      const es = new EventSource(`/api/scanner/session?sessionId=${sid}&role=pc${userQuery}`);
       eventSourceRef.current = es;
 
       es.onmessage = (e) => {
@@ -204,14 +234,21 @@ export function CompanionScannerProvider({ children }: { children: ReactNode }) 
 
           if (data.type === "phone-joined") {
             setIsPhoneConnected(true);
+            safeBroadcast({ type: "PHONE_JOINED" });
             toast.success(
               isKhmer ? "📱 ទូរស័ព្ទបានភ្ជាប់ជោគជ័យ! 🟢" : "📱 Phone Connected! 🟢",
               { duration: 3000, id: "phone-connected-toast" }
             );
           } else if (data.type === "barcode-scanned" && data.barcode) {
             injectBarcodeIntoActiveInput(data.barcode, data.format);
+            safeBroadcast({
+              type: "BARCODE_SCANNED",
+              barcode: data.barcode,
+              format: data.format,
+            });
           } else if (data.type === "disconnect") {
             setIsPhoneConnected(false);
+            safeBroadcast({ type: "PHONE_DISCONNECTED" });
             toast(
               isKhmer ? "📱 ទូរស័ព្ទបានផ្តាច់ការតភ្ជាប់" : "📱 Phone Disconnected",
               { icon: "⚪", duration: 2500 }
@@ -222,26 +259,97 @@ export function CompanionScannerProvider({ children }: { children: ReactNode }) 
         }
       };
 
-      es.onerror = () => {
-        // Automatic reconnection is handled by browser EventSource
-      };
+        es.onerror = () => {};
+      } catch {}
     },
     [injectBarcodeIntoActiveInput, isKhmer]
   );
 
-  // Start persistent session on mount
+  // Cross-Tab Broadcast Channel
   useEffect(() => {
-    const sid = initSession();
-    updateMobileUrl(sid);
-    connectSSE(sid);
+    if (!inWorkspace || typeof window === "undefined") return;
+
+    let bc: BroadcastChannel | null = null;
+    try {
+      bc = new BroadcastChannel(SCANNER_CHANNEL_NAME);
+      broadcastChannelRef.current = bc;
+
+      bc.onmessage = (e) => {
+        const data = e.data;
+        if (!data) return;
+
+        if (data.type === "PHONE_JOINED") {
+          setIsPhoneConnected(true);
+        } else if (data.type === "PHONE_DISCONNECTED") {
+          setIsPhoneConnected(false);
+        } else if (data.type === "BARCODE_SCANNED" && data.barcode) {
+          injectBarcodeIntoActiveInput(data.barcode, data.format);
+        } else if (data.type === "SCANNER_LEADER_RESIGNED" && !isLeaderRef.current) {
+          checkLeadership();
+        }
+      };
+    } catch {}
+
+    function checkLeadership() {
+      const now = Date.now();
+      const currentLeader = localStorage.getItem(SCANNER_LEADER_KEY);
+      const lastHeartbeat = Number(localStorage.getItem(SCANNER_HEARTBEAT_KEY)) || 0;
+
+      if (!currentLeader || currentLeader === TAB_ID || now - lastHeartbeat > 3500) {
+        isLeaderRef.current = true;
+        localStorage.setItem(SCANNER_LEADER_KEY, TAB_ID);
+        localStorage.setItem(SCANNER_HEARTBEAT_KEY, now.toString());
+
+        // Always keep background SSE active so phone scans are received even when modal is closed
+        const sid = sessionId || getOrCreateSessionId();
+        connectSSE(sid);
+      }
+    }
+
+    checkLeadership();
+
+    const interval = setInterval(() => {
+      const now = Date.now();
+      if (isLeaderRef.current) {
+        localStorage.setItem(SCANNER_HEARTBEAT_KEY, now.toString());
+        localStorage.setItem(SCANNER_LEADER_KEY, TAB_ID);
+      } else {
+        const lastHeartbeat = Number(localStorage.getItem(SCANNER_HEARTBEAT_KEY)) || 0;
+        if (now - lastHeartbeat > 3500) {
+          checkLeadership();
+        }
+      }
+    }, 1500);
+
+    const onUnload = () => {
+      if (isLeaderRef.current) {
+        localStorage.removeItem(SCANNER_LEADER_KEY);
+        localStorage.removeItem(SCANNER_HEARTBEAT_KEY);
+        bc?.postMessage({ type: "SCANNER_LEADER_RESIGNED" });
+      }
+    };
+    window.addEventListener("beforeunload", onUnload);
 
     return () => {
+      clearInterval(interval);
+      window.removeEventListener("beforeunload", onUnload);
       if (eventSourceRef.current) {
         eventSourceRef.current.close();
         eventSourceRef.current = null;
       }
+      bc?.close();
     };
-  }, [initSession, updateMobileUrl, connectSSE]);
+  }, [inWorkspace, sessionId, isPairingModalOpen, isPhoneConnected, connectSSE, injectBarcodeIntoActiveInput]);
+
+  // When pairing modal opens or when in workspace
+  useEffect(() => {
+    if (!inWorkspace) return;
+    const sid = sessionId || getOrCreateSessionId();
+    updateMobileUrl(sid);
+    if (isLeaderRef.current && !eventSourceRef.current) {
+      connectSSE(sid);
+    }
+  }, [isPairingModalOpen, inWorkspace, sessionId, connectSSE, updateMobileUrl]);
 
   // Disconnect phone and terminate remote session
   const disconnectPhone = useCallback(async () => {
@@ -256,44 +364,45 @@ export function CompanionScannerProvider({ children }: { children: ReactNode }) 
         }),
         keepalive: true,
       });
-    } catch {
-      // Ignore
-    }
+    } catch {}
 
     if (typeof window !== "undefined") {
       localStorage.removeItem(STORAGE_SESSION_KEY);
     }
 
     setIsPhoneConnected(false);
-    setLastScannedCode(null);
-    setScanCount(0);
+    try {
+      broadcastChannelRef.current?.postMessage({ type: "PHONE_DISCONNECTED" });
+    } catch {}
+  }, [sessionId]);
 
-    // Fresh session ID for this browser tab
-    const newSid = "scan-" + Math.random().toString(36).substring(2, 9) + Date.now().toString(36);
-    if (typeof window !== "undefined") {
-      localStorage.setItem(STORAGE_SESSION_KEY, newSid);
-    }
-    setSessionId(newSid);
-    updateMobileUrl(newSid);
-    connectSSE(newSid);
-
-    toast.success(isKhmer ? "បានផ្តាច់ទូរស័ព្ទរួចរាល់" : "Phone unlinked");
-  }, [sessionId, isKhmer, updateMobileUrl, connectSSE]);
-
-  // Regenerate session ID (Force re-pair)
   const regenerateSession = useCallback(() => {
-    disconnectPhone();
-  }, [disconnectPhone]);
+    if (typeof window !== "undefined") {
+      localStorage.removeItem(STORAGE_SESSION_KEY);
+    }
+    const newSid = getOrCreateSessionId();
+    setSessionId(newSid);
+    setIsPhoneConnected(false);
+    updateMobileUrl(newSid);
+    if (isLeaderRef.current) {
+      connectSSE(newSid);
+    }
+    toast.success(
+      isKhmer ? "🔄 បានបង្កើត QR Code & Session ថ្មី!" : "🔄 New Session Generated!",
+      { duration: 2500 }
+    );
+  }, [updateMobileUrl, connectSSE, isKhmer]);
 
   const openPairingModal = useCallback(() => {
+    updateMobileUrl(sessionId);
     setIsPairingModalOpen(true);
-  }, []);
+  }, [sessionId, updateMobileUrl]);
 
   const closePairingModal = useCallback(() => {
     setIsPairingModalOpen(false);
   }, []);
 
-  const contextValue = useMemo(
+  const value = useMemo(
     () => ({
       sessionId,
       mobileUrl,
@@ -323,7 +432,7 @@ export function CompanionScannerProvider({ children }: { children: ReactNode }) 
   );
 
   return (
-    <CompanionScannerContext.Provider value={contextValue}>
+    <CompanionScannerContext.Provider value={value}>
       {children}
     </CompanionScannerContext.Provider>
   );
@@ -332,7 +441,7 @@ export function CompanionScannerProvider({ children }: { children: ReactNode }) 
 export function useCompanionScanner() {
   const context = useContext(CompanionScannerContext);
   if (!context) {
-    throw new Error("useCompanionScanner must be used within CompanionScannerProvider");
+    throw new Error("useCompanionScanner must be used within a CompanionScannerProvider");
   }
   return context;
 }

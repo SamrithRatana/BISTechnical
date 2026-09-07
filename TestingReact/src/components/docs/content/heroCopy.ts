@@ -103,3 +103,78 @@ export const HERO_STAT_LABELS: Record<"chapters" | "topics" | "stages", Bilingua
   topics: { en: "documented screens", km: "អេក្រង់មានឯកសារ" },
   stages: { en: "workflow stages", km: "ដំណាក់កាលការងារ" },
 };
+
+/**
+ * Reader furniture — the words around an article rather than in it.
+ *
+ * `stepOf` and `articlesIn` carry `{n}` / `{m}` placeholders instead of being
+ * assembled by concatenation, because Khmer does not put the number where
+ * English does: "Step 4 of 12" is "ជំហានទី ៤ ក្នុងចំណោម ១២", and a
+ * `"Step " + n + " of " + m` would strand the reader with English word order
+ * wrapped around Khmer text.
+ */
+export const READER_COPY: Record<
+  | "chapter"
+  | "stepOf"
+  | "articlesIn"
+  | "status"
+  | "openInApp"
+  | "prev"
+  | "next"
+  | "backToTop"
+  | "onThisPage"
+  | "menu",
+  Bilingual
+> = {
+  chapter: { en: "Chapter", km: "ជំពូក" },
+  stepOf: { en: "Step {n} of {m}", km: "ជំហានទី {n} ក្នុងចំណោម {m}" },
+  articlesIn: { en: "{n} pages", km: "{n} ទំព័រ" },
+  status: { en: "Ticket status", km: "ស្ថានភាពសំបុត្រ" },
+  openInApp: { en: "Open this screen", km: "បើកអេក្រង់នេះ" },
+  prev: { en: "Previous", km: "មុន" },
+  next: { en: "Next", km: "បន្ទាប់" },
+  backToTop: { en: "Back to top", km: "ត្រឡប់ទៅលើ" },
+  onThisPage: { en: "On this page", km: "នៅក្នុងទំព័រនេះ" },
+  menu: { en: "Documentation menu", km: "មាតិកាឯកសារ" },
+};
+
+/** The chapter map under the lifecycle rail — the "where do I start" answer. */
+export const PATHWAY_COPY: Record<"eyebrow" | "title" | "body" | "start", Bilingual> = {
+  eyebrow: {
+    en: "The reading path",
+    km: "ផ្លូវនៃការអាន",
+  },
+  title: {
+    en: "Five chapters, in the order they make sense",
+    km: "ជំពូកទាំង ៥ តាមលំដាប់ដែលងាយយល់",
+  },
+  body: {
+    en: "Start at the top and press next at the bottom of every page — you will have read the manual front to back without ever choosing where to go. Or jump straight to the chapter that covers the screen in front of you.",
+    km: "ចាប់ផ្ដើមពីខាងលើ រួចចុច «បន្ទាប់» នៅចុងទំព័រនីមួយៗ — អ្នកនឹងអានឯកសារនេះចប់ពីដើមដល់ចប់ ដោយមិនចាំបាច់រើសផ្លូវឡើយ។ ឬលោតទៅជំពូកដែលពន្យល់អំពីអេក្រង់នៅចំពោះមុខអ្នកតែម្ដង។",
+  },
+  start: { en: "Start here", km: "ចាប់ផ្ដើមទីនេះ" },
+};
+
+const KHMER_DIGITS = "០១២៣៤៥៦៧៨៩";
+
+/**
+ * Fills `{n}` / `{m}` in the templates above, rendering the numbers in Khmer
+ * numerals when the reader is in Khmer.
+ *
+ * Not cosmetic: the catalogue's own prose already writes counts that way
+ * ("ដំណាក់កាលទាំង ១១"), so a Latin-digit counter beside it reads as a
+ * string the translator missed. Applied only to values interpolated INTO
+ * Khmer prose — the mono chapter numbers and step chips stay Latin, where they
+ * are a visual index rather than something being read aloud.
+ */
+export function fillCopy(
+  template: string,
+  values: Record<string, string | number>,
+  isKhmer = false
+): string {
+  return template.replace(/\{(\w+)\}/g, (match, key: string) => {
+    if (!(key in values)) return match;
+    const value = String(values[key]);
+    return isKhmer ? value.replace(/[0-9]/g, (d) => KHMER_DIGITS[Number(d)]) : value;
+  });
+}

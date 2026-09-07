@@ -19,7 +19,8 @@ export type TicketEventType =
   | "ticket_created"
   | "ticket_updated"
   | "ticket_deleted"
-  | "status_changed";
+  | "status_changed"
+  | "force_logout";
 
 /**
  * Which kind of record the event is about.
@@ -28,7 +29,7 @@ export type TicketEventType =
  * refreshed all the ticket queues (which don't care) while the spare-parts
  * list itself — the one screen that needed it — got nothing.
  */
-export type RealtimeResource = "ticket" | "sparepart" | "item" | "customer";
+export type RealtimeResource = "ticket" | "sparepart" | "item" | "customer" | "all";
 
 export interface TicketEvent {
   type: TicketEventType;
@@ -42,8 +43,14 @@ export interface TicketEvent {
    * whether an event is theirs. See `useRealtimeTickets`.
    */
   status?: string;
-  /** Ticket ID affected */
+  /** Ticket ID affected — or, for `force_logout`, the browser session id targeted (or spared, when status is "others"). */
   id?: string;
+  /**
+   * `force_logout` only: the account the revocation is scoped to. Lets a
+   * status of "others" (spare the session named in `id`) stay confined to one
+   * user's browsers instead of signing out everyone on the system.
+   */
+  user?: string;
   /** ISO timestamp */
   at: string;
 }

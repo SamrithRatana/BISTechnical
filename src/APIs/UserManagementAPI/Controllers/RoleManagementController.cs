@@ -1,4 +1,4 @@
-﻿using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
@@ -436,7 +436,7 @@ namespace UserManagementAPI.Controllers
 
         // PUT: api/RoleManagement/{id}/permissions
         // Update all permissions for a role at once
-        [Authorize(Roles = "Admin")]
+        [Authorize(Roles = "Admin,SuperAdmin")]
         [HttpPut("{id}/permissions")]
         [ProducesResponseType(typeof(object), StatusCodes.Status200OK)]
         public async Task<IActionResult> UpdateRolePermissions(string id, [FromBody] UpdatePermissionsDto model)

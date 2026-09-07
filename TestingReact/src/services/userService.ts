@@ -5,6 +5,7 @@
  */
 
 import { RepairServiceItem, calculateDaysTaken } from "./types";
+import { registerSessionCacheClearer } from "./authSession";
 
 export interface UserDto {
   id: string;
@@ -75,6 +76,14 @@ function buildUserApiHeaders(): Record<string, string> {
  * subsequent page's `Header` mount. Call this right after any write that
  * changes a field this map carries.
  */
+/**
+ * The resolved-users map is per-session too: it is fetched with the signed-in
+ * user's token and decides which names appear on tickets. Registered here so
+ * `clearSession()` drops it with everything else — before this it survived a
+ * sign-out, because logout never reloads the page.
+ */
+registerSessionCacheClearer(() => invalidateUserMapCache());
+
 export function invalidateUserMapCache(): void {
   cachedUserMap = null;
   userMapPromise = null;
@@ -99,44 +108,114 @@ export async function fetchUserMap(): Promise<Map<string, UserDto>> {
   }
 
   userMapPromise = (async () => {
+    /**
+     * Page size and hard page cap. The cap is a runaway guard, not a product
+     * decision: a broken `HasNext` that never turns false used to mean an
+     * unbounded loop.
+     */
+    const PAGE_SIZE = 100;
+    const MAX_PAGES = 10;
+
+    interface PaginationInfo {
+      TotalPages?: number;
+      TotalCount?: number;
+      HasNext?: boolean;
+    }
+
+    /** One page -> DTOs. Extracted so the first page and the parallel rest share it. */
+    const readPage = async (page: number): Promise<{ users: UserDto[]; pagination: PaginationInfo | undefined } | null> => {
+      const res = await fetch(`/api/proxy/UserManagement?service=jwt&page=${page}&pageSize=${PAGE_SIZE}`, {
+        headers: buildUserApiHeaders(),
+      });
+      if (!res.ok) return null;
+      const data = (await res.json()) as Record<string, unknown>;
+      const rawUsers: Record<string, unknown>[] = (data.Data || data.items || (Array.isArray(data) ? data : [])) as Record<string, unknown>[];
+      if (!rawUsers || rawUsers.length === 0) return { users: [], pagination: data.Pagination as PaginationInfo | undefined };
+      const users = rawUsers
+        .map((raw): UserDto | null => {
+          const userId = String(raw.id || raw.Id || "").trim();
+          if (!userId) return null;
+          return {
+            id: userId,
+            userName: String(raw.userName || raw.UserName || ""),
+            email: String(raw.email || raw.Email || ""),
+            firstName: String(raw.firstName || raw.FirstName || ""),
+            lastName: String(raw.lastName || raw.LastName || ""),
+            phoneNumber: String(raw.phoneNumber || raw.PhoneNumber || ""),
+            profilePictureUrl: (raw.profilePictureUrl || raw.ProfilePictureUrl || undefined) as string | undefined,
+            roles: ((raw.roles || raw.Roles || []) as string[]),
+          };
+        })
+        .filter((u): u is UserDto => u !== null);
+      return { users, pagination: data.Pagination as PaginationInfo | undefined };
+    };
+
     try {
       const map = new Map<string, UserDto>();
-      let page = 1;
-      let hasMore = true;
+      const add = (dto: UserDto) => {
+        map.set(dto.id.toLowerCase(), dto);
+        if (dto.userName) map.set(dto.userName.toLowerCase(), dto);
+      };
 
-      while (hasMore) {
-        const res = await fetch(`/api/proxy/UserManagement?service=jwt&page=${page}&pageSize=100`, {
-          headers: buildUserApiHeaders(),
-        });
-        if (!res.ok) break;
+      const first = await readPage(1);
+      if (!first) {
+        cachedUserMap = map;
+        userMapPromise = null;
+        userMapEmptyAt = Date.now();
+        return map;
+      }
+      first.users.forEach(add);
 
-        const data = await res.json();
-        const rawUsers: any[] = data.Data || data.items || (Array.isArray(data) ? data : []);
-        if (!rawUsers || rawUsers.length === 0) break;
+      /**
+       * Pages 2..N in PARALLEL, not one after another.
+       *
+       * This loop used to be `while (hasMore) { await fetch(...) }`, which is a
+       * serial chain: every page waited for the one before it. Each page is a
+       * browser -> Next proxy -> UserManagementAPI -> SQL Server round trip, and
+       * that database is remote, so a page costs ~300ms of mostly latency.
+       *
+       * It is also the reason signing in as an administrator felt slow while an
+       * ordinary account felt instant, on identical code: the account's own
+       * permissions decide how many users come back, so an admin who can see
+       * every user paid 5-10 sequential round trips (1.5-3s) where a limited
+       * account paid one. Nothing about the admin was heavier — it was just
+       * further down the same serial chain.
+       *
+       * Fetching the remainder concurrently makes the cost ~2 round trips
+       * regardless of headcount. `allSettled`, so one failed page degrades to a
+       * partial map rather than losing every user.
+       */
+      const pag = first.pagination;
+      const totalPages: number | null =
+        typeof pag?.TotalPages === "number"
+          ? pag.TotalPages
+          : typeof pag?.TotalCount === "number"
+            ? Math.ceil(pag.TotalCount / PAGE_SIZE)
+            : null;
 
-        rawUsers.forEach((raw) => {
-          const userId = String(raw.id || raw.Id || "").trim();
-          if (userId) {
-            const dto: UserDto = {
-              id: userId,
-              userName: raw.userName || raw.UserName || "",
-              email: raw.email || raw.Email || "",
-              firstName: raw.firstName || raw.FirstName || "",
-              lastName: raw.lastName || raw.LastName || "",
-              phoneNumber: raw.phoneNumber || raw.PhoneNumber || "",
-              profilePictureUrl: raw.profilePictureUrl || raw.ProfilePictureUrl || null,
-              roles: raw.roles || raw.Roles || [],
-            };
-            map.set(userId.toLowerCase(), dto);
-            if (dto.userName) {
-              map.set(dto.userName.toLowerCase(), dto);
-            }
-          }
-        });
-
-        hasMore = Boolean(data.Pagination?.HasNext);
-        page++;
-        if (page > 10) break;
+      if (totalPages !== null) {
+        const last = Math.min(totalPages, MAX_PAGES);
+        if (last > 1) {
+          const rest = await Promise.allSettled(
+            Array.from({ length: last - 1 }, (_, i) => readPage(i + 2))
+          );
+          rest.forEach((r) => {
+            if (r.status === "fulfilled" && r.value) r.value.users.forEach(add);
+          });
+        }
+      } else if (pag?.HasNext) {
+        // The API did not report a total, so fall back to the original serial
+        // walk. Correctness first: without a total there is no safe page count
+        // to fan out over.
+        let page = 2;
+        let hasMore = true;
+        while (hasMore && page <= MAX_PAGES) {
+          const next = await readPage(page);
+          if (!next || next.users.length === 0) break;
+          next.users.forEach(add);
+          hasMore = Boolean(next.pagination?.HasNext);
+          page++;
+        }
       }
 
       cachedUserMap = map;
@@ -154,13 +233,51 @@ export async function fetchUserMap(): Promise<Map<string, UserDto>> {
   return userMapPromise;
 }
 
+/**
+ * Fetches unique list of users from User Management (deduplicated by User ID).
+ */
+export async function fetchUsersList(): Promise<UserDto[]> {
+  const map = await fetchUserMap();
+  const seen = new Set<string>();
+  const list: UserDto[] = [];
+  for (const u of map.values()) {
+    const key = (u.id || "").toLowerCase();
+    if (key && !seen.has(key)) {
+      seen.add(key);
+      list.push(u);
+    }
+  }
+  return list;
+}
+
 /** Formats a UserDto into a display full name */
-export function formatUserName(user?: UserDto): string {
+export function formatUserName(user?: UserDto | { firstName?: string; lastName?: string; userName?: string; FirstName?: string; LastName?: string; UserName?: string }): string {
   if (!user) return "";
-  const fn = (user.firstName || "").trim();
-  const ln = (user.lastName || "").trim();
+  const fn = String(user.firstName || (user as any).FirstName || "").trim();
+  const ln = String(user.lastName || (user as any).LastName || "").trim();
   const fullName = `${fn} ${ln}`.trim();
-  return fullName || user.userName || "";
+  return fullName || user.userName || (user as any).UserName || "";
+}
+
+/**
+ * Returns the currently logged-in user's full name ("FirstName LastName", e.g. "Vun Navin").
+ * Always prioritizes FirstName + LastName over userName ("NavinCAM").
+ */
+export function getCurrentUserFullName(): string {
+  if (typeof window === "undefined") return "Staff";
+  try {
+    const raw = localStorage.getItem("user_info");
+    if (raw) {
+      const u = JSON.parse(raw);
+      const fn = String(u.firstName || u.FirstName || "").trim();
+      const ln = String(u.lastName || u.LastName || "").trim();
+      const full = `${fn} ${ln}`.trim();
+      if (full) return full;
+      if (u.name && String(u.name).trim()) return String(u.name).trim();
+      if (u.userName && String(u.userName).trim()) return String(u.userName).trim();
+    }
+  } catch {}
+  return "Staff";
 }
 
 /** Resolves a single User GUID to full name using cachedUserMap synchronously if available */
@@ -267,4 +384,94 @@ export function getCurrentUserGuid(): string | null {
   }
 
   return null;
+}
+
+/**
+ * Updates the user's profile information via the UserManagement API.
+ */
+export async function updateUserProfile(
+  userId: string,
+  data: {
+    firstName: string;
+    lastName: string;
+    phoneNumber?: string;
+    email?: string;
+    userName?: string;
+  }
+): Promise<{ success: boolean; message?: string; errors?: string[] }> {
+  try {
+    const headers = buildUserApiHeaders();
+    headers["Content-Type"] = "application/json";
+
+    const res = await fetch(`/api/proxy/UserManagement/${encodeURIComponent(userId)}?service=jwt`, {
+      method: "PUT",
+      headers,
+      body: JSON.stringify(data),
+    });
+
+    const json = await res.json();
+    if (!res.ok) {
+      return {
+        success: false,
+        message: json.message || "Failed to update profile",
+        errors: json.errors || [],
+      };
+    }
+
+    // Invalidate caches
+    invalidateUserMapCache();
+
+    return {
+      success: true,
+      message: json.message || "Profile updated successfully!",
+    };
+  } catch (err: any) {
+    return {
+      success: false,
+      message: err?.message || "Network error updating profile",
+    };
+  }
+}
+
+/**
+ * Changes the authenticated user's password via the Auth API.
+ */
+export async function changeUserPassword(data: {
+  currentPassword: string;
+  newPassword: string;
+  confirmPassword: string;
+}): Promise<{ success: boolean; message?: string; errors?: string[] }> {
+  try {
+    const headers = buildUserApiHeaders();
+    headers["Content-Type"] = "application/json";
+
+    const res = await fetch(`/api/proxy/auth/change-password?service=jwt`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({
+        currentPassword: data.currentPassword,
+        newPassword: data.newPassword,
+        confirmPassword: data.confirmPassword,
+      }),
+    });
+
+    const json = await res.json();
+    if (!res.ok) {
+      return {
+        success: false,
+        message: json.message || json.Message || "Failed to change password",
+        errors: json.errors || json.Errors || [],
+      };
+    }
+
+    return {
+      success: true,
+      message: json.message || json.Message || "Password changed successfully!",
+    };
+  } catch (err: any) {
+    return {
+      success: false,
+      message: err?.message || "Network error changing password",
+    };
+  }
 }

@@ -1,4 +1,4 @@
-﻿using MediatR;
+using MediatR;
 using TechnicalService.Domain.AggregatesModel.TechnicalAggregate;
 
 using TechnicalService.API.Extensions;
@@ -27,9 +27,13 @@ public class UpdateReceiveItemCommandHandler : IRequestHandler<UpdateReceiveItem
             return false;
         }
 
+        Guid finalCustomerId = command.CustomerId != Guid.Empty
+            ? command.CustomerId
+            : serviceToUpdate.CustomerId;
+
         // Update service properties
         serviceToUpdate.UpdateReceiveItemInfo(
-            command.CustomerId,
+            finalCustomerId,
             command.CompanyName,
             command.Address,
             command.ContactName,

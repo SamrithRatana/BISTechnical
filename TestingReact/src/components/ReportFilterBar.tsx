@@ -125,7 +125,7 @@ function StatusPicker({
               width: coords.width,
               transform: coords.placement === "top" ? "translateY(-100%)" : undefined,
             }}
-            className="z-[100] max-h-80 overflow-auto rounded-xl border border-subtle bg-surface p-1.5 shadow-xl "
+            className="z-[9999] max-h-80 overflow-auto rounded-xl border border-subtle bg-surface p-1.5 shadow-xl "
           >
             {selected.length > 0 && (
               <button

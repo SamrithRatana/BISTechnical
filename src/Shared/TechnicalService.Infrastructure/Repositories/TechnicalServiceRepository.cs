@@ -1,4 +1,4 @@
-﻿
+
 namespace TechnicalService.Infrastructure.Repositories;
 
 public class TechnicalServiceRepository
@@ -79,15 +79,28 @@ public class TechnicalServiceRepository
         return _context.Spareparts.Add(sparepart).Entity;
     }
 
-    //public void UpdateSparepart(Sparepart sparepart)
-    //{
-    //    _context.Spareparts.Update(sparepart);
-    //}
+    public void DeleteSparepart(Sparepart sparepart)
+    {
+        if (sparepart == null)
+            throw new ArgumentNullException(nameof(sparepart));
+
+        _context.Spareparts.Remove(sparepart);
+    }
+
+    public Task<int> CountSparepartTicketLinesAsync(Guid sparepartId) =>
+        _context.SparepartItems.AsNoTracking().CountAsync(i => i.SparepartId == sparepartId);
+
+    public Task<int> CountSparepartStockMovementsAsync(Guid sparepartId) =>
+        _context.SparepartStockAuditLogs.AsNoTracking().CountAsync(a => a.SparepartId == sparepartId);
 
     public async Task<Service> GetServiceAsync(Guid id)
     {
         var rs = await _context.Services
             .Include(p => p.SparepartItems)
+            .Include(p => p.Status)
+            .Include(p => p.ServicePriority)
+            .Include(p => p.ServiceType)
+            .Include(p => p.Item)
             .FirstOrDefaultAsync(rs => rs.Id == id);
 
         if (rs != null)

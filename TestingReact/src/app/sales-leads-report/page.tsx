@@ -36,9 +36,14 @@ export default function SalesLeadsReportPage() {
         serviceLocation: filters.serviceLocation,
       });
 
+      const shapedRows = rows.map((row) => ({
+        ...row,
+        diagnosedBy: row.inspectByName || row.createdByName || "—",
+      }));
+
       return {
         groups: groupBy(
-          rows as unknown as Record<string, unknown>[],
+          shapedRows as unknown as Record<string, unknown>[],
           (row) => (row.status ? translateStatus(String(row.status), t) : ""),
           t("report.ungroupedStatus")
         ),
@@ -50,6 +55,7 @@ export default function SalesLeadsReportPage() {
   const format = useCallback(
     (field: string, value: unknown) => {
       if (field === "serviceDate") return formatDayTime(value);
+      if (field === "diagnosedBy") return value ? String(value) : "—";
       if (field === "status" && value) return translateStatus(String(value), t);
       return value === null || value === undefined ? "" : String(value);
     },

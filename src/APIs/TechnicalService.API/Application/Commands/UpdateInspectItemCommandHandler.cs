@@ -1,5 +1,8 @@
-﻿using TechnicalService.Domain.AggregatesModel.TechnicalAggregate;
+using TechnicalService.Domain.AggregatesModel.TechnicalAggregate;
 using TechnicalService.API.Extensions;
+using TechnicalService.Infrastructure;
+using Microsoft.EntityFrameworkCore;
+
 namespace TechnicalService.API.Application.Commands;
 public class UpdateInspectItemCommandHandler : IRequestHandler<UpdateInspectItemCommand, bool>
 {
@@ -75,6 +78,21 @@ public class UpdateInspectItemCommandHandler : IRequestHandler<UpdateInspectItem
         _logger.LogInformation("Updating Service - UpdateInspectItem: {ServiceId}", serviceToUpdate.Id);
         var result = await _technicalServiceRepository.UnitOfWork.SaveEntitiesAsync(cancellationToken);
         _logger.LogDebug("SaveEntitiesAsync result: {Result}", result);
+
+        // 🗑️ Clean up audit log and outbox records for removed spare parts
+        if (result && _technicalServiceRepository.UnitOfWork is TechnicalServiceContext dbContext)
+        {
+            if (itemsToRemove.Any())
+            {
+                foreach (var item in itemsToRemove)
+                {
+                    await dbContext.Database.ExecuteSqlInterpolatedAsync(
+                        $"DELETE FROM dbo.SparepartStockAuditLog WHERE ServiceId = {serviceToUpdate.Id} AND SparepartId = {item.SparepartId}; DELETE FROM dbo.StockNotificationOutbox WHERE ServiceId = {serviceToUpdate.Id} AND SparepartId = {item.SparepartId};",
+                        cancellationToken);
+                }
+            }
+        }
+
         return result;
     }
 }

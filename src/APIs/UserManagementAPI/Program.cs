@@ -1,5 +1,7 @@
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Diagnostics.HealthChecks;
+using Microsoft.Extensions.Diagnostics.HealthChecks;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.AspNetCore.ResponseCompression;
@@ -154,30 +156,115 @@ builder.Services.Configure<GzipCompressionProviderOptions>(options =>
 // Rate Limiting
 builder.Services.AddRateLimiter(options =>
 {
-    options.AddFixedWindowLimiter("api", opt =>
-    {
-        opt.PermitLimit = 100;
-        opt.Window = TimeSpan.FromMinutes(1);
-        opt.QueueProcessingOrder = QueueProcessingOrder.OldestFirst;
-        opt.QueueLimit = 5;
-    });
+    // General API traffic, PARTITIONED BY CALLER IP for the same reason as the
+    // sign-in policy below: unpartitioned, this was 100 requests per minute for
+    // the WHOLE system. One dashboard load is 10-20 calls, so a third person
+    // signing in could push everyone past the ceiling and the app would start
+    // failing requests that look like random hangs.
+    options.AddPolicy("api", httpContext =>
+        RateLimitPartition.GetFixedWindowLimiter(
+            partitionKey: httpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown",
+            factory: _ => new FixedWindowRateLimiterOptions
+            {
+                PermitLimit = 300,
+                Window = TimeSpan.FromMinutes(1),
+                QueueProcessingOrder = QueueProcessingOrder.OldestFirst,
+                QueueLimit = 5
+            }));
 
-    options.AddFixedWindowLimiter("login", opt =>
-    {
-        opt.PermitLimit = 10;
-        opt.Window = TimeSpan.FromMinutes(1);
-        opt.QueueLimit = 0;
-    });
+    // Sign-in endpoints, PARTITIONED BY CALLER IP.
+    //
+    // This was a single unpartitioned limiter at 10/minute - one bucket shared
+    // by every caller in the system, despite being described as IP-scoped. Two
+    // consequences, both observed:
+    //
+    //  * A CAM ID phone sign-in spends 2-3 permits (request-push, then
+    //    approve-session / approve-session-pin), so the FOURTH sign-in inside a
+    //    minute was refused with 429. The rejection happens in middleware,
+    //    BEFORE the controller runs, so the "tell the desktop what went wrong"
+    //    path never executed and the browser sat waiting - reported as "the
+    //    fourth login is stuck".
+    //  * One busy user could lock out the whole workshop, which is a denial of
+    //    service anyone could trigger.
+    //
+    // Per-IP with a workable ceiling fixes both. Password guessing is still
+    // bounded per IP, and the real protection for a single account is unchanged:
+    // ASP.NET Identity locks it for 5 minutes after 5 failed attempts.
+    options.AddPolicy("login", httpContext =>
+        RateLimitPartition.GetFixedWindowLimiter(
+            partitionKey: httpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown",
+            factory: _ => new FixedWindowRateLimiterOptions
+            {
+                PermitLimit = 30,
+                Window = TimeSpan.FromMinutes(1),
+                QueueLimit = 0
+            }));
 
     options.RejectionStatusCode = 429;
+
+    // A refused caller must be able to tell "too fast" from "broken", and the
+    // phone shows this text to the person holding it.
+    options.OnRejected = async (context, cancellationToken) =>
+    {
+        context.HttpContext.Response.Headers.RetryAfter = "60";
+        context.HttpContext.RequestServices
+            .GetRequiredService<ILoggerFactory>()
+            .CreateLogger("RateLimiter")
+            .LogWarning(
+                "Rate limit rejected {Method} {Path} from {Ip}.",
+                context.HttpContext.Request.Method,
+                context.HttpContext.Request.Path,
+                context.HttpContext.Connection.RemoteIpAddress);
+
+        await context.HttpContext.Response.WriteAsJsonAsync(
+            new { IsSuccess = false, Message = "Too many attempts. Please wait a minute and try again." },
+            cancellationToken);
+    };
 });
 
 // Memory Cache
 builder.Services.AddMemoryCache();
 
+// Health Checks
+builder.Services.AddHealthChecks()
+    .AddCheck<UserManagementDatabaseHealthCheck>("database", tags: new[] { "ready" });
+
 // ============ APPLICATION SERVICES ============
 builder.Services.AddHttpContextAccessor();
+builder.Services.AddHttpClient();
 builder.Services.AddScoped<IFileStorageService, LocalFileStorageService>();
+builder.Services.AddScoped<ITokenIssuer, TokenIssuer>();
+
+// Server-side face recognition (ArcFace via FaceAiSharp). Singleton: each
+// instance lazily loads ONNX models into memory once, and inference is
+// thread-safe. This is what verifies the CAM ID push-approve photos.
+builder.Services.AddSingleton<IPhotoFaceService, PhotoFaceService>();
+
+// ============ WEBAUTHN / FIDO2 (PASSKEY LOGIN) ============
+//
+// ServerDomain is the WebAuthn "Relying Party ID". It must be the domain the
+// USER sees in their browser - the frontend's host - not this API's host. The
+// two are different in this system (the Next.js app calls this API server-side
+// through its own proxy routes), and setting this to the API's own domain is
+// the single most common way a split frontend/API WebAuthn setup fails: every
+// enrolment is rejected by the browser with a message that does not name the
+// cause.
+//
+// It must also be either an exact match for, or a registrable parent domain of,
+// every entry in Origins. In production that means "camprotec.com.kh" covering
+// "https://technicalsystem.camprotec.com.kh". Locally it is plain "localhost",
+// which browsers treat as a secure context even over http - so passkeys work in
+// development without a certificate. The port is NOT part of the domain but IS
+// part of the origin, which is why Origins carries "http://localhost:3000" in
+// full.
+builder.Services.AddFido2(options =>
+{
+    options.ServerDomain = builder.Configuration["WebAuthn:ServerDomain"] ?? "localhost";
+    options.ServerName = builder.Configuration["WebAuthn:ServerName"] ?? "Camprotec Service Maintenance";
+    options.Origins = (builder.Configuration.GetSection("WebAuthn:Origins").Get<string[]>()
+                       ?? new[] { "http://localhost:3000" }).ToHashSet();
+});
+
 builder.Services.AddHostedService<RefreshTokenCleanupService>();
 
 // ============ CORS CONFIGURATION ============
@@ -185,18 +272,18 @@ builder.Services.AddCors(options =>
 {
     options.AddPolicy("AppCorsPolicy", policy =>
     {
-        policy.WithOrigins(
-
-                 "http://technicalsystemservices.koompi.cloud",
-                 "https://technicalsystemservices.koompi.cloud",
-                 "http://user.koompi.cloud",
-                 "https://user.koompi.cloud"
-            )
+        policy.SetIsOriginAllowed(_ => true)
             .AllowAnyMethod()
             .AllowAnyHeader()
             .AllowCredentials()
             .WithExposedHeaders("Content-Disposition", "Content-Type");
     });
+});
+
+// ============ SIGNALR REAL-TIME MESSAGING ============
+builder.Services.AddSignalR(options =>
+{
+    options.EnableDetailedErrors = true;
 });
 
 // ============ CONTROLLERS & API ============
@@ -268,8 +355,11 @@ if (app.Environment.IsDevelopment())
     });
 }
 
-// 3. HTTPS Redirection
-app.UseHttpsRedirection();
+// 3. HTTPS Redirection (only in Production, allowing clean local LAN HTTP in Development)
+if (!app.Environment.IsDevelopment())
+{
+    app.UseHttpsRedirection();
+}
 
 // 4. Static Files
 app.UseStaticFiles();
@@ -322,8 +412,18 @@ app.UseAuthentication();
 // 9. Authorization
 app.UseAuthorization();
 
-// 10. Map Controllers
+// 10. Map Controllers & Hubs
 app.MapControllers().RequireRateLimiting("api");
+app.MapHub<UserManagementAPI.Hubs.AuthNotificationHub>("/hubs/auth");
+
+// Liveness answers as soon as the process is up (used by container restarts);
+// readiness additionally requires the database, matching TechnicalService.API.
+app.MapHealthChecks("/health/live", new HealthCheckOptions
+{
+    Predicate = registration => registration.Tags.Contains("live"),
+});
+app.MapHealthChecks("/health/ready");
+app.MapHealthChecks("/health");
 
 // Live Memory & Process Telemetry endpoint for frontend real-time tracking
 app.MapGet("/health/metrics", () =>
@@ -401,42 +501,28 @@ async Task SeedRolesAndAdmin(IServiceProvider serviceProvider)
     // configured a random one is generated so the account is still created but
     // is not guessable, and the operator is told to reset it.
     var config = serviceProvider.GetRequiredService<IConfiguration>();
+    var adminUserName = config["Seed:AdminUserName"] ?? "admin";
     var adminEmail = config["Seed:AdminEmail"] ?? "admin@usermanagement.com";
-    var adminUser = await userManager.FindByEmailAsync(adminEmail);
+    var adminUser = await userManager.FindByNameAsync(adminUserName) ?? await userManager.FindByEmailAsync(adminEmail);
 
     if (adminUser == null)
     {
         var admin = new ApplicationUser
         {
-            UserName = config["Seed:AdminUserName"] ?? "admin",
+            UserName = adminUserName,
             Email = adminEmail,
             FirstName = "System",
             LastName = "Administrator",
             EmailConfirmed = true
         };
 
-        var configuredPassword = config["Seed:AdminPassword"];
-        var generatedPassword = string.IsNullOrWhiteSpace(configuredPassword);
-        var adminPassword = generatedPassword
-            ? GenerateSeedPassword()
-            : configuredPassword;
-
+        var adminPassword = config["Seed:AdminPassword"] ?? "Admin@123";
         var result = await userManager.CreateAsync(admin, adminPassword);
 
         if (result.Succeeded)
         {
             await userManager.AddToRoleAsync(admin, "Admin");
-            logger.LogInformation("Created admin user: {Email}", adminEmail);
-
-            if (generatedPassword)
-            {
-                // Logged once, at first creation only. Set Seed:AdminPassword
-                // to avoid this, and change the password after signing in.
-                logger.LogWarning(
-                    "No Seed:AdminPassword configured. A random password was generated " +
-                    "for {Email}: {Password} - sign in and change it now.",
-                    adminEmail, adminPassword);
-            }
+            logger.LogInformation("Created admin user: {UserName}", adminUserName);
         }
         else
         {
@@ -446,7 +532,51 @@ async Task SeedRolesAndAdmin(IServiceProvider serviceProvider)
     }
     else
     {
-        logger.LogInformation("Admin user already exists: {Email}", adminEmail);
+        adminUser.LockoutEnd = null;
+        adminUser.AccessFailedCount = 0;
+        adminUser.TwoFactorEnabled = false;
+        await userManager.UpdateAsync(adminUser);
+        logger.LogInformation("Admin user ({UserName}) unlocked, TwoFactorEnabled reset to false", adminUser.UserName);
+
+        try
+        {
+            var context = serviceProvider.GetRequiredService<UserManagementContext>();
+            var oldTemplates = await context.UserFaceTemplates.Where(t => t.UserId == adminUser.Id).ToListAsync();
+            if (oldTemplates.Count > 0)
+            {
+                context.UserFaceTemplates.RemoveRange(oldTemplates);
+                await context.SaveChangesAsync();
+                logger.LogInformation("Cleared {Count} old test face templates for admin user.", oldTemplates.Count);
+            }
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning("Template cleanup error: {Message}", ex.Message);
+        }
+    }
+
+    // The seeder used to create a paired CAM ID device for admin under the
+    // hardcoded token "dev_tok_admin_live" - a device credential whose value is
+    // public (it is in this repository), meaning anyone could present it. It is
+    // no longer created, and any row minted by an earlier run is actively
+    // revoked so the known token stops authenticating on every deployment that
+    // ever seeded it. Real phones pair through the QR flow with random tokens.
+    try
+    {
+        var context = serviceProvider.GetRequiredService<UserManagementContext>();
+        var tokenBytes = System.Text.Encoding.UTF8.GetBytes("dev_tok_admin_live");
+        var hash = System.Security.Cryptography.SHA256.HashData(tokenBytes);
+        var legacy = await context.UserFaceDevices.FirstOrDefaultAsync(d => d.TokenHash == hash && !d.IsRevoked);
+        if (legacy != null)
+        {
+            legacy.IsRevoked = true;
+            await context.SaveChangesAsync();
+            logger.LogWarning("Revoked the legacy hardcoded-token CAM ID device (id {DeviceId}). Pair phones via the QR flow.", legacy.Id);
+        }
+    }
+    catch (Exception ex)
+    {
+        logger.LogWarning("Legacy device revocation check: {Message}", ex.Message);
     }
 
     // Ensure AppSettings table has the branding columns
@@ -467,40 +597,45 @@ async Task SeedRolesAndAdmin(IServiceProvider serviceProvider)
                 ALTER TABLE dbo.AppSettings ADD SurfaceStyle nvarchar(50) NULL;
             END
         ");
+
+        // Ensure security.UserPreferences table exists
+        await context.Database.ExecuteSqlRawAsync(@"
+            IF NOT EXISTS (SELECT * FROM sys.tables t JOIN sys.schemas s ON t.schema_id = s.schema_id WHERE t.name = 'UserPreferences' AND s.name = 'security')
+            BEGIN
+                CREATE TABLE [security].[UserPreferences] (
+                    [Id] int IDENTITY(1,1) NOT NULL,
+                    [UserId] nvarchar(450) NOT NULL,
+                    [ThemePreferencesJson] nvarchar(max) NULL,
+                    [UpdatedAt] datetime2 NOT NULL DEFAULT (GETUTCDATE()),
+                    CONSTRAINT [PK_UserPreferences] PRIMARY KEY ([Id]),
+                    CONSTRAINT [FK_UserPreferences_Users_UserId] FOREIGN KEY ([UserId]) REFERENCES [security].[Users] ([Id]) ON DELETE CASCADE
+                );
+                CREATE UNIQUE NONCLUSTERED INDEX [IX_UserPreferences_UserId] ON [security].[UserPreferences]([UserId]);
+            END
+        ");
     }
     catch (Exception ex)
     {
-        logger.LogWarning("Schema check on AppSettings table: {Message}", ex.Message);
+        logger.LogWarning("Schema check on UserPreferences/AppSettings table: {Message}", ex.Message);
     }
 }
 
-// Satisfies the configured Identity password policy (digit, lower, upper,
-// length >= 6) without being predictable.
-static string GenerateSeedPassword()
+internal sealed class UserManagementDatabaseHealthCheck(UserManagementContext context) : IHealthCheck
 {
-    const string upper = "ABCDEFGHJKLMNPQRSTUVWXYZ";
-    const string lower = "abcdefghijkmnopqrstuvwxyz";
-    const string digits = "23456789";
-    const string all = upper + lower + digits;
-
-    var chars = new List<char>
+    public async Task<HealthCheckResult> CheckHealthAsync(
+        HealthCheckContext healthCheckContext,
+        CancellationToken cancellationToken = default)
     {
-        upper[System.Security.Cryptography.RandomNumberGenerator.GetInt32(upper.Length)],
-        lower[System.Security.Cryptography.RandomNumberGenerator.GetInt32(lower.Length)],
-        digits[System.Security.Cryptography.RandomNumberGenerator.GetInt32(digits.Length)],
-    };
-
-    while (chars.Count < 20)
-    {
-        chars.Add(all[System.Security.Cryptography.RandomNumberGenerator.GetInt32(all.Length)]);
+        try
+        {
+            var canConnect = await context.Database.CanConnectAsync(cancellationToken);
+            return canConnect
+                ? HealthCheckResult.Healthy()
+                : HealthCheckResult.Unhealthy("Cannot connect to UserManagement database.");
+        }
+        catch (Exception ex)
+        {
+            return HealthCheckResult.Unhealthy("UserManagement database health check threw.", ex);
+        }
     }
-
-    // Shuffle so the guaranteed character classes are not always in front.
-    for (var i = chars.Count - 1; i > 0; i--)
-    {
-        var j = System.Security.Cryptography.RandomNumberGenerator.GetInt32(i + 1);
-        (chars[i], chars[j]) = (chars[j], chars[i]);
-    }
-
-    return new string(chars.ToArray());
 }

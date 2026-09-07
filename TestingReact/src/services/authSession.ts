@@ -64,10 +64,18 @@ export const SESSION_CHANGED_EVENT = "auth-session-changed";
 
 /** Subscribes to session changes in this tab and any other. */
 export function subscribeToSession(onChange: () => void): () => void {
-  window.addEventListener("storage", onChange);
+  const onStorage = (e: StorageEvent) => {
+    // Only fire for auth-session keys (token, user info) or full clear (key is null).
+    // Non-session writes (like theme, cache, timers) must not trigger session re-sync.
+    if (e.key === null || e.key === TOKEN_KEY || e.key === USER_KEY) {
+      onChange();
+    }
+  };
+
+  window.addEventListener("storage", onStorage);
   window.addEventListener(SESSION_CHANGED_EVENT, onChange);
   return () => {
-    window.removeEventListener("storage", onChange);
+    window.removeEventListener("storage", onStorage);
     window.removeEventListener(SESSION_CHANGED_EVENT, onChange);
   };
 }
@@ -209,10 +217,28 @@ export function getUserRoles(): string[] {
  */
 export function hasAnyRole(allowed: readonly string[]): boolean {
   const roles = getUserRoles();
-  if (roles.length === 0) return true; // unknown, not "denied" — see above
+  if (roles.length === 0) return false; // Strict security: fail closed, deny unauthorized access
 
   const normalised = new Set(roles.map((r) => r.toLowerCase()));
   return allowed.some((role) => normalised.has(role.toLowerCase()));
+}
+
+/**
+ * In-memory caches that must be emptied along with the session.
+ *
+ * A registry rather than a direct import, for two reasons: `services/api.ts` is
+ * 60 KB and importing it here would drag it into every bundle that only wanted
+ * to read a token, and importing it *from* here would close an import cycle.
+ * Each cache owner registers itself at module load; a module that never loaded
+ * has no cache to clear, so an unregistered clearer is not a missed one.
+ */
+type SessionCacheClearer = () => void;
+const sessionCacheClearers = new Set<SessionCacheClearer>();
+
+/** Registers a cache to be emptied by `clearSession()`. Returns an unsubscribe. */
+export function registerSessionCacheClearer(clear: SessionCacheClearer): () => void {
+  sessionCacheClearers.add(clear);
+  return () => sessionCacheClearers.delete(clear);
 }
 
 /**
@@ -222,12 +248,36 @@ export function hasAnyRole(allowed: readonly string[]): boolean {
  * and holding them across a logout would show one person's ticket queue to
  * whoever logs in next on the same machine — a shared-workstation risk in a
  * service workshop.
+ *
+ * ── The half of that which used to be missing ──────────────────────────────
+ *
+ * Only the `sessionStorage` copy was cleared. `services/api.ts` keeps a SECOND,
+ * in-memory copy in a module-scope `Map`, and `getCached` reads memory FIRST —
+ * so the sweep below never reached the copy that actually answers. Logout ends
+ * in `router.push("/login")`, a client-side navigation that does not reload the
+ * page, so module state survives it intact.
+ *
+ * The result was measurable: signing in as a second user on the same tab served
+ * the FIRST user's ticket queues and dashboard stats out of memory in ~1ms.
+ * That looked like "the second account is faster" and was really one account
+ * reading another's data. Both halves are cleared now.
  */
 export function clearSession(): void {
   if (typeof window === "undefined") return;
   try {
     localStorage.removeItem(TOKEN_KEY);
     localStorage.removeItem(USER_KEY);
+    localStorage.removeItem("last_workspace_sync_time");
+    sessionStorage.removeItem("workspace_pipeline_synced");
+    sessionStorage.removeItem("robot_greeted");
+
+    for (const clear of sessionCacheClearers) {
+      try {
+        clear();
+      } catch {
+        // One cache failing to clear must not leave the rest populated.
+      }
+    }
 
     // Terminate and delete mobile companion scanner session
     const scannerSessionId = localStorage.getItem("companion_scanner_session_id");
@@ -244,8 +294,13 @@ export function clearSession(): void {
     }
 
     for (const key of Object.keys(sessionStorage)) {
-      if (key.startsWith("cache:")) sessionStorage.removeItem(key);
+      if (key.startsWith("cache:") || key.startsWith("inf_list_")) {
+        sessionStorage.removeItem(key);
+      }
     }
+
+    // Notify all tab stores and subscribers immediately (Frame 0)
+    window.dispatchEvent(new Event(SESSION_CHANGED_EVENT));
   } catch {
     /* storage unavailable — nothing to clear */
   }

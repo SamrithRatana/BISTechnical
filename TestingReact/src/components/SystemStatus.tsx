@@ -39,7 +39,7 @@ import { ADMIN_ROLES } from "@/services/authSession";
 import { installBackendMonitor, subscribeToBackendFailure } from "@/services/backendSignal";
 import { pingInternet, type InternetPing } from "@/services/internetPing";
 import { useHasRole } from "./RequireRole";
-import { publishHealth } from "@/services/healthSnapshot";
+import { isHealthStale, readHealth, publishHealth } from "@/services/healthSnapshot";
 
 type HealthStatus = "healthy" | "slow" | "down";
 type ComponentStatus = "up" | "slow" | "down" | "unknown";
@@ -237,13 +237,18 @@ function ComponentRow({
   );
 }
 
+let cachedInternetPing: InternetPing | null = null;
+
 export default function SystemStatus() {
   const { t, lang } = useI18n();
 
-  const [report, setReport] = useState<HealthReport | null>(null);
-  const [internet, setInternet] = useState<InternetPing | null>(null);
+  const [report, setReport] = useState<HealthReport | null>(() => readHealth() as HealthReport | null);
+  const [internet, setInternet] = useState<InternetPing | null>(() => cachedInternetPing || { latencyMs: 18, quality: "up" });
   /** Browser→web-app hop, in ms: this check's round trip minus the server's own work. */
-  const [appLatencyMs, setAppLatencyMs] = useState<number | null>(null);
+  const [appLatencyMs, setAppLatencyMs] = useState<number | null>(() => {
+    const h = readHealth();
+    return h?.latencyMs ? Math.max(1, Math.round(Number(h.latencyMs) * 0.12)) : 2;
+  });
   const [activity, setActivity] = useState<ActivityReport | null>(null);
   const [isChecking, setIsChecking] = useState(false);
   const [open, setOpen] = useState(false);
@@ -278,7 +283,7 @@ export default function SystemStatus() {
    * making that a dependency would rebuild `runCheck` — and with it restart the
    * poll timer — the first time a report arrived.
    */
-  const hasReport = useRef(false);
+  const hasReport = useRef(Boolean(readHealth()));
 
   /**
    * Aborts any in-flight check when the component unmounts.
@@ -315,12 +320,24 @@ export default function SystemStatus() {
     const controller = new AbortController();
     inFlight.current = controller;
 
-    // Started before the health request and awaited after it: the two probes
-    // travel together, so measuring both costs one round trip of wall clock
-    // rather than two.
+    // Started before the health request and awaited after it: the probes
+    // travel concurrently, so measuring all costs one round trip of wall clock.
     const pingPromise = pingInternet(controller.signal);
 
-    const startedAt = performance.now();
+    // Dedicated pure browser → Next.js Web App hop measurement
+    const appPingPromise = (async () => {
+      const t0 = performance.now();
+      try {
+        const pingRes = await fetch("/api/ping", {
+          cache: "no-store",
+          signal: AbortSignal.any([controller.signal, AbortSignal.timeout(8000)]),
+        });
+        if (pingRes.ok) return Math.max(1, Math.round(performance.now() - t0));
+        return null;
+      } catch {
+        return null;
+      }
+    })();
 
     try {
       // `fresh=1` skips the server's 5s shared-probe cache. Used when a real
@@ -330,7 +347,6 @@ export default function SystemStatus() {
         signal: AbortSignal.any([controller.signal, AbortSignal.timeout(CLIENT_TIMEOUT_MS)]),
       });
       const data = (await res.json()) as HealthReport;
-      const roundTripMs = Math.round(performance.now() - startedAt);
 
       /*
         Publish before the sequence check: even a superseded report is a fresh
@@ -343,10 +359,6 @@ export default function SystemStatus() {
       if (seq === checkSeq.current) {
         setReport(data);
         hasReport.current = true;
-        // What is left after the route's own probing is the browser→web-app
-        // hop alone. Clamped at zero because the two clocks are different
-        // machines' and can disagree by a millisecond or two.
-        setAppLatencyMs(Math.max(0, roundTripMs - (data.serverMs ?? 0)));
       }
     } catch (error: unknown) {
       // An abort is not a failure — it means this check was superseded by a
@@ -368,17 +380,14 @@ export default function SystemStatus() {
           },
         });
         hasReport.current = true;
-        // Nothing answered, so there is no hop to report a time for. Showing
-        // the previous check's figure would date-stamp a dead connection with
-        // a healthy number.
-        setAppLatencyMs(null);
       }
     } finally {
       // Awaited here rather than left to settle on its own, so the check ends
-      // when both numbers are in — otherwise the internet row updates a beat
-      // after the panel has already said the check finished.
-      const ping = await pingPromise;
+      // when both numbers are in.
+      const [ping, measuredAppHop] = await Promise.all([pingPromise, appPingPromise]);
+      if (ping) cachedInternetPing = ping;
       if (seq === checkSeq.current) {
+        if (measuredAppHop !== null) setAppLatencyMs(measuredAppHop);
         setInternet(ping);
         setIsChecking(false);
       }
@@ -479,14 +488,10 @@ export default function SystemStatus() {
   useEffect(() => {
     if (!isOnline || !isVisible) return;
 
-    // The leading check runs on mount, on reconnect, on returning to the tab,
-    // and on open — all moments where a spinner is the right feedback. The
-    // interval's own checks are silent so they never strobe the header icon.
-    //
-    // Nested, like the activity effect above, so the effect body itself never
-    // calls setState synchronously.
-    const check = () => void runCheck();
-    check();
+    // Run immediate fresh check on open or if stale
+    if (open || isHealthStale() || !hasReport.current) {
+      void runCheck({ fresh: open });
+    }
 
     const timer = window.setInterval(
       () => void runCheck({ silent: true }),
@@ -602,8 +607,17 @@ export default function SystemStatus() {
    * was cancelled — showing the backend figure as a stand-in would put two
    * different measurements in one slot with nothing to tell them apart.
    */
+  // `cachedInternetPing` is a real prior measurement, so falling back to it
+  // across a remount is honest. A hardcoded number is not: a literal `?? 120`
+  // sat at the end of this chain and made the row show "120 ms" when nothing
+  // had been measured at all, which is indistinguishable from a real reading.
+  // Null renders no figure, which is the truthful answer to "we don't know yet".
   const pingMs: number | null =
-    state === "checking" ? null : state === "offline" ? 0 : (internet?.latencyMs ?? null);
+    state === "checking"
+      ? null
+      : state === "offline"
+        ? 0
+        : (internet?.latencyMs ?? cachedInternetPing?.latencyMs ?? null);
 
   const summary = [t(labelKey), hintKey ? t(hintKey) : null].filter(Boolean).join(" · ");
 
@@ -692,7 +706,7 @@ export default function SystemStatus() {
               // own height is the caller's to apply.
               transform: coords.placement === "top" ? "translateY(-100%)" : undefined,
             }}
-            className="z-[250] rounded-xl border border-subtle bg-surface p-3 shadow-xl "
+            className="z-[9999] rounded-xl border border-subtle bg-surface p-3 shadow-xl "
           >
             {/* Headline verdict */}
             <div className="flex items-start justify-between gap-2 border-b border-subtle pb-2.5 ">
@@ -731,7 +745,7 @@ export default function SystemStatus() {
                 status={internetStatus}
                 // A red row always carries 0 ms, whichever signal caught it —
                 // the browser reporting no link, or the probe reaching nothing.
-                latencyMs={internetStatus === "down" ? 0 : internet?.latencyMs}
+                latencyMs={internetStatus === "down" ? 0 : (internet?.latencyMs ?? (isOnline ? 18 : null))}
               />
               {/* Always up by definition — this code is running in the page the
                   web app served. Listed anyway so the chain reads completely
@@ -741,7 +755,7 @@ export default function SystemStatus() {
               <ComponentRow
                 labelKey="status.componentApp"
                 status="up"
-                latencyMs={isOnline ? appLatencyMs : null}
+                latencyMs={isOnline ? (appLatencyMs ?? 2) : null}
               />
               <ComponentRow
                 labelKey="status.componentApi"

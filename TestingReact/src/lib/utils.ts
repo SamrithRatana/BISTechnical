@@ -14,3 +14,13 @@ import { twMerge } from "tailwind-merge";
 export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
 }
+
+/**
+ * Resolves a picture URL (relative database path or remote absolute URL) into a valid browser image source URL.
+ */
+export function getImageUrl(url?: string): string {
+  if (!url) return "";
+  if (url.startsWith("http://") || url.startsWith("https://")) return url;
+  if (url.startsWith("/")) return url;
+  return `/${url}`;
+}

@@ -14,7 +14,7 @@
  * page filters use "Received", and older tickets carry "Item Received".
  */
 
-import type { TranslationKey } from "./translations";
+import type { TranslationKey } from "./en";
 
 const STATUS_KEYS: Record<string, TranslationKey> = {
   // Received — three spellings in circulation, one label.
@@ -100,12 +100,15 @@ export function translateServiceType(
   return key ? t(key) : serviceType;
 }
 
-/** Translate a service location, falling back to the raw string. */
+/** Translate a service location, falling back to the raw string (always CompanyService or OnSite). */
 export function translateServiceLocation(
   location: string | null | undefined,
-  t: (key: TranslationKey) => string
+  t?: (key: TranslationKey) => string
 ): string {
   if (!location) return "";
-  const key = SERVICE_LOCATION_KEYS[location.trim().toLowerCase()];
-  return key ? t(key) : location;
+  const norm = location.trim().toLowerCase();
+  if (norm.includes("onsite") || norm.includes("on-site") || norm.includes("on site") || norm.includes("ក្រៅ") || norm.includes("កន្លែង")) {
+    return "OnSite";
+  }
+  return "CompanyService";
 }

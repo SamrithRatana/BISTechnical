@@ -2,9 +2,10 @@
 
 import React, { useCallback, useMemo, useRef, useState } from "react";
 import dynamic from "next/dynamic";
-import { Activity, CheckCircle2, Clock, Wrench } from "lucide-react";
+import { Activity, CheckCircle2, Clock, Wrench, Lock } from "lucide-react";
 import type { RepairServiceItem } from "@/services/types";
 import { useI18n } from "@/i18n/LanguageProvider";
+import { useDashboard } from "@/components/dashboard/useDashboardStore";
 import { useRealtimeTickets } from "@/hooks/useRealtimeTickets";
 import { useTicketSeries } from "@/hooks/useTicketSeries";
 import { ChartPanel, ToggleGroup, Badge } from "@/components/av";
@@ -35,8 +36,14 @@ const AreaChart = dynamic(
   {
     ssr: false,
     loading: () => (
-      <div className="h-[190px] lg:h-[200px] xl:h-[250px] grid place-items-center text-sm text-ink-muted">
-        Loading chart…
+      <div className="h-[210px] w-full flex items-end justify-between gap-2 px-4 pb-4 animate-pulse opacity-40">
+        <div className="w-full h-1/3 bg-subtle rounded-sm" />
+        <div className="w-full h-1/2 bg-subtle rounded-sm" />
+        <div className="w-full h-2/3 bg-subtle rounded-sm" />
+        <div className="w-full h-1/2 bg-subtle rounded-sm" />
+        <div className="w-full h-3/4 bg-subtle rounded-sm" />
+        <div className="w-full h-full bg-subtle rounded-sm" />
+        <div className="w-full h-4/5 bg-subtle rounded-sm" />
       </div>
     ),
   }
@@ -92,6 +99,7 @@ function toSeries(items: RepairServiceItem[], range: Range): AreaChartPoint[] {
 
 export default function DashboardChart() {
   const { t } = useI18n();
+  const { isPrivacyMode } = useDashboard();
   const [range, setRange] = useState<Range>("7D");
   const [streaming, setStreaming] = useState(true);
 
@@ -123,17 +131,32 @@ export default function DashboardChart() {
   // Mini-stats are derived from the same fetched rows, so they can never
   // disagree with the curve above them.
   const stats = useMemo(() => {
+    if (loading) {
+      return [
+        { label: t("dash.todayReport"), value: "...", icon: <Activity className="w-4 h-4 animate-pulse" /> },
+        { label: t("status.inspecting"), value: "...", icon: <Wrench className="w-4 h-4 animate-pulse" /> },
+        { label: t("status.awaitingSparepart"), value: "...", icon: <Clock className="w-4 h-4 animate-pulse" /> },
+        { label: t("status.finished"), value: "...", icon: <CheckCircle2 className="w-4 h-4 animate-pulse" /> },
+      ];
+    }
     const inRange = series.reduce((sum, p) => sum + p.value, 0);
     const byStatus = (needle: string) =>
       items.filter((i) => (i.status ?? "").toLowerCase().includes(needle)).length;
 
+    const renderVal = (v: number) =>
+      isPrivacyMode ? (
+        <div className="w-6 h-4 my-0.5 bg-zinc-200 dark:bg-zinc-700/80 rounded animate-pulse" />
+      ) : (
+        v
+      );
+
     return [
-      { label: t("dash.todayReport"), value: inRange, icon: <Activity className="w-4 h-4" /> },
-      { label: t("status.inspecting"), value: byStatus("inspect"), icon: <Wrench className="w-4 h-4" /> },
-      { label: t("status.awaitingSparepart"), value: byStatus("awaiting"), icon: <Clock className="w-4 h-4" /> },
-      { label: t("status.finished"), value: byStatus("finish"), icon: <CheckCircle2 className="w-4 h-4" /> },
+      { label: t("dash.todayReport"), value: renderVal(inRange), icon: <Activity className="w-4 h-4" /> },
+      { label: t("status.inspecting"), value: renderVal(byStatus("inspect")), icon: <Wrench className="w-4 h-4" /> },
+      { label: t("status.awaitingSparepart"), value: renderVal(byStatus("awaiting")), icon: <Clock className="w-4 h-4" /> },
+      { label: t("status.finished"), value: renderVal(byStatus("finish")), icon: <CheckCircle2 className="w-4 h-4" /> },
     ];
-  }, [items, series, t]);
+  }, [items, series, loading, t, isPrivacyMode]);
 
   return (
     <ChartPanel
@@ -163,13 +186,19 @@ export default function DashboardChart() {
         </div>
       }
     >
-      {loading ? (
-        <div className="h-[190px] lg:h-[200px] xl:h-[250px] grid place-items-center text-sm text-ink-muted">
-          {t("common.loading")}
+      <div className="relative">
+        <div className={isPrivacyMode ? "blur-md pointer-events-none select-none opacity-40 transition-all" : "transition-all"}>
+          <AreaChart data={series} height={210} />
         </div>
-      ) : (
-        <AreaChart data={series} height={210} />
-      )}
+        {isPrivacyMode && (
+          <div className="absolute inset-0 flex items-center justify-center bg-white/40 dark:bg-zinc-950/40 backdrop-blur-2xs rounded-xl">
+            <div className="inline-flex items-center gap-2 px-4 py-2 bg-white/95 dark:bg-zinc-850/95 border border-zinc-200 dark:border-zinc-700 rounded-xl shadow-xs text-xs font-semibold text-zinc-700 dark:text-zinc-200">
+              <Lock className="w-3.5 h-3.5 text-zinc-500" />
+              <span>Privacy Active • Chart Obscured</span>
+            </div>
+          </div>
+        )}
+      </div>
     </ChartPanel>
   );
 }

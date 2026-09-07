@@ -1,3 +1,19 @@
+import {
+  sendTelegramNotification,
+  sendTelegramPhotoNotification,
+  editTelegramNotification,
+  deleteTelegramNotification,
+  getLiveTelegramMessages,
+  saveServiceTelegramMessage,
+  markTelegramMessageDeleted,
+  cleanupOldTopicTelegramMessages,
+  cleanupAllTelegramMessagesForService
+} from "./telegramService";
+import { buildTelegramMessage, type TicketNotificationData } from "./telegramMessageBuilder";
+import { generateReportImageBlob } from "./reportImageGenerator";
+import { clearListCache } from "@/hooks/useInfiniteList";
+import { notifyLocalRealtime } from "@/hooks/useRealtimeTickets";
+import { getCurrentUserFullName, resolveUserNameSync } from "./userService";
 /**
  * @file api.ts
  * @description Central API client for the Service Maintenance application.
@@ -14,10 +30,13 @@
 export type {
   SparePartItemDetail,
   SparePartItem,
+  SparePartClassification,
+  ApiWriteResult,
   RepairServiceItem,
   ServiceStatusDbItem,
   PaginatedResult,
   CustomerItem,
+  CustomerTypeItem,
   ItemModel,
   DashboardStats,
   LoginResponse
@@ -26,9 +45,12 @@ export type {
 export { SERVICE_STATUSES_DB, SERVICE_LOCATIONS } from "./types";
 
 import type {
+  ApiWriteResult,
   RepairServiceItem,
+  SparePartClassification,
   SparePartItem,
   CustomerItem,
+  CustomerTypeItem,
   ItemModel,
   PaginatedResult,
   DashboardStats,
@@ -36,6 +58,7 @@ import type {
 } from "./types";
 
 import { SERVICE_STATUSES_DB } from "./types";
+import { networkFailure, readWriteResult } from "./apiWriteResult";
 
 import {
   MOCK_SERVICE_TICKETS,
@@ -45,7 +68,18 @@ import {
 } from "./mockData";
 
 import { fetchUserMap, enrichTicketUsers } from "./userService";
+import { registerSessionCacheClearer } from "./authSession";
 import { timeoutAfter, fetchWithRetry } from "@/lib/withTimeout";
+import {
+  checkStockShortages,
+  isStockDeductingStatus,
+  shortageErrorMessage,
+  type SparePartLineLike,
+  // Deep-imported, not through the `@/validation` barrel: this module is on
+  // every route's critical path and the barrel also re-exports the form rules
+  // and their message strings, which nothing here uses.
+} from "@/validation/stockPreflight";
+import type { ShortageItem } from "@/validation/stockShortage";
 
 // ---------------------------------------------------------------------------
 // Auth helpers
@@ -55,7 +89,7 @@ import { timeoutAfter, fetchWithRetry } from "@/lib/withTimeout";
  * Returns HTTP headers including an Authorization Bearer token when one exists
  * in localStorage. Safe to call in SSR (returns base headers only on server).
  */
-function getAuthHeaders(): Record<string, string> {
+export function getAuthHeaders(): Record<string, string> {
   const headers: Record<string, string> = { "Content-Type": "application/json" };
   if (typeof window !== "undefined") {
     const token = localStorage.getItem("jwt_token");
@@ -63,6 +97,22 @@ function getAuthHeaders(): Record<string, string> {
   }
   return headers;
 }
+
+/**
+ * Safely parses a Response body as JSON. If the response is not valid JSON
+ * (e.g. plain text "Offline", HTML error page, or empty body), returns fallback
+ * instead of throwing a SyntaxError that breaks UI overlays.
+ */
+export async function safeJsonParse<T>(res: Response, fallback: T): Promise<T> {
+  try {
+    const text = await res.text();
+    if (!text || !text.trim() || text.trim() === "Offline") return fallback;
+    return JSON.parse(text) as T;
+  } catch {
+    return fallback;
+  }
+}
+
 
 // ---------------------------------------------------------------------------
 // ---------------------------------------------------------------------------
@@ -95,9 +145,9 @@ const DEFAULT_TTL_MS = 3 * 60 * 1_000; // 3 minutes TTL
 const READ_TIMEOUT_MS = 30_000;
 
 /** Maximum number of entries before LRU eviction kicks in */
-const MAX_CACHE_ENTRIES = 200;
+const MAX_CACHE_ENTRIES = 80;
 /** Number of oldest entries to evict when the limit is hit */
-const EVICT_COUNT = 50;
+const EVICT_COUNT = 25;
 
 interface CacheEntry<T> {
   data: T;
@@ -109,11 +159,53 @@ const cacheStore = new Map<string, CacheEntry<unknown>>();
 const inflightRequests = new Map<string, Promise<unknown>>();
 
 /**
+ * Empty both on sign-out.
+ *
+ * `cacheStore` is read BEFORE sessionStorage, so clearing only the persisted
+ * copy left the one that actually answers untouched — and logout is a
+ * client-side navigation, so this module is never re-evaluated. The next user
+ * on the same tab was being served the previous user's rows out of this Map.
+ *
+ * `inflightRequests` goes too: a request started under the old token must not
+ * be adopted by the new session as though it were its own.
+ */
+registerSessionCacheClearer(() => {
+  cacheStore.clear();
+  inflightRequests.clear();
+});
+
+/**
+ * Periodic cache sweeper: purges all expired entries to actively reclaim memory
+ * without waiting for MAX_CACHE_ENTRIES limit.
+ */
+function sweepExpiredCache(): void {
+  const now = Date.now();
+  for (const [key, entry] of Array.from(cacheStore.entries())) {
+    if (now > entry.expiry) {
+      cacheStore.delete(key);
+      if (typeof window !== "undefined") {
+        try { sessionStorage.removeItem(`cache:${key}`); } catch {}
+      }
+    }
+  }
+}
+
+if (typeof window !== "undefined") {
+  // Sweep memory every 60 seconds
+  setInterval(sweepExpiredCache, 60_000);
+  // Also sweep immediately whenever the tab is backgrounded
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "hidden") sweepExpiredCache();
+  });
+}
+
+/**
  * LRU eviction: removes the oldest EVICT_COUNT entries when the cache
  * exceeds MAX_CACHE_ENTRIES. Prevents unbounded memory growth in long
  * browser sessions.
  */
 function evictIfOverLimit(): void {
+  sweepExpiredCache();
   if (cacheStore.size <= MAX_CACHE_ENTRIES) return;
   // Sort by timestamp ascending (oldest first)
   const sorted = Array.from(cacheStore.entries()).sort(
@@ -193,6 +285,17 @@ export function invalidateCachePrefix(prefix: string): void {
   for (const key of Array.from(cacheStore.keys())) {
     if (!prefix || key.startsWith(prefix)) invalidateCache(key);
   }
+  if (typeof window !== "undefined") {
+    try {
+      const p = prefix ? `cache:${prefix}` : "cache:";
+      for (let i = sessionStorage.length - 1; i >= 0; i--) {
+        const k = sessionStorage.key(i);
+        if (k && k.startsWith(p)) {
+          sessionStorage.removeItem(k);
+        }
+      }
+    } catch { /* ignore */ }
+  }
 }
 
 
@@ -200,7 +303,7 @@ export function invalidateCachePrefix(prefix: string): void {
  * Fetches data with SWR (Stale-While-Revalidate) & inflight deduplication.
  * Returns cached data immediately if available, while revalidating in background.
  */
-async function cachedFetch<T>(
+export async function cachedFetch<T>(
   key: string,
   fetcher: () => Promise<T>,
   ttlMs = DEFAULT_TTL_MS
@@ -312,7 +415,10 @@ export async function loginUser(userName: string, password: string): Promise<Log
       body: JSON.stringify({ userName, password })
     });
 
-    const data = (await res.json()) as LoginResponse;
+    const data = await safeJsonParse<LoginResponse>(res, {
+      isSuccess: false,
+      message: "Unexpected response format from server"
+    });
     if (!res.ok || !data.isSuccess) {
       return { isSuccess: false, message: data.message ?? "Invalid username or password" };
     }
@@ -385,12 +491,324 @@ function buildStatusRequest(
  * Matches how Blazor's BIS services work — each status has its own POST endpoint
  * with a small targeted payload (id + performedBy guid).
  */
+
+/**
+ * Dispatches authentic Telegram notification safely in the background
+ */
+export async function dispatchTelegramNotificationSafe(
+  item: RepairServiceItem,
+  newStatus?: string,
+  performedByName?: string,
+  forceEdit = false
+): Promise<void> {
+  try {
+    const rawStatus = (newStatus || item.status || "").trim().toLowerCase();
+    const statusId = item.statusId;
+
+    // 🚫 For Status Repairing, do NOT alert new message to Telegram (no Topic exists for Repairing).
+    // 🧹 But DO delete / retract any existing messages from previous topics (e.g. Sent Spareparts, Inspection, etc.)!
+    if (
+      rawStatus.includes("repairing") ||
+      rawStatus.includes("កំពុងជួសជុល") ||
+      rawStatus === "5" ||
+      statusId === 5
+    ) {
+      if (item.id) {
+        await cleanupOldTopicTelegramMessages(item.id);
+      }
+      return;
+    }
+
+    let topicKey = "";
+
+    if (
+      rawStatus.includes("receive") ||
+      rawStatus.includes("recieved") ||
+      rawStatus.includes("ទទួល") ||
+      rawStatus === "1" ||
+      statusId === 1
+    ) {
+      topicKey = "ItemReceived";
+    } else if (
+      rawStatus.includes("inspecting") ||
+      rawStatus.includes("កំពុងវិនិច្ឆ័យ") ||
+      rawStatus === "10" ||
+      statusId === 10
+    ) {
+      topicKey = "Inspecting";
+    } else if (
+      rawStatus.includes("inspection") ||
+      rawStatus.includes("វិនិច្ឆ័យរួចរាល់") ||
+      rawStatus === "2" ||
+      statusId === 2
+    ) {
+      topicKey = "Inspection";
+    } else if (
+      rawStatus.includes("awaiting customer") ||
+      rawStatus.includes("confirm ពីភ្ញៀវ") ||
+      rawStatus === "3" ||
+      statusId === 3
+    ) {
+      topicKey = "AwaitingCustomerConfirm";
+    } else if (
+      rawStatus.includes("awaiting spare") ||
+      rawStatus.includes("ស្នើរគ្រឿងបន្លាស់") ||
+      rawStatus.includes("រង់ចាំគ្រឿងបន្លាស់") ||
+      rawStatus === "4" ||
+      statusId === 4
+    ) {
+      topicKey = "AwaitingSparepart";
+    } else if (
+      rawStatus.includes("sale confirm") ||
+      rawStatus.includes("ទីផ្សារ confirmed") ||
+      rawStatus === "11" ||
+      statusId === 11
+    ) {
+      topicKey = "SaleConfirmed";
+    } else if (
+      rawStatus.includes("sent spare") ||
+      rawStatus.includes("បញ្ជូនគ្រឿងបន្លាស់") ||
+      rawStatus === "12" ||
+      statusId === 12
+    ) {
+      topicKey = "SentSpareparts";
+    } else if (
+      rawStatus.includes("finish") ||
+      rawStatus.includes("ជួសជុលរួចរាល់") ||
+      rawStatus.includes("រួចរាល់") ||
+      rawStatus === "6" ||
+      statusId === 6
+    ) {
+      topicKey = "Finished";
+    } else if (
+      rawStatus.includes("customer reject") ||
+      rawStatus.includes("reject") ||
+      rawStatus.includes("មិនជួសជុល") ||
+      rawStatus === "7" ||
+      statusId === 7
+    ) {
+      topicKey = "CustomerRejected";
+    } else if (
+      rawStatus.includes("unrepairable") ||
+      rawStatus.includes("ជួសជុលមិនបាន") ||
+      rawStatus === "8" ||
+      statusId === 8
+    ) {
+      topicKey = "Unrepairable";
+    }
+
+    if (!topicKey) {
+      console.warn("Could not determine topicKey for status:", { rawStatus, statusId });
+      return;
+    }
+
+    // Fetch full item details to ensure all fields/spareparts are present
+    let fullItem = { ...item };
+    try {
+      if (item.id && !item.id.startsWith("new-")) {
+        const fetched = await fetchServiceById(item.id);
+        if (fetched) {
+          fullItem = {
+            ...fetched,
+            ...item,
+            reportNo: item.reportNo || fetched.reportNo || "",
+            sparePartItems: item.sparePartItems ?? fetched.sparePartItems ?? fetched.sparepartItems,
+            sparepartItems: item.sparepartItems ?? fetched.sparepartItems ?? fetched.sparePartItems,
+          };
+        }
+      }
+    } catch {}
+
+    const rawParts = (
+      (item.sparePartItems && (item.sparePartItems as any[]).length > 0 ? item.sparePartItems : null) ??
+      (item.sparepartItems && (item.sparepartItems as any[]).length > 0 ? item.sparepartItems : null) ??
+      fullItem.sparePartItems ??
+      fullItem.sparepartItems ??
+      []
+    ) as unknown as Array<Record<string, unknown>>;
+    const parts = await Promise.all(
+      rawParts.map(async (sp) => {
+        let resolvedName = (sp.itemName || sp.description) as string | undefined;
+        const sparePartId = (sp.sparePartId || sp.SparepartId || sp.sparepartId) as string | undefined;
+        if ((!resolvedName || resolvedName === "Unknown Sparepart" || resolvedName === "Unknown Item") && sparePartId) {
+          try {
+            const catalog = await fetchSparePartById(String(sparePartId));
+            if (catalog?.itemName) {
+              resolvedName = catalog.itemName;
+            }
+          } catch {}
+        }
+        return {
+          itemName: resolvedName || "Spare Part",
+          quantity: ((sp.quantity ?? sp.Quantity ?? 1) as number),
+          condition: ((sp.condition ?? sp.Condition ?? "Replace") as string),
+          remarks: ((sp.remarks ?? sp.Remarks ?? "-") as string)
+        };
+      })
+    );
+
+    const resolvedServiceType = fullItem.serviceTypeId === 1
+      ? "Free"
+      : fullItem.serviceTypeId === 2
+      ? "Charge"
+      : (fullItem.serviceType || "Free");
+
+    const notifData: TicketNotificationData = {
+      reportNo: fullItem.reportNo || "N/A",
+      companyName: fullItem.companyName || "N/A",
+      address: fullItem.address,
+      contactPerson: fullItem.contactName,
+      phoneNumber: fullItem.phoneNumber,
+      serviceDate: fullItem.serviceDate ? new Date(fullItem.serviceDate).toLocaleDateString("en-GB") : undefined,
+      serviceLocation: fullItem.serviceLocation || "CompanyService",
+      itemName: fullItem.itemName || "N/A",
+      serialNumber: fullItem.serialNumber || "N/A",
+      hasContract: Boolean(fullItem.hasContract),
+      serviceType: resolvedServiceType,
+      customerRequest: fullItem.customerRequest,
+      inspection: fullItem.inspection,
+      solution: fullItem.solution,
+      inspectByName: (fullItem.inspectBy ? resolveUserNameSync(fullItem.inspectBy) : "") || fullItem.inspectByName || (fullItem.inspectingBy ? resolveUserNameSync(fullItem.inspectingBy) : "") || getCurrentUserFullName(),
+      approvedByName: (fullItem.setSaleConfirmedBy ? resolveUserNameSync(fullItem.setSaleConfirmedBy) : "") || fullItem.setSaleConfirmedByName || (fullItem.repairBy ? resolveUserNameSync(fullItem.repairBy) : "") || fullItem.repairByName || (fullItem.verifiedBy ? resolveUserNameSync(fullItem.verifiedBy) : "") || fullItem.verifiedByName || getCurrentUserFullName(),
+      performedByName: performedByName || (fullItem.setSentSparepartsBy ? resolveUserNameSync(fullItem.setSentSparepartsBy) : "") || (fullItem.setAwaitingSparepartBy ? resolveUserNameSync(fullItem.setAwaitingSparepartBy) : "") || (fullItem.setAwaitingCustomerConfirmBy ? resolveUserNameSync(fullItem.setAwaitingCustomerConfirmBy) : "") || (fullItem.createBy ? resolveUserNameSync(fullItem.createBy) : "") || getCurrentUserFullName(),
+      receivedByName: (fullItem.createBy ? resolveUserNameSync(fullItem.createBy) : "") || fullItem.createdByName || getCurrentUserFullName(),
+      spareParts: parts
+    };
+
+    // 1. Check if an active message already exists for this exact topic (e.g. edit in place)
+    let liveMessages: Array<{ topicKey: string; messageId: number }> = [];
+    if (fullItem.id) {
+      liveMessages = await getLiveTelegramMessages(fullItem.id);
+    }
+    const matchingInTopic = liveMessages.filter(
+      (m) => m.topicKey.trim().toLowerCase() === topicKey.trim().toLowerCase()
+    );
+    matchingInTopic.sort((a, b) => b.messageId - a.messageId);
+    const existingInTopic = matchingInTopic[0];
+
+    // Clean up older duplicates in the same topic if any exist
+    if (matchingInTopic.length > 1) {
+      for (const dup of matchingInTopic.slice(1)) {
+        await deleteTelegramNotification(dup.messageId);
+        await markTelegramMessageDeleted(dup.messageId);
+      }
+    }
+
+    const isEdit = forceEdit || Boolean(existingInTopic);
+    const messageHtml = buildTelegramMessage(topicKey, notifData, isEdit);
+
+    const isPhotoTopic =
+      topicKey === "Finished" ||
+      topicKey === "CustomerRejected" ||
+      topicKey === "Unrepairable";
+
+    if (isPhotoTopic && typeof window !== "undefined") {
+      try {
+        const photoBlob = await generateReportImageBlob(fullItem);
+        if (photoBlob) {
+          // If message already existed in this topic, delete old message first to prevent duplicate
+          if (existingInTopic) {
+            await deleteTelegramNotification(existingInTopic.messageId);
+            await markTelegramMessageDeleted(existingInTopic.messageId);
+          }
+
+          const sendRes = await sendTelegramPhotoNotification(topicKey, photoBlob, messageHtml);
+          if (sendRes.success && sendRes.messageId && fullItem.id) {
+            await saveServiceTelegramMessage(fullItem.id, topicKey, sendRes.messageId);
+          }
+
+          // Retract old topic messages
+          if (fullItem.id) {
+            await cleanupOldTopicTelegramMessages(fullItem.id, topicKey);
+          }
+          return;
+        }
+      } catch (photoErr) {
+        console.warn("Report photo generation failed, falling back to text:", photoErr);
+      }
+    }
+
+    if (existingInTopic) {
+      const editRes = await editTelegramNotification(existingInTopic.messageId, messageHtml);
+      if (!editRes.success && !editRes.notModified) {
+        // Fallback: if edit fails (e.g. message too old or not found),
+        // delete old message first so we NEVER leave duplicate messages in the topic!
+        await deleteTelegramNotification(existingInTopic.messageId);
+        await markTelegramMessageDeleted(existingInTopic.messageId);
+
+        const sendRes = await sendTelegramNotification(topicKey, messageHtml);
+        if (sendRes.success && sendRes.messageId) {
+          if (fullItem.id) {
+            await saveServiceTelegramMessage(fullItem.id, topicKey, sendRes.messageId);
+          }
+        }
+      }
+    } else {
+      // 2. Send to the new topic
+      const sendRes = await sendTelegramNotification(topicKey, messageHtml);
+      if (sendRes.success && sendRes.messageId && fullItem.id) {
+        await saveServiceTelegramMessage(fullItem.id, topicKey, sendRes.messageId);
+      }
+    }
+
+    // 3. 🧹 Retract / delete messages from OLD topics so only the active topic has this ticket!
+    if (fullItem.id) {
+      await cleanupOldTopicTelegramMessages(fullItem.id, topicKey);
+    }
+  } catch (err) {
+    console.warn("Telegram dispatch error (non-fatal):", err);
+  }
+}
+
+/**
+ * `ShortageItem` and the shortage rules moved to `@/validation`, which is
+ * mirrored into the CamID app so the phone applies the same `Fix`/qty/null-GUID
+ * skips and produces the same message. Re-exported so existing importers are
+ * unaffected.
+ */
+export type { ShortageItem } from "@/validation/stockShortage";
+
+export interface StatusUpdateResult {
+  success: boolean;
+  error?: string;
+  shortages?: ShortageItem[];
+}
+
 export async function updateServiceStatus(
   item: RepairServiceItem,
   newStatus: string
-): Promise<boolean> {
+): Promise<StatusUpdateResult> {
+  // The rule lives in `@/validation`, which is mirrored into the CamID app —
+  // the phone used to post straight through and surface the SQL trigger's raw
+  // rejection, while this ran a per-line pre-flight and showed a proper
+  // shortage panel. One implementation now decides for both; each side only
+  // supplies its own catalogue reader.
+  if (isStockDeductingStatus(newStatus)) {
+    let parts: SparePartLineLike[] = [];
+    try {
+      const fullTicket = await fetchServiceById(item.id);
+      parts = (fullTicket?.sparePartItems ||
+        (fullTicket as unknown as Record<string, unknown>)?.sparepartItems ||
+        item.sparePartItems ||
+        (item as unknown as Record<string, unknown>)?.sparepartItems ||
+        []) as SparePartLineLike[];
+    } catch {
+      parts = (item.sparePartItems ||
+        (item as unknown as Record<string, unknown>)?.sparepartItems ||
+        []) as SparePartLineLike[];
+    }
+
+    if (parts.length > 0) {
+      const shortages: ShortageItem[] = await checkStockShortages(parts, (id) => fetchSparePartById(id, true));
+      if (shortages.length > 0) {
+        return { success: false, error: shortageErrorMessage(shortages), shortages };
+      }
+    }
+  }
+
   invalidateCachePrefix("repairservices");
   invalidateCachePrefix("dashboard");
+  invalidateCachePrefix("spareparts");
 
   // Resolve the current user's GUID for the "performedBy" field
   let performedBy = "00000000-0000-0000-0000-000000000000";
@@ -425,32 +843,31 @@ export async function updateServiceStatus(
         body: JSON.stringify(statusRequest.payload)
       });
       if (res.ok) {
-        // Development only. This fires on every status change a technician
-        // makes, so in production it was writing a line per action to the
-        // user's console for no diagnostic gain — the same reasoning that
-        // already gates the proxy route's per-request logging.
         if (process.env.NODE_ENV !== "production") {
           console.log(`✅ Status updated to "${newStatus}" via ${statusRequest.endpoint}`);
         }
-        return true;
+        notifyLocalRealtime({ type: "status_changed", resource: "ticket", status: newStatus });
+        void dispatchTelegramNotificationSafe(item, newStatus);
+        return { success: true };
       }
       const errText = await res.text().catch(() => "");
-      console.error(`❌ Status update failed [${res.status}]: ${errText}`);
-      return false;
+      let parsedError = errText;
+      try {
+        const json = JSON.parse(errText);
+        parsedError = json.detail || json.title || json.message || errText;
+      } catch {
+        parsedError = errText.replace(/^"|"$/g, "");
+      }
+      console.warn(`❌ Status update failed [${res.status}]: ${parsedError}`);
+      return { success: false, error: parsedError || "Failed to update status" };
     } catch (err: unknown) {
       console.error("Failed to update status via BIS endpoint:", err);
-      return false;
+      const errMsg = err instanceof Error ? err.message : "Failed to update status";
+      return { success: false, error: errMsg };
     }
   }
 
   // Fallback: for unmapped statuses use the generic PUT endpoint.
-  // Backend route is `PUT /technicalservices` (id goes in the body — there
-  // is no `/technicalservices/{id}` route to PUT against). Note this still
-  // round-trips the item's spare-parts sub-array back to a full-record
-  // update endpoint that expects a complete `SparepartItemDTO[]`; if the
-  // client's copy of that array is incomplete, fields on it can be silently
-  // dropped server-side. In practice every mapped status above is handled
-  // by its own dedicated endpoint, so this path should rarely execute.
   console.warn(`⚠️ No specific BIS endpoint for status "${newStatus}", using fallback PUT`);
   const matched = SERVICE_STATUSES_DB.find((s) => s.name === newStatus);
   const updated: RepairServiceItem = {
@@ -464,10 +881,16 @@ export async function updateServiceStatus(
       headers: getAuthHeaders(),
       body: JSON.stringify(updated)
     });
-    return res.ok;
+    if (res.ok) {
+      notifyLocalRealtime({ type: "status_changed", resource: "ticket", status: newStatus });
+      void dispatchTelegramNotificationSafe(item, newStatus);
+      return { success: true };
+    }
+    const errText = await res.text().catch(() => "");
+    return { success: false, error: errText || "Failed to update status" };
   } catch (err: unknown) {
     console.error("Fallback PUT status update failed:", err);
-    return false;
+    return { success: false, error: "Failed to update status" };
   }
 }
 
@@ -479,6 +902,11 @@ export async function updateServiceStatus(
 export async function deleteTechnicalService(id: string): Promise<boolean> {
   invalidateCachePrefix("repairservices");
   invalidateCachePrefix("dashboard");
+  invalidateCachePrefix("spareparts");
+
+  // 🧹 Clean up / delete all Telegram messages across all topics for this ticket
+  void cleanupAllTelegramMessagesForService(id);
+
   try {
     let res = await fetchWithRetry(`/api/proxy/receiveitem/${id}`, {
       method: "DELETE",
@@ -497,26 +925,31 @@ export async function deleteTechnicalService(id: string): Promise<boolean> {
   }
 }
 
+/**
+ * Updates the remarks for a specific spare part item attached to a service ticket.
+ * Calls `POST /api/proxy/spareparts/items/{sparepartItemId}/remarks`.
+ */
+export async function updateSparepartItemRemarks(
+  sparePartItemId: string,
+  remarks: string
+): Promise<boolean> {
+  invalidateCachePrefix("repairservices");
+  try {
+    const res = await fetchWithRetry(`/api/proxy/spareparts/items/${sparePartItemId}/remarks`, {
+      method: "POST",
+      headers: getAuthHeaders(),
+      body: JSON.stringify({ remarks })
+    });
+    return res.ok;
+  } catch (err: unknown) {
+    console.error("Failed to update sparepart item remarks:", err);
+    return false;
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Internal fetch helpers
 // ---------------------------------------------------------------------------
-
-/** Parses paginated API response or falls back to an empty page. */
-function parsePaginatedResponse<T>(
-  data: Record<string, unknown>,
-  pageNumber: number,
-  pageSize: number
-): PaginatedResult<T> {
-  const rawList = (data.items ?? data.Data ?? (Array.isArray(data) ? data : [])) as T[];
-  const total   = (data.totalCount ?? data.TotalCount ?? rawList.length) as number;
-  return {
-    items: rawList,
-    totalCount: total,
-    pageNumber,
-    pageSize,
-    totalPages: Math.max(Math.ceil(total / pageSize), 1)
-  };
-}
 
 /**
  * Extra `/technicalservices/search` filters beyond status + free text.
@@ -611,7 +1044,7 @@ async function fetchSingleStatusServices(
   );
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
 
-  const data = (await res.json()) as Record<string, unknown>;
+  const data = await safeJsonParse<Record<string, unknown>>(res, {});
   const items      = (data.items ?? data.Items ?? data.Data ?? (Array.isArray(data) ? data : [])) as RepairServiceItem[];
   const totalCount = (data.totalCount ?? data.TotalCount ?? items.length) as number;
   return { items, totalCount };
@@ -687,7 +1120,7 @@ export async function fetchItemsInventory(
         { headers: getAuthHeaders() }
       );
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const data = (await res.json()) as Record<string, unknown>;
+      const data = await safeJsonParse<Record<string, unknown>>(res, {});
       const rawList = (data.items ?? data.Data ?? (Array.isArray(data) ? data : [])) as Record<string, unknown>[];
       const items: ItemModel[] = rawList.map((i) => ({
         id:           String(i.id ?? i.Id ?? ""),
@@ -746,40 +1179,75 @@ export async function fetchItemsInventory(
  * mutation paths already call `invalidateCachePrefix("spareparts")`, so the
  * existing invalidation covers this key too.
  */
-export async function fetchSparePartById(id: string): Promise<SparePartItem | null> {
+export async function fetchSparePartById(id: string, bypassCache = false): Promise<SparePartItem | null> {
   if (!id) return null;
+
+  if (bypassCache) {
+    invalidateCache(`spareparts:id:${id}`);
+  }
 
   return cachedFetch(`spareparts:id:${id}`, async () => {
     try {
       const res = await fetchWithRetry(`/api/proxy/spareparts/${id}`, { headers: getAuthHeaders() });
       if (!res.ok) return null;
-      const p = (await res.json()) as Record<string, unknown>;
+      const p = await safeJsonParse<Record<string, unknown> | null>(res, null);
       if (!p || typeof p !== "object") return null;
-      return {
-        id:           String(p.id ?? id),
-        partNumber:   String(p.serialNumber ?? p.SerialNumber ?? p.partNumber ?? ""),
-        serialNumber: String(p.serialNumber ?? p.SerialNumber ?? ""),
-        itemName:     String(p.itemName ?? p.ItemName ?? p.name ?? ""),
-        useFor:       String(p.useFor ?? p.UseFor ?? p.modelCompatible ?? ""),
-        pictureUrl:   String(p.pictureUrl ?? p.PictureUrl ?? ""),
-        quantity:     Number(p.quantity ?? p.Quantity ?? 0),
-        defaultPrice: Number(p.defaultPrice ?? p.DefaultPrice ?? p.unitPrice ?? 0),
-        description:  String(p.description ?? p.Description ?? ""),
-        status:       String(p.status ?? "")
-      };
+      return mapSparePartRow(p, id);
     } catch (err: unknown) {
-      console.error("Failed to fetch spare part by id:", err);
+      console.warn("Failed to fetch spare part by id:", err);
       return null;
     }
-  });
+  }, 10_000);
+}
+
+/** Classification filters for the spare-part list; empty / undefined = no filter. */
+export interface SparePartFilters {
+  categoryId?: string | null;
+  typeId?: string | null;
+  brandId?: string | null;
+}
+
+/** Maps a spare-part row from either API casing onto `SparePartItem`. */
+function mapSparePartRow(p: Record<string, unknown>, fallbackId = ""): SparePartItem {
+  const nullableStr = (v: unknown): string | null => (typeof v === "string" && v ? v : null);
+  return {
+    id:           String(p.id ?? fallbackId),
+    partNumber:   String(p.serialNumber ?? p.SerialNumber ?? p.partNumber ?? ""),
+    serialNumber: String(p.serialNumber ?? p.SerialNumber ?? ""),
+    itemName:     String(p.itemName ?? p.ItemName ?? p.name ?? ""),
+    useFor:       String(p.useFor ?? p.UseFor ?? p.modelCompatible ?? ""),
+    pictureUrl:   String(p.pictureUrl ?? p.PictureUrl ?? ""),
+    quantity:     Number(p.quantity ?? p.Quantity ?? 0),
+    defaultPrice: Number(p.defaultPrice ?? p.DefaultPrice ?? p.unitPrice ?? 0),
+    description:  String(p.description ?? p.Description ?? ""),
+    status:       String(p.status ?? ""),
+    linkItemId:   String(p.linkItemId ?? p.LinkItemId ?? ""),
+    categoryId:   nullableStr(p.categoryId ?? p.CategoryId),
+    categoryName: nullableStr(p.categoryName ?? p.CategoryName),
+    typeId:       nullableStr(p.typeId ?? p.TypeId),
+    typeName:     nullableStr(p.typeName ?? p.TypeName),
+    brandId:      nullableStr(p.brandId ?? p.BrandId),
+    brandName:    nullableStr(p.brandName ?? p.BrandName),
+    brandLogoUrl: nullableStr(p.brandLogoUrl ?? p.BrandLogoUrl),
+  };
 }
 
 export async function fetchSparePartsInventory(
   pageNumber = 1,
   pageSize   = 10,
-  searchTerm = ""
+  searchTerm = "",
+  stockBand  = "all",
+  filters: SparePartFilters = {},
+  sortBy?: string | null,
+  sortDescending = false
 ): Promise<PaginatedResult<SparePartItem>> {
-  const cacheKey = `spareparts:page${pageNumber}:size${pageSize}:search${searchTerm}`;
+  const categoryId = filters.categoryId || "";
+  const typeId = filters.typeId || "";
+  const brandId = filters.brandId || "";
+  const sortKey = sortBy ? `:sort${sortBy}:${sortDescending}` : "";
+  const cacheKey =
+    `spareparts:page${pageNumber}:size${pageSize}:search${searchTerm}:band${stockBand}` +
+    `:cat${categoryId}:type${typeId}:brand${brandId}${sortKey}`;
   return cachedFetch(cacheKey, async () => {
     try {
       const params = new URLSearchParams({
@@ -787,6 +1255,14 @@ export async function fetchSparePartsInventory(
         pageSize:   pageSize.toString()
       });
       if (searchTerm) params.set("searchTerm", searchTerm);
+      if (stockBand && stockBand !== "all") params.set("stockBand", stockBand);
+      if (categoryId) params.set("categoryId", categoryId);
+      if (typeId) params.set("typeId", typeId);
+      if (brandId) params.set("brandId", brandId);
+      if (sortBy) {
+        params.set("sortBy", sortBy);
+        params.set("sortDescending", sortDescending ? "true" : "false");
+      }
       const endpoint = searchTerm ? "/api/proxy/spareparts/search" : "/api/proxy/spareparts";
 
       const res = await fetchWithRetry(
@@ -794,30 +1270,39 @@ export async function fetchSparePartsInventory(
         { headers: getAuthHeaders() }
       );
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const data = (await res.json()) as Record<string, unknown>;
+      const data = await safeJsonParse<Record<string, unknown>>(res, {});
 
       // Normalise mixed PascalCase / camelCase keys returned by the API
       const rawList = (data.items ?? data.Data ?? (Array.isArray(data) ? data : [])) as Record<string, unknown>[];
-      const items: SparePartItem[] = rawList.map((p) => ({
-        id:           String(p.id ?? ""),
-        partNumber:   String(p.serialNumber ?? p.SerialNumber ?? p.partNumber ?? ""),
-        serialNumber: String(p.serialNumber ?? p.SerialNumber ?? ""),
-        itemName:     String(p.itemName ?? p.ItemName ?? p.name ?? ""),
-        useFor:       String(p.useFor ?? p.UseFor ?? p.modelCompatible ?? ""),
-        pictureUrl:   String(p.pictureUrl ?? p.PictureUrl ?? ""),
-        quantity:     Number(p.quantity ?? p.Quantity ?? 0),
-        defaultPrice: Number(p.defaultPrice ?? p.DefaultPrice ?? p.unitPrice ?? 0),
-        description:  String(p.description ?? p.Description ?? ""),
-        status:       String(p.status ?? "")
-      }));
+      const items: SparePartItem[] = rawList.map((p) => mapSparePartRow(p));
 
       const total = (data.totalCount ?? data.TotalCount ?? items.length) as number;
-      return { items, totalCount: total, pageNumber, pageSize, totalPages: Math.max(Math.ceil(total / pageSize), 1) };
+      const goodCount = (data.goodCount ?? data.GoodCount) as number | undefined;
+      const criticalCount = (data.criticalCount ?? data.CriticalCount) as number | undefined;
+      const outOfStockCount = (data.outOfStockCount ?? data.OutOfStockCount) as number | undefined;
+      const totalAll = (data.totalAll ?? data.TotalAll) as number | undefined;
+
+      return {
+        items,
+        totalCount: total,
+        pageNumber,
+        pageSize,
+        totalPages: Math.max(Math.ceil(total / pageSize), 1),
+        goodCount,
+        criticalCount,
+        outOfStockCount,
+        totalAll,
+      };
     } catch {
       // Offline: mirror the server's search fields so the fallback behaves
       // the same way rather than ignoring the term and showing everything.
+      // The mock rows carry no classification, so any classification filter
+      // yields an empty list — which is also what the server would answer.
       const term = searchTerm.trim().toLowerCase();
-      const filtered = term
+      const hasClassificationFilter = Boolean(categoryId || typeId || brandId);
+      const filtered = hasClassificationFilter
+        ? []
+        : term
         ? MOCK_SPARE_PARTS.filter((p) =>
             (p.itemName ?? "").toLowerCase().includes(term) ||
             (p.serialNumber ?? "").toLowerCase().includes(term) ||
@@ -833,85 +1318,123 @@ export async function fetchSparePartsInventory(
         totalPages: Math.max(Math.ceil(filtered.length / pageSize), 1)
       };
     }
-  });
+  }, 15_000);
+}
+
+const NULL_GUID = "00000000-0000-0000-0000-000000000000";
+
+/**
+ * The `classification` object for a spare-part write, or `undefined` to leave
+ * the part's classification untouched. A screen that has the three selects
+ * passes them (empty select → `null`, which clears); a caller that only
+ * changes stock passes nothing, so the update cannot wipe the filing.
+ */
+function classificationPayload(c: SparePartClassification | undefined) {
+  if (!c) return undefined;
+  return {
+    categoryId: c.categoryId || null,
+    typeId:     c.typeId || null,
+    brandId:    c.brandId || null,
+  };
+}
+
+function invalidateSparePartWrites(lookupsTouched: boolean): void {
+  invalidateCachePrefix("spareparts");
+  // The lookups carry partCount, which a create / reclassify / delete moves.
+  if (lookupsTouched) invalidateCachePrefix("sparepart-taxonomy");
 }
 
 /**
  * Creates a new spare part.
  * Calls `POST /api/proxy/spareparts`.
  */
-export async function createSparePart(part: SparePartItem): Promise<boolean> {
-  invalidateCachePrefix("spareparts");
+export async function createSparePart(
+  part: SparePartItem,
+  classification?: SparePartClassification
+): Promise<ApiWriteResult> {
+  invalidateSparePartWrites(classification !== undefined);
   try {
     const payload = {
-      itemName:     part.itemName,
-      serialNumber: part.serialNumber ?? part.partNumber,
-      description:  part.description ?? "",
-      useFor:       part.useFor ?? "",
-      pictureUrl:   part.pictureUrl ?? "",
-      quantity:     part.quantity ?? 0,
-      defaultPrice: part.defaultPrice ?? 0
+      itemName:       part.itemName,
+      serialNumber:   part.serialNumber ?? part.partNumber,
+      description:    part.description ?? "",
+      useFor:         part.useFor ?? "",
+      pictureUrl:     part.pictureUrl ?? "",
+      linkItemId:     part.linkItemId || NULL_GUID,
+      quantity:       part.quantity ?? 0,
+      defaultPrice:   part.defaultPrice ?? 0,
+      classification: classificationPayload(classification),
     };
     const res = await fetchWithRetry("/api/proxy/spareparts", {
       method:  "POST",
       headers: getAuthHeaders(),
       body:    JSON.stringify(payload)
     });
-    return res.ok;
+    return await readWriteResult(res);
   } catch (err: unknown) {
     console.error("Failed to create spare part:", err);
-    return false;
+    return networkFailure();
   }
 }
 
 /**
  * Updates an existing spare part.
  * Calls `PUT /api/proxy/spareparts`.
+ *
+ * `classification` is optional on purpose — see `classificationPayload`.
+ * Stock-in and set-stock call this without it and must not clear the filing.
  */
 export async function updateSparePart(
   part:        SparePartItem,
-  performedBy = "00000000-0000-0000-0000-000000000000"
-): Promise<boolean> {
-  invalidateCachePrefix("spareparts");
+  performedBy = NULL_GUID,
+  classification?: SparePartClassification
+): Promise<ApiWriteResult> {
+  invalidateSparePartWrites(classification !== undefined);
   try {
     const payload = {
-      id:           part.id,
-      itemName:     part.itemName,
-      serialNumber: part.serialNumber ?? part.partNumber,
-      description:  part.description ?? "",
-      useFor:       part.useFor ?? "",
-      pictureUrl:   part.pictureUrl ?? "",
-      quantity:     part.quantity ?? 0,
-      defaultPrice: part.defaultPrice ?? 0,
-      performedBy
+      id:             part.id,
+      itemName:       part.itemName,
+      serialNumber:   part.serialNumber ?? part.partNumber ?? "",
+      description:    part.description ?? "",
+      useFor:         part.useFor ?? "",
+      pictureUrl:     part.pictureUrl ?? "",
+      linkItemId:     part.linkItemId || NULL_GUID,
+      quantity:       part.quantity ?? 0,
+      defaultPrice:   part.defaultPrice ?? 0,
+      performedBy,
+      classification: classificationPayload(classification),
     };
     const res = await fetchWithRetry("/api/proxy/spareparts", {
       method:  "PUT",
       headers: getAuthHeaders(),
       body:    JSON.stringify(payload)
     });
-    return res.ok;
+    return await readWriteResult(res);
   } catch (err: unknown) {
     console.error("Failed to update spare part:", err);
-    return false;
+    return networkFailure();
   }
 }
 
 /**
  * Deletes a spare part by ID.
  * Calls `DELETE /api/proxy/spareparts/{id}`.
+ *
+ * The API refuses (409, code `inUse`, `count`) while the part is on any ticket
+ * line or has any row in the stock audit ledger — a part with history is never
+ * deletable, and the result says so rather than pretending it worked.
  */
-export async function deleteSparePart(id: string): Promise<boolean> {
-  invalidateCachePrefix("spareparts");
+export async function deleteSparePart(id: string): Promise<ApiWriteResult> {
+  invalidateSparePartWrites(true);
   try {
     const res = await fetchWithRetry(`/api/proxy/spareparts/${id}`, {
       method:  "DELETE",
       headers: getAuthHeaders()
     });
-    return res.ok;
+    return await readWriteResult(res);
   } catch (err: unknown) {
     console.error("Failed to delete spare part:", err);
-    return false;
+    return networkFailure();
   }
 }
 
@@ -939,6 +1462,106 @@ export async function insertManualStockOut(
   }
 }
 
+export interface SparepartTransaction {
+  id: string;
+  timestamp: string;
+  sparepartId: string;
+  itemName: string;
+  serialNumber: string;
+  pictureUrl?: string | null;
+  operationType: string;
+  quantityChange: number;
+  quantity: number;
+  direction: "In" | "Out" | "None" | string;
+  source: string;
+  balanceAfter: number;
+  balanceBefore: number;
+  serviceId?: string | null;
+  reportNo?: string;
+  companyName?: string;
+  serviceStatus?: string;
+  reason?: string;
+  reversedLater?: boolean;
+  isReversal?: boolean;
+}
+
+/**
+ * Fetches real-time spare part transactions (Stock In / Stock Out ledger).
+ * Calls `GET /api/proxy/spareparts/transactions`.
+ */
+export async function fetchSparepartTransactions(
+  pageNumber = 1,
+  pageSize = 10,
+  direction?: string,
+  searchTerm = "",
+  force = false
+): Promise<PaginatedResult<SparepartTransaction>> {
+  const cacheKey = `spareparts:transactions:p${pageNumber}:s${pageSize}:d${direction || "All"}:q${searchTerm.trim()}`;
+  if (force) {
+    invalidateCachePrefix(cacheKey);
+  }
+  return cachedFetch(
+    cacheKey,
+    async () => {
+      try {
+        const params = new URLSearchParams({
+          pageNumber: pageNumber.toString(),
+          pageSize: pageSize.toString(),
+        });
+        if (direction && direction !== "All") params.set("direction", direction);
+        if (searchTerm.trim()) params.set("searchTerm", searchTerm.trim());
+
+        const res = await fetchWithRetry(`/api/proxy/spareparts/transactions?${params.toString()}`, {
+          headers: getAuthHeaders(),
+        });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const data = await safeJsonParse<Record<string, unknown>>(res, {});
+        const rawItems = (data.items ?? data.Data ?? (Array.isArray(data) ? data : [])) as Record<string, unknown>[];
+        const items: SparepartTransaction[] = rawItems.map((r) => ({
+          id: String(r.id ?? ""),
+          timestamp: String(r.timestamp ?? ""),
+          sparepartId: String(r.sparepartId ?? ""),
+          itemName: String(r.itemName ?? ""),
+          serialNumber: String(r.serialNumber ?? ""),
+          pictureUrl: r.pictureUrl ? String(r.pictureUrl) : null,
+          operationType: String(r.operationType ?? ""),
+          quantityChange: Number(r.quantityChange ?? 0),
+          quantity: Number(r.quantity ?? Math.abs(Number(r.quantityChange ?? 0))),
+          direction: String(r.direction ?? (Number(r.quantityChange ?? 0) > 0 ? "In" : "Out")),
+          source: String(r.source ?? ""),
+          balanceAfter: Number(r.balanceAfter ?? 0),
+          balanceBefore: Number(r.balanceBefore ?? 0),
+          serviceId: r.serviceId ? String(r.serviceId) : null,
+          reportNo: String(r.reportNo ?? ""),
+          companyName: String(r.companyName ?? ""),
+          serviceStatus: String(r.serviceStatus ?? ""),
+          reason: String(r.reason ?? ""),
+          reversedLater: Boolean(r.reversedLater),
+          isReversal: Boolean(r.isReversal),
+        }));
+        const totalCount = Number(data.totalCount ?? data.TotalCount ?? items.length);
+        return {
+          items,
+          totalCount,
+          pageNumber,
+          pageSize,
+          totalPages: Math.max(Math.ceil(totalCount / pageSize), 1),
+        };
+      } catch (err) {
+        console.warn("Failed to fetch sparepart transactions:", err);
+        return {
+          items: [],
+          totalCount: 0,
+          pageNumber,
+          pageSize,
+          totalPages: 1,
+        };
+      }
+    },
+    20_000
+  );
+}
+
 /**
  * Fetches paginated customers.
  * Maps to `CustomerList.razor` → `GET /api/proxy/customercenter/customers`.
@@ -962,16 +1585,17 @@ export async function fetchCustomerCenter(
         headers: getAuthHeaders()
       });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const data = (await res.json()) as Record<string, unknown>;
+      const data = await safeJsonParse<Record<string, unknown>>(res, {});
 
       const rawList = (data.data ?? data.Data ?? data.items ?? (Array.isArray(data) ? data : [])) as Record<string, unknown>[];
       const items: CustomerItem[] = rawList.map((c) => ({
         id:           String(c.id ?? c.Id ?? c.customerId ?? ""),
         companyName:  String(c.companyName ?? c.CompanyName ?? c.name ?? "N/A"),
-        contactName:  String(c.contactName ?? c.ContactName ?? c.contactPerson ?? "—"),
-        phoneNumber:  String(c.phoneNumber ?? c.PhoneNumber ?? c.phone ?? "—"),
-        address:      String(c.address ?? c.Address ?? "—"),
-        customerType: String(c.customerType ?? c.CustomerType ?? "Corporate"),
+        contactName:  String(c.contactName ?? c.ContactName ?? c.contactPerson ?? c.ContactPerson ?? c.attention ?? c.Attention ?? ""),
+        phoneNumber:  String(c.phoneNumber ?? c.PhoneNumber ?? c.phone ?? c.Phone ?? ""),
+        address:      String(c.address ?? c.Address ?? ""),
+        customerType: c.customerType != null ? String(c.customerType).trim() : (c.CustomerType != null ? String(c.CustomerType).trim() : ""),
+        customerTypeListId: typeof c.customerTypeListId === "number" ? c.customerTypeListId : (typeof c.CustomerTypeListId === "number" ? c.CustomerTypeListId : null),
         isActive:     Boolean(c.isActive ?? true)
       }));
 
@@ -1002,6 +1626,7 @@ export async function fetchCustomerCenter(
  */
 export async function createCustomer(customer: Partial<CustomerItem>): Promise<boolean> {
   invalidateCachePrefix("customers");
+  customerTypeLookupCache = null;
   try {
     const res = await fetchWithRetry("/api/proxy/Customer?service=customer", {
       method: "POST",
@@ -1050,6 +1675,7 @@ export async function updateProfilePictureUrl(url: string): Promise<boolean> {
 
 export async function updateCustomer(id: string, customer: Partial<CustomerItem>): Promise<boolean> {
   invalidateCachePrefix("customers");
+  customerTypeLookupCache = null;
   try {
     const res = await fetchWithRetry(`/api/proxy/Customer/${id}?service=customer`, {
       method: "PUT",
@@ -1069,6 +1695,7 @@ export async function updateCustomer(id: string, customer: Partial<CustomerItem>
  */
 export async function deleteCustomer(id: string): Promise<boolean> {
   invalidateCachePrefix("customers");
+  customerTypeLookupCache = null;
   try {
     const res = await fetchWithRetry(`/api/proxy/Customer/${id}?service=customer`, {
       method: "DELETE",
@@ -1079,6 +1706,88 @@ export async function deleteCustomer(id: string): Promise<boolean> {
     console.error("Failed to delete customer:", err);
     return false;
   }
+}
+
+/**
+ * Fetches the master customer types from CustomerAPI.
+ * Calls `GET /api/proxy/CustomerType?service=customer`.
+ */
+export async function fetchCustomerTypes(force = false): Promise<CustomerTypeItem[]> {
+  const cacheKey = "customer-types";
+  if (force) invalidateCachePrefix(cacheKey);
+  return cachedFetch(cacheKey, async () => {
+    try {
+      const res = await fetchWithRetry("/api/proxy/CustomerType?service=customer", {
+        headers: getAuthHeaders()
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = await safeJsonParse<any>(res, []);
+      const rawList = Array.isArray(data)
+        ? data
+        : (data.data ?? data.Data ?? data.items ?? []);
+      return (rawList as Record<string, unknown>[]).map((ct) => ({
+        listId: Number(ct.listId ?? ct.ListId ?? 0),
+        type: String(ct.type ?? ct.Type ?? "").trim(),
+        description: ct.description ? String(ct.description) : undefined,
+        isActive: ct.isActive !== undefined ? Boolean(ct.isActive) : true
+      })).filter((ct) => ct.type.length > 0);
+    } catch (err: unknown) {
+      console.error("Failed to fetch customer types:", err);
+      return [];
+    }
+  }, 2 * 60 * 1000);
+}
+
+/**
+ * In-memory map of companyName (lowercased) -> customerType from CustomerAPI.
+ * Cached for 5 minutes so reports and lookups don't repeatedly fetch.
+ */
+let customerTypeLookupCache: { map: Map<string, string>; expiresAt: number } | null = null;
+
+export async function getCustomerTypeLookupMap(force = false): Promise<Map<string, string>> {
+  const now = Date.now();
+  if (!force && customerTypeLookupCache && customerTypeLookupCache.expiresAt > now) {
+    return customerTypeLookupCache.map;
+  }
+
+  try {
+    const res = await fetchWithRetry("/api/proxy/Customer?service=customer&pageSize=3000", {
+      headers: getAuthHeaders()
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await safeJsonParse<any>(res, []);
+    const rawList = Array.isArray(data)
+      ? data
+      : (data.data ?? data.Data ?? data.items ?? []);
+
+    const map = new Map<string, string>();
+    for (const c of rawList) {
+      const name = String(c.companyName ?? c.CompanyName ?? "").trim().toLowerCase();
+      const type = String(c.customerType ?? c.CustomerType ?? "").trim();
+      if (name && type) {
+        map.set(name, type);
+      }
+    }
+    customerTypeLookupCache = { map, expiresAt: now + 5 * 60 * 1000 };
+    return map;
+  } catch (err) {
+    console.error("Failed to build customer type lookup map:", err);
+    return customerTypeLookupCache?.map ?? new Map<string, string>();
+  }
+}
+
+/**
+ * Resolves live customer types from CustomerAPI for a batch of company names.
+ */
+export async function resolveCustomerTypesBatch(companyNames: string[]): Promise<Map<string, string>> {
+  const lookup = await getCustomerTypeLookupMap();
+  const result = new Map<string, string>();
+  for (const name of companyNames) {
+    const key = name.trim().toLowerCase();
+    const resolved = lookup.get(key) || "";
+    result.set(name, resolved);
+  }
+  return result;
 }
 
 /**
@@ -1138,15 +1847,22 @@ export async function fetchRepairServices(
     const dateWindow = DATE_WINDOW_FILTERS[filterUpper];
     if (dateWindow) {
       try {
-        const { items, totalCount } = await fetchSingleStatusServices(
-          pageNumber,
-          pageSize,
-          "",
-          searchTerm,
-          { ...extras, dateFilter: dateWindow }
-        );
-
-        const userMap = await fetchUserMap().catch(() => new Map());
+        // Started together, not one after the other. The two are independent —
+        // the user map is keyed on GUIDs the ticket rows merely reference — so
+        // awaiting them in sequence added the whole cold user-map latency
+        // (~600ms: page 1 must land before pages 2..N fan out) on top of the
+        // search on every uncached load. `reports.ts` already fetches this pair
+        // with `Promise.all` for exactly this reason; this path never got it.
+        const [{ items, totalCount }, userMap] = await Promise.all([
+          fetchSingleStatusServices(
+            pageNumber,
+            pageSize,
+            "",
+            searchTerm,
+            { ...extras, dateFilter: dateWindow }
+          ),
+          fetchUserMap().catch(() => new Map()),
+        ]);
         return {
           items:      items.map((item) => enrichTicketUsers(item, userMap)),
           totalCount,
@@ -1156,6 +1872,13 @@ export async function fetchRepairServices(
         };
       } catch (err: unknown) {
         console.warn(`Date-window fetch (${dateWindow}) failed, using fallback:`, err);
+        return {
+          items: [],
+          totalCount: 0,
+          pageNumber,
+          pageSize,
+          totalPages: 1,
+        };
       }
     }
 
@@ -1163,15 +1886,17 @@ export async function fetchRepairServices(
     if (filterUpper === "REPAIRING" || filterUpper === "APPROVE REPAIRING") {
       try {
         const multiStatus = "Sent Spareparts,Inspection,Sale Confirmed";
-        const { items, totalCount } = await fetchSingleStatusServices(
-          pageNumber,
-          pageSize,
-          multiStatus,
-          searchTerm,
-          extras
-        );
-
-        const userMap = await fetchUserMap().catch(() => new Map());
+        // Concurrent, for the reason given in the date-window branch above.
+        const [{ items, totalCount }, userMap] = await Promise.all([
+          fetchSingleStatusServices(
+            pageNumber,
+            pageSize,
+            multiStatus,
+            searchTerm,
+            extras
+          ),
+          fetchUserMap().catch(() => new Map()),
+        ]);
         const enrichedCombined = items.map((item) => enrichTicketUsers(item, userMap));
 
         return {
@@ -1216,15 +1941,19 @@ export async function fetchRepairServices(
     const statusMap = getDbStatusMapping(filter);
 
     try {
-      const { items, totalCount } = await fetchSingleStatusServices(
-        pageNumber,
-        pageSize,
-        statusMap.name,
-        searchTerm,
-        extras
-      );
-
-      const userMap = await fetchUserMap().catch(() => new Map());
+      // Concurrent, for the reason given in the date-window branch above. This
+      // is the branch every ordinary queue page takes, so it is the one that
+      // decides how long the first table on screen takes to fill.
+      const [{ items, totalCount }, userMap] = await Promise.all([
+        fetchSingleStatusServices(
+          pageNumber,
+          pageSize,
+          statusMap.name,
+          searchTerm,
+          extras
+        ),
+        fetchUserMap().catch(() => new Map()),
+      ]);
       const enrichedItems = items.map((item) => enrichTicketUsers(item, userMap));
 
       return {
@@ -1294,14 +2023,11 @@ export async function fetchApproveVerifyServices(
   return cachedFetch(cacheKey, async () => {
     try {
       const statusParam = term ? "Repairing,Finished" : "Repairing";
-      const { items, totalCount } = await fetchSingleStatusServices(
-        pageNumber,
-        pageSize,
-        statusParam,
-        term
-      );
-
-      const userMap = await fetchUserMap().catch(() => new Map());
+      // Concurrent — see `fetchRepairServices`'s date-window branch.
+      const [{ items, totalCount }, userMap] = await Promise.all([
+        fetchSingleStatusServices(pageNumber, pageSize, statusParam, term),
+        fetchUserMap().catch(() => new Map()),
+      ]);
       const enrichedCombined = items.map((item) => enrichTicketUsers(item, userMap));
 
       return {
@@ -1358,16 +2084,22 @@ export async function fetchApproveVerifyServices(
 export async function fetchServiceById(id: string): Promise<RepairServiceItem | null> {
   if (!id || id.startsWith("new-")) return null;
   try {
-    const res = await fetchWithRetry(`/api/proxy/technicalservices/${id}`, {
-      headers: getAuthHeaders()
-    });
+    // Both started at once: this is the path that runs when a ticket dialog
+    // opens, and the user map does not depend on the ticket. On a cold cache
+    // the sequential version made the dialog wait for the ticket AND then the
+    // whole user-map pagination before it could show a name.
+    const [res, userMap] = await Promise.all([
+      fetchWithRetry(`/api/proxy/technicalservices/${id}`, {
+        headers: getAuthHeaders()
+      }),
+      fetchUserMap().catch(() => new Map()),
+    ]);
     if (!res.ok) return null;
-    const data = (await res.json()) as RepairServiceItem;
+    const data = await safeJsonParse<RepairServiceItem | null>(res, null);
     if (!data || !data.id) return null;
-    const userMap = await fetchUserMap().catch(() => new Map());
     return enrichTicketUsers(data, userMap);
   } catch (err: unknown) {
-    console.error("Failed to fetch service by id:", err);
+    console.warn("Failed to fetch service by id:", err);
     return null;
   }
 }
@@ -1396,7 +2128,10 @@ const EMPTY_DASHBOARD_STATS: DashboardStats = {
  * previous stub (2 / 7 / 66 / 12 / 106) was indistinguishable from real data
  * on screen, so an outage looked like a quiet workday.
  */
-export async function fetchDashboardStats(): Promise<DashboardStats> {
+export async function fetchDashboardStats(force = false): Promise<DashboardStats> {
+  if (force) {
+    invalidateCachePrefix("dashboard:statistics");
+  }
   return cachedFetch(
     "dashboard:statistics",
     async () => {
@@ -1406,9 +2141,9 @@ export async function fetchDashboardStats(): Promise<DashboardStats> {
           { headers: getAuthHeaders() }
         );
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        return (await res.json()) as DashboardStats;
+        return await safeJsonParse<DashboardStats>(res, EMPTY_DASHBOARD_STATS);
       } catch (err: unknown) {
-        console.error("Failed to fetch dashboard stats:", err);
+        console.warn("Failed to fetch dashboard stats:", err);
         return EMPTY_DASHBOARD_STATS;
       }
     },
@@ -1428,12 +2163,17 @@ export async function createInspectItem(payload: {
   spareParts?: Array<{ sparePartId: string; quantity: number; condition: string }>;
 }): Promise<boolean> {
   invalidateCachePrefix('repairservices');
+  invalidateCachePrefix('spareparts');
+  invalidateCachePrefix('dashboard');
   try {
     const res = await fetchWithRetry('/api/proxy/inspectitem', {
       method:  'POST',
       headers: getAuthHeaders(),
       body:    JSON.stringify(payload)
     });
+    if (res.ok) {
+      void dispatchTelegramNotificationSafe({ id: payload.serviceId } as unknown as RepairServiceItem, "Inspection");
+    }
     return res.ok;
   } catch (err: unknown) {
     console.error('Failed to create inspect item:', err);
@@ -1455,6 +2195,8 @@ export async function deleteInspectItemSparePart(
   sparepartItemId: string
 ): Promise<boolean> {
   invalidateCachePrefix('repairservices');
+  invalidateCachePrefix('spareparts');
+  invalidateCachePrefix('dashboard');
   try {
     const res = await fetchWithRetry(
       `/api/proxy/inspectitem/${serviceId}/spareparts/${sparepartItemId}`,
@@ -1476,6 +2218,7 @@ export async function setFinishedRepair(payload: {
   finishedDate?: string;
 }): Promise<boolean> {
   invalidateCachePrefix('repairservices');
+  invalidateCachePrefix('spareparts');
   invalidateCachePrefix('dashboard');
   try {
     const res = await fetchWithRetry('/api/proxy/finishedrepair', {
@@ -1507,10 +2250,10 @@ export async function searchCustomers(searchTerm: string): Promise<CustomerItem[
       headers: getAuthHeaders()
     });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    const data = (await res.json()) as Record<string, unknown>;
+    const data = await safeJsonParse<Record<string, unknown>>(res, {});
     return (data.items ?? data.Data ?? (Array.isArray(data) ? data : [])) as CustomerItem[];
   } catch (err: unknown) {
-    console.error('Failed to search customers:', err);
+    console.warn('Failed to search customers:', err);
     return [];
   }
 }
@@ -1573,11 +2316,11 @@ export async function searchItems(searchTerm: string): Promise<ItemModel[]> {
     const params = new URLSearchParams({ searchTerm, pageNumber: '1', pageSize: '15' });
     const res = await fetchWithRetry(`/api/proxy/items?${params}`, { headers: getAuthHeaders() });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    const data = (await res.json()) as Record<string, unknown>;
+    const data = await safeJsonParse<Record<string, unknown>>(res, {});
     const list = (data.items ?? data.Data ?? (Array.isArray(data) ? data : [])) as ItemModel[];
     return list.filter((i) => i.itemName?.toLowerCase().includes(searchTerm.toLowerCase()));
   } catch (err: unknown) {
-    console.error('Failed to search items:', err);
+    console.warn('Failed to search items:', err);
     return [];
   }
 }

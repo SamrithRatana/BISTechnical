@@ -199,12 +199,12 @@ export const FULFILMENT_TOPICS: DocTopic[] = [
     },
     steps: [
       {
-        en: "Mark the job unrepairable from the customer-answer step, or from this page's status control.",
-        km: "សម្គាល់ការងារថាជួសជុលមិនកើត ពីជំហានចម្លើយអតិថិជន ឬពីប៊ូតុងស្ថានភាពនៅទំព័រនេះ។",
+        en: "Mark the job unrepairable from either Technical Inspection/Repair or Sales Customer Response — the two-way network immediately alerts both departments.",
+        km: "សម្គាល់ការងារថាជួសជុលមិនកើត (Unrepairable) ពីជាងបច្ចេកទេស ឬពីផ្នែកលក់ — ប្រព័ន្ធ Network ជូនដំណឹងទៅវិញទៅមកទាំងសងខាងភ្លាមៗ។",
       },
       {
-        en: "Record the reason in the inspection notes — it is what the diagnostics report groups by model.",
-        km: "កត់ត្រាមូលហេតុក្នុងកំណត់សម្គាល់វិនិច្ឆ័យ — វាជាអ្វីដែលរបាយការណ៍វិនិច្ឆ័យដាក់ជាក្រុមតាមម៉ូដែល។",
+        en: "Record the reason in the inspection notes — it is what the diagnostics report groups by model and feeds the Hot Sales replacement leads.",
+        km: "កត់ត្រាមូលហេតុក្នុងកំណត់សម្គាល់វិនិច្ឆ័យ — វាជាអ្វីដែលរបាយការណ៍វិនិច្ឆ័យចងក្រងតាមម៉ូដែល និងបញ្ជូនទៅ Hot Sales Leads សម្រាប់លក់ម៉ាស៊ីនថ្មីជំនួស។",
       },
     ],
   },

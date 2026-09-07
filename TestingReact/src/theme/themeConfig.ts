@@ -69,6 +69,12 @@ export type SidebarStyleName =
   | "radiant"
   | "motion-expansion";
 
+export type CrudStyleName =
+  | "modern-inline"
+  | "enterprise-ribbon"
+  | "split-workbench"
+  | "compact-pos";
+
 /**
  * Lite Mode: strip the expensive *visual* effects, keep every feature.
  *
@@ -127,6 +133,8 @@ export interface ThemePrefs {
   commandPaletteStyle: CommandPaletteStyle;
   /** Sidebar visual layout & UX style */
   sidebarStyle: SidebarStyleName;
+  /** CRUD Table & Tool layout style (modern inline, enterprise ribbon, split workbench, compact POS) */
+  crudStyle: CrudStyleName;
   /**
    * Logo zoom/scale percentage (e.g. 100 to 250, default 130).
    * Allows scaling wide or margin-heavy logos to fit the frame nicely.
@@ -156,6 +164,12 @@ export const SIDEBAR_STYLES: SidebarStyleName[] = [
   "radiant",
   "motion-expansion",
 ];
+export const CRUD_STYLES: CrudStyleName[] = [
+  "modern-inline",
+  "enterprise-ribbon",
+  "split-workbench",
+  "compact-pos",
+];
 export const LITE_MODES: LiteName[] = ["off", "on"];
 
 /** 6-digit hex only (`#rrggbb`) — what `deriveAccentPalette` expects. */
@@ -177,6 +191,7 @@ export const DEFAULT_PREFS: ThemePrefs = {
   surfaceStyle: "cushion",
   commandPaletteStyle: "glass",
   sidebarStyle: "classic",
+  crudStyle: "enterprise-ribbon",
   logoScale: 130,
   /**
    * Off by default, and never turned on without asking. Detection decides
@@ -205,6 +220,7 @@ export function themeAttributes(prefs: {
   surfaceStyle: string;
   commandPaletteStyle?: string;
   sidebarStyle?: string;
+  crudStyle?: string;
   lite: string;
 }): Record<string, string> {
   return {
@@ -215,6 +231,7 @@ export function themeAttributes(prefs: {
     "data-surface-style": prefs.surfaceStyle,
     "data-cmd-palette-style": prefs.commandPaletteStyle || "glass",
     "data-sidebar-style": prefs.sidebarStyle || "classic",
+    "data-crud-style": prefs.crudStyle || "modern-inline",
     "data-lite": prefs.lite,
   };
 }
@@ -282,6 +299,9 @@ export function normalisePrefs(raw: unknown): ThemePrefs {
   }
   if (typeof r.sidebarStyle === "string" && (SIDEBAR_STYLES as string[]).includes(r.sidebarStyle)) {
     out.sidebarStyle = r.sidebarStyle as SidebarStyleName;
+  }
+  if (typeof r.crudStyle === "string" && (CRUD_STYLES as string[]).includes(r.crudStyle)) {
+    out.crudStyle = r.crudStyle as CrudStyleName;
   }
   if (r.lite === "off" || r.lite === "on") {
     out.lite = r.lite;

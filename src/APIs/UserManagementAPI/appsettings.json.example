@@ -16,6 +16,16 @@
     "TokenValidityInHours": "8",
     "RefreshTokenValidityInDays": "30"
   },
+  "WebAuthn": {
+    "ServerDomain": "localhost",
+    "ServerName": "Camprotec Service Maintenance",
+    "Origins": [
+      "http://localhost:3000"
+    ]
+  },
+  "Face": {
+    "MatchThreshold": "0.45"
+  },
   "ApiBaseUrl": "https://your-issuer.example.com",
   "AllowedHosts": "*",
   "Kestrel": {

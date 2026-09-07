@@ -1,8 +1,8 @@
 # TestingReact/src/components
 
-Shared/reusable React components used across the `app/` pages (dashboard, ticket workflow queues, spare parts, customers). Subfolders: `ai/` for the assistant, `av/` for the design system, `download/` for the public `/download` landing page (24 files — hooks, 3D phone rig, platform cards, mobile install timeline; indexed in `src/app/CLAUDE.md` under `/download`, since nothing outside that page consumes them), `login/` for the `/login` sign-in stage (20 files — tilt rig, parallax backdrop, card atmosphere, pipeline overlay, curtain + feature spotlight, auth hooks; indexed in `src/app/CLAUDE.md` under `/login`, same nothing-else-consumes-them rule), and `docs/` for the public `/docs` manual (20 components/hooks plus a `content/` subfolder of 21 bilingual catalogue modules — 3D atlas rig, lifecycle rail, expandable topic cards, client-side search, scroll spy; indexed in `src/app/CLAUDE.md` under `/docs`). All files are `"use client"` except where noted — in `docs/` the type, icon-map, accent and content modules are deliberately plain data with no `"use client"` and no React, so a content edit never needs a component import.
+Shared/reusable React components used across the `app/` pages (dashboard, ticket workflow queues, spare parts, customers). Subfolders: `ai/` for the assistant, `av/` for the design system, `download/` for the public `/download` landing page (24 files — hooks, 3D phone rig, platform cards, mobile install timeline; indexed in `src/app/CLAUDE.md` under `/download`, since nothing outside that page consumes them), `login/` for the `/login` sign-in stage (20 files — tilt rig, parallax backdrop, card atmosphere, pipeline overlay, curtain + feature spotlight, auth hooks; indexed in `src/app/CLAUDE.md` under `/login`, same nothing-else-consumes-them rule), and `docs/` for the public `/docs` manual (15 components/hooks plus a `content/` subfolder of bilingual catalogue modules — 3D atlas rig, lifecycle rail, chapter reading path, three-column reader with an "on this page" rail and scroll spy; indexed in `src/app/CLAUDE.md` under `/docs`). All files are `"use client"` except where noted — in `docs/` the type, icon-map, accent and content modules are deliberately plain data with no `"use client"` and no React, so a content edit never needs a component import.
 
-**`docs/content/` is the one place in `src/` where user-visible copy does NOT go through `i18n`.** That is deliberate and explained in `docs/docsTypes.ts`: `LanguageProvider` imports `en.ts` statically, so anything added there ships to all 50+ routes, and the manual is several hundred long-form strings read by one public page. It carries both languages inline instead and `useDocsText()` reads the side matching `useI18n().lang`. Do not "fix" this by moving it into the dictionary, and do not copy the pattern for ordinary UI strings.
+**`docs/content/` is the one place in `src/` where user-visible copy does NOT go through `i18n`.** That is deliberate and explained in `docs/content/articleTypes.ts`: `LanguageProvider` imports `en.ts` statically, so anything added there ships to all 50+ routes, and the manual is several hundred long-form strings read by one public page. It carries both languages inline instead and `useDocsText()` reads the side matching `useI18n().lang`. Do not "fix" this by moving it into the dictionary, and do not copy the pattern for ordinary UI strings.
 
 ## `av/` — the Aura Velvet design system (OS 3.2)
 
@@ -188,9 +188,11 @@ Design-system notes:
   - Shows whether each passkey `isBackedUp`, because that answers the question people actually
     have: "if I lose this phone, am I locked out?"
 
-- `TestingReact/src/components/PrintPreviewSidebar.tsx` — Pixel-replica of the old DevExpress "Report2" printable ticket report. Fetches full ticket detail + enriches spare-part rows against inventory (`fetchSparePartsInventory`, per-id fallback fetch), renders an A4-styled printable document, `window.print()` on demand.
+- `TestingReact/src/components/PrintPreviewSidebar.tsx` — Print preview for one ticket. Fetches full ticket detail + enriches spare-part rows against inventory (`fetchSparePartsInventory`, per-id fallback fetch), then renders `report/ReportSheet`; `window.print()` on demand.
+  - **It does NOT contain the layout.** The A4 sheet comes from `src/report-layout/`, which is mirrored into the CamID phone app so both platforms print one document. See the `report-layout` note at the bottom of this file.
+  - **Portalled to `document.body`, and that is load-bearing.** `.av-page-stage` carries `transform: translateZ(0)`, which makes it the containing block for every `fixed`/`absolute` descendant, and `overflow: hidden`, which clips them. Rendered inside it the printed report measured `{x:12, y:72, w:709}` on a 733px-wide A4 content box instead of `{0,0,733}` — inset from the top-left with a blank band down the right — and the signature block was cropped off the bottom. The portal is also what lets the print stylesheet hide the rest of the app with `body > *:not(.rpt-print-root)`.
   - Props: `isOpen: boolean`, `onClose: () => void`, `item: RepairServiceItem | null`.
-  - Internal helpers: `fetchSparePartById`, `formatReportDate`, `formatStatus`.
+  - Internal helper: `fetchSparePartById` (the per-id fallback when the bulk inventory page missed a part). Date and status formatting live in `report-layout/format.ts`, shared with the phone.
   - Used by: `ServiceTable.tsx`.
 
 - `TestingReact/src/components/ServiceDetailModal.tsx` — Large ticket detail modal with VIEW mode (read-only audit timeline + spare parts table, matches `RepairServiceViewDialog.razor`) and EDIT mode (form: service date, customer/item autocomplete, priority, location, contract flags — matches `RepairServiceDetailDialog.razor`). Handles create (`POST /api/proxy/receiveitem`) and update (`PUT /api/proxy/technicalservices`) plus delete confirmation.
@@ -277,6 +279,120 @@ effect, which would cost a second render pass and trip this project's
 ## Notes
 
 - Floating/portaled dropdowns (`ModernSelect`, `StatusUpdateDropdown`, `GlobalSearch`, `SparePartSpecModal`) share the `useFloatingPanel` hook at `TestingReact/src/hooks/useFloatingPanel.ts` for positioning — check there first for portal/z-index/positioning bugs.
-- **All user-visible text is translated (English/Khmer).** Never hardcode a display string: add a key to `TestingReact/src/i18n/translations.ts` and read it via `const { t } = useI18n()`. Backend values (ticket `status`, `condition`, `serviceLocation`, priority names) must stay in their English spelling in state and on the wire — translate them only at render, via the helpers in `TestingReact/src/i18n/statusLabel.ts`. `PrintPreviewSidebar` is deliberately excluded: it is a pixel-replica of the legacy DevExpress report.
+- **All user-visible text is translated (English/Khmer).** Never hardcode a display string: add a key to `TestingReact/src/i18n/translations.ts` and read it via `const { t } = useI18n()`. Backend values (ticket `status`, `condition`, `serviceLocation`, priority names) must stay in their English spelling in state and on the wire — translate them only at render, via the helpers in `TestingReact/src/i18n/statusLabel.ts`. The printed report (`src/report-layout/`) is deliberately excluded: its wording is user-editable data from the Templates Settings page, stored in the published template, not UI chrome.
 - Watch for `t` shadowing: `GlobalSearch` and `InspectItemDialog` previously used `t` as a `.map()` parameter name; those are now `ticket`/`type`.
 - `RepairServiceItem`, `SparePartItem`, and API fetch functions (`fetchRepairServices`, `updateServiceStatus`, etc.) come from `TestingReact/src/services/api.ts`.
+
+
+## `src/report-layout/` — the ONE report layout
+
+The printed Technical Service Report is defined once, in `TestingReact/src/report-layout/`,
+and **mirrored verbatim into `CamIdMobile/src/report-layout/`** by
+`npm run sync:shared`. `npm run typecheck` and `npm run build` both run
+`--check` first, so an edit to one side and not the other is a build failure
+rather than a silent fork.
+
+It used to exist three times: `ReportDocument.tsx` (1,926 lines of React) for the
+web canvas and print, and an 887-line hand-written HTML generator on the phone.
+They drifted exactly as you would expect — the mobile generator read 9 of the
+template's 30 fields and hardcoded the rest, so eleven things the designer edits
+published fine on the web and did nothing on the phone.
+
+- **Plain TypeScript, no framework imports, ever.** No React, no Next, no DOM,
+  no `window`, no Node built-ins, and no import out of the folder. That is what
+  lets the same files run inside the Expo/Metro bundle. A single `@/services/...`
+  import here breaks the phone build.
+- **Consumers:** `report/ReportSheet.tsx` (mounts it in the web app),
+  `report/ReportDesignerCanvas.tsx` (Templates Settings, an overlay on top of
+  the same HTML), `PrintPreviewSidebar.tsx`, and the phone's
+  `services/portalTechnicalReportService.ts`.
+- **Every px design token is converted to millimetres** (`pxToMm`). CSS defines
+  `1mm` as exactly `96/25.4` px, so this is lossless on the web — 32px is still
+  32px on screen — and it pins the phone, whose WebView maps CSS px to the PDF
+  at a different rate. Without it a `padding: 32px` printed 8.5mm on the desktop
+  and 11.3mm on the phone from the same code.
+- **`@page` carries no margin.** The page box is the whole A4 sheet and all
+  whitespace is `.rpt-sheet`'s own padding, so the preview and the printout are
+  the same box with the same margins on all four edges. Splitting the whitespace
+  between an `@page margin` and a sheet padding is what previously produced
+  uneven edges.
+- **`.rpt-sheet` must stay in the `box-sizing: border-box` selector**, not just
+  `.rpt-sheet *`. The print rule is `width: 100%` plus that padding, so without
+  it the sheet is exactly two paddings wider than the page and the right edge of
+  every line runs off the paper.
+- **The preview zoom lives inside `@media screen`.** An inline `zoom` on the
+  preview wrapper used to survive into print — `print:transform-none` resets
+  `transform`, not `zoom` — and printed the whole page at 85%, anchored
+  top-left. Declaring it in a screen-only block means print cannot see it at all.
+- **Every interpolated value goes through `escapeHtml`.** The report prints
+  customer names, addresses and free-text complaints straight from the database
+  into a string handed to `dangerouslySetInnerHTML` and to a WebView. There is
+  no trusted caller that may skip it.
+- **`componentOffsets` reaches the page.** `getTargetKey` (in `design.ts`) is the
+  one key function the inspector writes with and the renderer reads with; the
+  offset is emitted as a millimetre `translate`, merged into whatever inline
+  style the element already had.
+- **Printing from a screen that shows the report *inside* the layout needs
+  `ReportPrintPortal`.** The print stylesheet isolates with
+  `body > *:not(.rpt-print-root)`, so the printed element has to be a direct
+  child of `<body>`. The preview sidebar portals its whole overlay and needs
+  nothing extra; the Templates Settings preview tab mounts the portal alongside.
+- **83 unit tests** cover this module, in the CamID project (`npm test`) because
+  that is the side with a runner. They assert the escaping, the px→mm
+  conversion, `@page` having no margin, `.rpt-sheet` being in the border-box
+  rule, zoom staying screen-only, print not clipping, order normalisation,
+  `statusDate`, spare-part precedence and offset rendering.
+- Verified by measurement, not assertion: a real `page.pdf()` from inside the
+  running app reports MediaBox `594.96 x 841.92pt` (exact A4), 1 page, sheet at
+  `{x:0, y:0, w:794, h:1122.5}`, `zoom: 1`, zero horizontal overflow, signature
+  block inside the page, and app chrome fully hidden. A hostile template and a
+  hostile ticket render with all 9 injection vectors escaped.
+
+## `sparepart-taxonomy/` — the spare-part Category / Type / Brand screens (2026-09-05)
+
+Everything the three lookup pages (`app/spareparts/{categories,types,brands}`) share; each
+page holds only its fields and columns.
+
+- `TaxonomyPage.tsx` — page frame: search + optional toolbar extra + Add, table with
+  `SkeletonRows` / `ErrorState` (Retry) / `EmptyState` (distinguishes "nothing yet" from
+  "no match"), footer count. Generic over the row type; the page supplies `columns` and
+  `renderRow`.
+- `TaxonomyFormModal.tsx` — add/edit dialog shell on `av/ModalWrapper` (pinned header,
+  scrolling fields, pinned actions; `labelledBy` from `useId`; undismissable while `busy`).
+  Exports `TaxonomyField` — a `<label htmlFor>` bound to the child through a render-prop
+  `(id) => …` — and `TAXONOMY_INPUT_CLASS`.
+- `BrandLogoField.tsx` — optional logo: R2 upload through `services/upload.ts` with an
+  `AbortController` aborted on unmount (the dialog unmounts its children on close), or a
+  pasted URL. Callers must use the functional `setForm((prev) => …)` — the upload resolves
+  seconds after it was started.
+- `useTaxonomyList.ts` — whole-list load (the lookups are small; no paging) guarded by a
+  generation counter so a stale or post-unmount response is dropped; refreshed by the
+  `sparepart` SSE resource — that path calls `invalidateTaxonomyCache()` first, because the 60s client cache is per tab and would otherwise answer a colleague's write from the stale local copy. A failed *refresh* keeps the rows on screen (§12); only an
+  empty list shows the error state. The effect only starts the load — every state write is
+  in the promise continuation (`react-hooks/set-state-in-effect`).
+- `useTaxonomyCrud.ts` — add/edit/delete state machine: form, busy flag, delete target
+  (kept through the confirm's exit animation), and the result → toast mapping. `inUse`
+  keeps the confirm open so the count is read against the row's name.
+- `taxonomyFeedback.ts` — `ApiWriteResult` failure → sentence, keyed off the API's stable
+  `code` (`duplicate` / `inUse` / network), never off its English `detail`.
+
+## `spareparts/` — classification controls for the catalogue page (2026-09-05)
+
+Used only by `app/spareparts/page.tsx`; extracted so that 1,800-line page did not grow the
+whole feature inline.
+
+- `SparePartFilterBar.tsx` — Category → Type → Brand on `ModernSelect`, plus Clear. Type is
+  disabled (a real `disabled` on `ModernSelect`, placeholder says why) until a category is
+  chosen, and a category change drops the type. Empty string = "all" — the API treats an
+  absent parameter as no filter.
+- `SparePartClassificationFields.tsx` — the same three selects for the add/edit form with a
+  "None" option (→ `null` on the wire). Changing the category clears the type so the API's
+  "type must be inside its category" 400 is never reachable from this form.
+- `useSparePartTaxonomyOptions.ts` — the three lookup lists as `ModernSelectOption[]` plus
+  `typeOptionsFor(categoryId)`; three `useTaxonomyList`s, so the lists refresh on the
+  `sparepart` SSE resource like the taxonomy pages.
+- `useSparePartFilterParams.ts` — `?categoryId&typeId&brandId` ↔ state. Read once on mount
+  through `apply` (GUID-validated, never seeded into `useState` — hydration), written with
+  `replaceState` (no history stacking, other params such as `?q=` preserved). The write
+  effect skips its first run: on mount the state is still `{}` while the read has only just
+  scheduled the seed, and writing then would strip the URL a frame early.

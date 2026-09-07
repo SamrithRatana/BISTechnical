@@ -23,6 +23,7 @@
 
 import React from "react";
 import { motion, useTransform } from "framer-motion";
+import { useDocsTheme } from "./DocsThemeContext";
 import { DOCS_ICONS } from "./docsIcons";
 import { AtlasPlane, CHIPS, PLANES } from "./AtlasPlanes";
 import { ATLAS_REST_POSE, DUR, LOAD, SETTLE_EASE } from "./motion";
@@ -42,6 +43,7 @@ interface AtlasCoreProps {
 }
 
 export default function AtlasCore({ mode, rig, ambient }: AtlasCoreProps) {
+  const { isDark } = useDocsTheme();
   const full = mode === "full";
   // The spine leans with the pointer, a touch more than the stack does — the
   // difference is what makes the beam read as behind the planes.
@@ -102,8 +104,12 @@ export default function AtlasCore({ mode, rig, ambient }: AtlasCoreProps) {
             className="pointer-events-none absolute left-1/2 top-1/2 h-[520px] w-[520px]"
             style={{
               transform: "translate3d(-50%, -50%, -220px)",
-              background:
-                "radial-gradient(circle at 48% 42%, rgb(139 92 246 / 0.28), rgb(6 182 212 / 0.12) 46%, transparent 70%)",
+              /* Half strength on white, for the reason `docsAccent`'s light
+                 skins give: a wash that lifts a near-black stage only dirties
+                 a near-white one. */
+              background: isDark
+                ? "radial-gradient(circle at 48% 42%, rgb(139 92 246 / 0.28), rgb(6 182 212 / 0.12) 46%, transparent 70%)"
+                : "radial-gradient(circle at 48% 42%, rgb(139 92 246 / 0.14), rgb(6 182 212 / 0.06) 46%, transparent 70%)",
             }}
           />
 
@@ -131,8 +137,12 @@ export default function AtlasCore({ mode, rig, ambient }: AtlasCoreProps) {
               className="h-[420px] w-[2px]"
               style={{
                 x: full ? spineShift : 0,
-                background:
-                  "linear-gradient(180deg, transparent, rgb(167 139 250 / 0.55), rgb(34 211 238 / 0.35), transparent)",
+                /* The dark beam is a light source, so it is drawn in the
+                   -400 steps. On white nothing can be lit — the same beam has
+                   to be drawn as ink instead, or it disappears. */
+                background: isDark
+                  ? "linear-gradient(180deg, transparent, rgb(167 139 250 / 0.55), rgb(34 211 238 / 0.35), transparent)"
+                  : "linear-gradient(180deg, transparent, rgb(124 58 237 / 0.5), rgb(8 145 178 / 0.35), transparent)",
               }}
             />
           </div>
@@ -144,8 +154,11 @@ export default function AtlasCore({ mode, rig, ambient }: AtlasCoreProps) {
               className="pointer-events-none absolute left-1/2 top-full hidden h-[240px] w-[520px] lg:block"
               style={{
                 transform: "translate3d(-50%, -130px, -70px) rotateX(76deg)",
-                background:
-                  "repeating-linear-gradient(90deg, rgb(255 255 255 / 0.05) 0 1px, transparent 1px 40px), repeating-linear-gradient(0deg, rgb(255 255 255 / 0.05) 0 1px, transparent 1px 40px)",
+                /* White rules on a white page are no grid at all — the light
+                   theme draws the same lattice in slate ink. */
+                background: isDark
+                  ? "repeating-linear-gradient(90deg, rgb(255 255 255 / 0.05) 0 1px, transparent 1px 40px), repeating-linear-gradient(0deg, rgb(255 255 255 / 0.05) 0 1px, transparent 1px 40px)"
+                  : "repeating-linear-gradient(90deg, rgb(15 23 42 / 0.09) 0 1px, transparent 1px 40px), repeating-linear-gradient(0deg, rgb(15 23 42 / 0.09) 0 1px, transparent 1px 40px)",
                 maskImage: "radial-gradient(ellipse at center, black 28%, transparent 72%)",
                 WebkitMaskImage: "radial-gradient(ellipse at center, black 28%, transparent 72%)",
               }}
@@ -169,7 +182,7 @@ export default function AtlasCore({ mode, rig, ambient }: AtlasCoreProps) {
                 transition={full ? { duration: 0.25, delay: chip.delay } : { duration: 0 }}
               >
                 <motion.div
-                  className="flex items-center gap-1.5 rounded-full border border-white/10 bg-[#0a0c18]/95 px-3 py-1.5 font-mono text-[10.5px] font-semibold uppercase tracking-widest text-slate-200 shadow-[0_8px_30px_rgb(0_0_0/0.5)]"
+                  className={`flex items-center gap-1.5 rounded-full border px-3 py-1.5 font-mono text-[10.5px] font-bold uppercase tracking-widest transition-colors ${isDark ? "border-white/10 bg-[#0a0c18]/95 text-slate-200 shadow-[0_8px_30px_rgb(0_0_0/0.5)]" : "border-slate-200 bg-white/95 text-slate-800 shadow-[0_8px_25px_rgb(0_0_0/0.1)]"}`}
                   animate={ambient ? { y: [-4, 4] } : { y: 0 }}
                   transition={
                     ambient
@@ -182,7 +195,7 @@ export default function AtlasCore({ mode, rig, ambient }: AtlasCoreProps) {
                       : { duration: DUR.reveal, ease: SETTLE_EASE }
                   }
                 >
-                  <Icon className="h-3.5 w-3.5 text-violet-300" />
+                  <Icon className={`h-3.5 w-3.5 ${isDark ? "text-violet-300" : "text-violet-700"}`} />
                   <span>{chip.label}</span>
                 </motion.div>
               </motion.div>

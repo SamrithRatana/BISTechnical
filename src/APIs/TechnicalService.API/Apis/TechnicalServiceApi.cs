@@ -6,10 +6,12 @@ using MediatR;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Http.HttpResults;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.OutputCaching;
 using System.Globalization;
 using TechnicalService.API.Apis;
 using TechnicalService.API.Application.Commands;
 using TechnicalService.API.Application.Queries;
+using TechnicalService.Domain;
 
 // Imported as aliases rather than `using TechnicalService.API.Extensions;`
 // because this file also references the global `Extensions` class by name
@@ -36,8 +38,10 @@ public static class TechnicalServiceApi
         api.MapDelete("/items/{itemId:Guid}", DeleteItemAsync);
 
         // Spareparts - Basic and Search
-        api.MapGet("/spareparts", GetSparepartsAsync);
-        api.MapGet("/spareparts/search", SearchSparepartsAsync);
+        api.MapGet("/spareparts", GetSparepartsAsync)
+           .CacheOutput(Extensions.SparepartsCachePolicy);
+        api.MapGet("/spareparts/search", SearchSparepartsAsync)
+           .CacheOutput(Extensions.SparepartsCachePolicy);
         api.MapGet("/spareparts/{sparepartId:Guid}", GetSparepartAsync);
         api.MapPost("/spareparts", CreateSparepartAsync);
         api.MapPut("/spareparts", UpdateSparepartAsync);
@@ -137,6 +141,130 @@ public static class TechnicalServiceApi
         {
             var rentalItems = await queries.GetRentalItemsBySerialNumberAsync(serialNo);
             return TypedResults.Ok(rentalItems);
+        });
+
+        // ── Telegram message tracking endpoints (per-topic message lifecycle) ──
+        api.MapGet("/technicalservices/{serviceId:Guid}/telegram-messages", async (
+            Guid serviceId,
+            TechnicalServiceContext context) =>
+        {
+            var messages = await context.ServiceTelegramMessages
+                .AsNoTracking()
+                .Where(x => x.ServiceId == serviceId && x.DeletedAt == null)
+                .OrderByDescending(x => x.CreatedAt)
+                .Select(x => new { x.TopicKey, x.MessageId, x.CreatedAt })
+                .ToListAsync();
+
+            if (messages.Count == 0)
+            {
+                var svc = await context.Services
+                    .AsNoTracking()
+                    .Where(x => x.Id == serviceId)
+                    .Select(x => new { x.TelegramMessageId, StatusId = x.Status.Id })
+                    .FirstOrDefaultAsync();
+
+                if (svc?.TelegramMessageId != null && svc.TelegramMessageId > 0)
+                {
+                    string topicKey = svc.StatusId switch
+                    {
+                        1 => "ItemReceived",
+                        11 => "Inspecting",
+                        2 => "Inspection",
+                        4 => "AwaitingCustomerConfirm",
+                        3 => "AwaitingSparepart",
+                        5 => "SaleConfirmed",
+                        6 => "SentSpareparts",
+                        12 => "Finished",
+                        7 => "CustomerRejected",
+                        8 => "Unrepairable",
+                        _ => "ItemReceived"
+                    };
+                    return Results.Ok(new[] { new { TopicKey = topicKey, MessageId = svc.TelegramMessageId.Value, CreatedAt = DateTime.UtcNow } });
+                }
+            }
+
+            return Results.Ok(messages);
+        });
+
+        api.MapGet("/technicalservices/{serviceId:Guid}/telegram-message", async (
+            Guid serviceId,
+            [FromQuery] string topicKey,
+            TechnicalServiceContext context) =>
+        {
+            if (string.IsNullOrWhiteSpace(topicKey))
+                return Results.BadRequest("topicKey is required.");
+
+            var messageId = await context.ServiceTelegramMessages
+                .AsNoTracking()
+                .Where(x => x.ServiceId == serviceId && x.TopicKey == topicKey && x.DeletedAt == null)
+                .OrderByDescending(x => x.CreatedAt)
+                .Select(x => (int?)x.MessageId)
+                .FirstOrDefaultAsync();
+
+            if (messageId == null)
+            {
+                var svc = await context.Services
+                    .AsNoTracking()
+                    .Where(x => x.Id == serviceId)
+                    .Select(x => (int?)x.TelegramMessageId)
+                    .FirstOrDefaultAsync();
+
+                if (svc != null && svc > 0)
+                {
+                    return Results.Ok(new { MessageId = svc.Value });
+                }
+
+                return Results.NotFound();
+            }
+
+            return Results.Ok(new { MessageId = messageId });
+        });
+
+        api.MapPost("/technicalservices/{serviceId:Guid}/telegram-message", async (
+            Guid serviceId,
+            [FromBody] SaveTelegramMessageRequest request,
+            TechnicalServiceContext context) =>
+        {
+            if (string.IsNullOrWhiteSpace(request.TopicKey))
+                return Results.BadRequest("TopicKey is required.");
+
+            var row = new ServiceTelegramMessage(serviceId, request.TopicKey, request.MessageId);
+            context.ServiceTelegramMessages.Add(row);
+            await context.SaveChangesAsync();
+            return Results.Ok();
+        });
+
+        api.MapPost("/technicalservices/telegram-message/{messageId:int}/mark-deleted", async (
+            int messageId,
+            TechnicalServiceContext context) =>
+        {
+            var row = await context.ServiceTelegramMessages
+                .Where(x => x.MessageId == messageId && x.DeletedAt == null)
+                .OrderByDescending(x => x.CreatedAt)
+                .FirstOrDefaultAsync();
+
+            if (row != null)
+            {
+                row.MarkDeleted();
+                await context.SaveChangesAsync();
+            }
+            return Results.Ok();
+        });
+
+        api.MapPost("/technicalservices/{serviceId:Guid}/telegram-messages/mark-all-deleted", async (
+            Guid serviceId,
+            TechnicalServiceContext context) =>
+        {
+            var rows = await context.ServiceTelegramMessages
+                .Where(x => x.ServiceId == serviceId && x.DeletedAt == null)
+                .ToListAsync();
+
+            foreach (var row in rows)
+            {
+                row.MarkDeleted();
+            }
+            await context.SaveChangesAsync();
+            return Results.Ok();
         });
 
         return api;
@@ -253,7 +381,8 @@ public static class TechnicalServiceApi
     }
     public static async Task<Results<Ok, BadRequest<string>>> ManualStockOutAsync(
     ManualStockOutRequest request,
-    [AsParameters] TechnicalServices services)
+    [AsParameters] TechnicalServices services,
+    IOutputCacheStore cache)
     {
         if (request.SparepartId == Guid.Empty)
             return TypedResults.BadRequest("SparepartId is required.");
@@ -280,6 +409,9 @@ public static class TechnicalServiceApi
             {
                 services.Logger.LogInformation(
                     "ManualStockOutCommand succeeded");
+                // The trigger has just changed Spareparts.Quantity; the cached
+                // list must not keep showing the old stock for another 60s.
+                await cache.EvictByTagAsync(Extensions.SparepartsCacheTag, CancellationToken.None);
                 return TypedResults.Ok();
             }
 
@@ -436,18 +568,17 @@ public static class TechnicalServiceApi
     }
 
     public static async Task<Ok<PagedResult<Sparepart>>> GetSparepartsAsync(
-        [FromQuery] int pageNumber = 1,
-        [FromQuery] int pageSize = 10,
-        ITechnicalServiceQueries queries = null)
+        [AsParameters] SparepartSearchQuery query,
+        ITechnicalServiceQueries queries)
     {
-        var (page, size) = Pagination.Normalize(pageNumber, pageSize);
-        var parts = await queries.GetSparepartsAsync(page, size);
+        var parts = await queries.SearchSparepartsAsync(query);
         return TypedResults.Ok(parts);
     }
 
     public static async Task<Results<Ok, BadRequest<string>>> CreateSparepartAsync(
      CreateSparepartRequest request,
-     [AsParameters] TechnicalServices services)
+     [AsParameters] TechnicalServices services,
+     IOutputCacheStore cache)
     {
         var createSparepartCommand = new CreateSparepartCommand(
             request.ItemName,
@@ -457,7 +588,8 @@ public static class TechnicalServiceApi
             request.PictureUrl,
             request.LinkItemId,
             request.Quantity,
-                    request.DefaultPrice);
+            request.DefaultPrice,
+            request.Classification);
 
         services.Logger.LogInformation(
             "Sending command: {CommandName}: {@Command}",
@@ -469,6 +601,16 @@ public static class TechnicalServiceApi
         if (result)
         {
             services.Logger.LogInformation("CreateSparepartCommand succeeded");
+            // The list endpoints are output-cached under this tag for 60s;
+            // without the eviction a new part was invisible until the entry
+            // expired, however many times the client refetched. The taxonomy
+            // lists carry PartCount, so they go too — but only when a
+            // classification was actually written.
+            await cache.EvictByTagAsync(Extensions.SparepartsCacheTag, CancellationToken.None);
+            if (request.Classification is not null)
+            {
+                await cache.EvictByTagAsync(Extensions.SparepartTaxonomyCacheTag, CancellationToken.None);
+            }
             return TypedResults.Ok();
         }
 
@@ -477,7 +619,8 @@ public static class TechnicalServiceApi
     }
     public static async Task<Results<Ok, BadRequest<string>>> UpdateSparepartAsync(
         UpdateSparepartCommand command,
-        [AsParameters] TechnicalServices services)
+        [AsParameters] TechnicalServices services,
+        IOutputCacheStore cache)
     {
         services.Logger.LogInformation(
             "Sending command: {CommandName} - {IdProperty}: {CommandId} ({@Command})",
@@ -491,6 +634,13 @@ public static class TechnicalServiceApi
         if (commandResult)
         {
             services.Logger.LogInformation("{CommandName} succeeded", command.GetType().Name);
+            await cache.EvictByTagAsync(Extensions.SparepartsCacheTag, CancellationToken.None);
+            // The phone's stock-in is a PUT with no classification; PartCount
+            // cannot have moved, so the taxonomy lists keep their cache.
+            if (command.Classification is not null)
+            {
+                await cache.EvictByTagAsync(Extensions.SparepartTaxonomyCacheTag, CancellationToken.None);
+            }
             return TypedResults.Ok();
         }
 
@@ -554,6 +704,10 @@ public static class TechnicalServiceApi
         ReceiveItemRequest request,
         [AsParameters] TechnicalServices services)
     {
+        var serviceDate = request.ServiceDate.Kind == DateTimeKind.Utc
+            ? request.ServiceDate.AddHours(7)
+            : request.ServiceDate;
+
         var createRepairServiceCommand = new ReceiveItemCommand(
             request.CustomerId,
             request.CompanyName,
@@ -561,7 +715,7 @@ public static class TechnicalServiceApi
             request.ContactName,
             request.PhoneNumber,
             request.HasContract,
-            request.ServiceDate,
+            serviceDate,
             request.ReportNo,
             request.ServiceLocation,
             request.ServicePriorityId,
@@ -570,8 +724,7 @@ public static class TechnicalServiceApi
             request.CreateBy);
 
         // Deliberately not "{@Command}": ReceiveItemCommand carries the
-        // customer's name, address and phone number, and Program.cs sets
-        // SendDefaultPii = false precisely so those do not reach Sentry.
+        // customer's name, address and phone number.
         services.Logger.LogInformation(
             "Sending command: {CommandName} for report {ReportNo}",
             createRepairServiceCommand.GetType().Name,
@@ -615,7 +768,7 @@ public static class TechnicalServiceApi
         }
     }
 
-    public static async Task<Results<Ok, NotFound>> DeleteReceiveItemAsync(
+    public static async Task<Results<Ok, NotFound, BadRequest<string>>> DeleteReceiveItemAsync(
         Guid serviceId,
         [AsParameters] TechnicalServices services)
     {
@@ -641,12 +794,17 @@ public static class TechnicalServiceApi
             else
             {
                 services.Logger.LogWarning("DeleteReceiveItemCommand failed");
-                return TypedResults.NotFound();
+                return TypedResults.BadRequest("Failed to delete receive item");
             }
         }
         catch (KeyNotFoundException)
         {
             return TypedResults.NotFound();
+        }
+        catch (InvalidOperationException ex)
+        {
+            services.Logger.LogWarning(ex, "Cannot delete service with ID {ServiceId}", serviceId);
+            return TypedResults.BadRequest(ex.Message);
         }
     }
     public static async Task<Results<Ok, BadRequest<string>>> SetInspectingAsync(
@@ -1041,49 +1199,67 @@ public static class TechnicalServiceApi
     SetSentSparepartsRequest request,
     [AsParameters] TechnicalServices services)
     {
-        var command = new SetSentSparepartsCommand(
-            request.Id,
-            BusinessClock.Now,            request.SetSentSparepartsBy);
-
-        services.Logger.LogInformation(
-            "Sending command: {CommandName}: {@Command}",
-            command.GetType().Name,
-            command);
-
-        var result = await services.Mediator.Send(command);
-
-        if (result)
+        try
         {
-            services.Logger.LogInformation("{CommandName} succeeded", command.GetType().Name);
-            return TypedResults.Ok();
-        }
+            var command = new SetSentSparepartsCommand(
+                request.Id,
+                BusinessClock.Now,
+                request.SetSentSparepartsBy);
 
-        services.Logger.LogWarning("{CommandName} failed", command.GetType().Name);
-        return TypedResults.BadRequest("The operation failed.");
+            services.Logger.LogInformation(
+                "Sending command: {CommandName}: {@Command}",
+                command.GetType().Name,
+                command);
+
+            var result = await services.Mediator.Send(command);
+
+            if (result)
+            {
+                services.Logger.LogInformation("{CommandName} succeeded", command.GetType().Name);
+                return TypedResults.Ok();
+            }
+
+            services.Logger.LogWarning("{CommandName} failed", command.GetType().Name);
+            return TypedResults.BadRequest("The operation failed.");
+        }
+        catch (Exception ex)
+        {
+            var msg = ex.GetBaseException()?.Message ?? ex.Message;
+            services.Logger.LogWarning(ex, "Failed to SetSentSpareparts: {Message}", msg);
+            return TypedResults.BadRequest(msg);
+        }
     }
     public static async Task<Results<Ok, BadRequest<string>>> SetRepairAsync(
      SetRepairRequest request,
      [AsParameters] TechnicalServices services)
     {
-        var command = new SetRepairCommand(
-            request.Id,
-            request.RepairBy,
-            BusinessClock.Now);
-        services.Logger.LogInformation(
-            "Sending command: {CommandName}: {@Command}",
-            command.GetType().Name,
-            command);
-
-        var result = await services.Mediator.Send(command);
-
-        if (result)
+        try
         {
-            services.Logger.LogInformation("SetRepairCommand succeeded");
-            return TypedResults.Ok();
-        }
+            var command = new SetRepairCommand(
+                request.Id,
+                request.RepairBy,
+                BusinessClock.Now);
+            services.Logger.LogInformation(
+                "Sending command: {CommandName}: {@Command}",
+                command.GetType().Name,
+                command);
 
-        services.Logger.LogWarning("SetRepairCommand failed");
-        return TypedResults.BadRequest("SetRepairCommand failed.");
+            var result = await services.Mediator.Send(command);
+
+            if (result)
+            {
+                services.Logger.LogInformation("SetRepairCommand succeeded");
+                return TypedResults.Ok();
+            }
+
+            services.Logger.LogWarning("SetRepairCommand failed");
+            return TypedResults.BadRequest("SetRepairCommand failed.");
+        }
+        catch (InvalidOperationException ex)
+        {
+            services.Logger.LogWarning("SetRepairCommand validation failed: {Message}", ex.Message);
+            return TypedResults.BadRequest(ex.Message);
+        }
     }
 
     public static async Task<Results<Ok, BadRequest<string>>> SetThirdPartyRepairAsync(
@@ -1370,7 +1546,8 @@ public record CreateSparepartRequest(
     string PictureUrl,
     Guid LinkItemId,
     int Quantity,
-    decimal DefaultPrice = 0);
+    decimal DefaultPrice = 0,
+    SparepartClassification? Classification = null);
 public record ReceiveItemRequest(
     Guid CustomerId,
     string CompanyName,
@@ -1444,3 +1621,5 @@ public record SetSentSparepartsRequest(
     Guid Id,
     Guid SetSentSparepartsBy);
 public record UpdateSparepartItemRemarksRequest(string Remarks);
+public record SaveTelegramMessageRequest(string TopicKey, int MessageId);
+public record UpdateTelegramMessageIdRequest(int TelegramMessageId);

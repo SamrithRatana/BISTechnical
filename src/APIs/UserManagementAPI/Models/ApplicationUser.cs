@@ -15,6 +15,15 @@ namespace UserManagementAPI.Models
         [MaxLength(500)]
         public string ProfilePictureUrl { get; set; }
 
+        /// <summary>
+        /// Profile COVER image URL. Server-side so the web portal and the CAM ID
+        /// mobile app show the same cover — before this column the web kept the
+        /// cover in one browser's localStorage, which no other device could see.
+        /// Null means "use the client's default cover".
+        /// </summary>
+        [MaxLength(500)]
+        public string CoverUrl { get; set; }
+
         public ApplicationUser()
         {
             Messages = new HashSet<Message>();

@@ -41,10 +41,13 @@ import { useDebouncedValue } from "@/hooks/useDebouncedValue";
 import { useSafeTimeout } from "@/hooks/useSafeTimeout";
 import { useInfiniteList } from "@/hooks/useInfiniteList";
 import HighlightText from "./HighlightText";
+import { getImageUrl } from "@/lib/utils";
 import SparePartSpecModal from "./SparePartSpecModal";
 import ModernSelect from "./ModernSelect";
 import InfiniteScrollStatus from "./InfiniteScrollStatus";
 import { useI18n } from "@/i18n/LanguageProvider";
+import { firstValidationMessage } from "@/i18n/validationMessage";
+import { validateInspection } from "@/validation";
 import type { TranslationKey } from "@/i18n/translations";
 import { ModalWrapper } from "@/components/av/ModalWrapper";
 
@@ -67,6 +70,7 @@ interface SparePartLine {
   stockQty:    number;
   quantity:    number;
   condition:   "Fix" | "Replace" | "Free";
+  remarks?:    string;
   /**
    * The full record this line was added from, kept so the spec view stays
    * accurate: the search results list is replaced on every query, so a part
@@ -82,8 +86,11 @@ export interface InspectPayload {
   serviceTypeId: number; // 1 = Free, 2 = Charge
   spareParts: Array<{
     sparePartId: string;
+    itemName?:   string;
+    description?: string;
     quantity:    number;
     condition:   string;
+    remarks?:    string;
     isHoldStatus?: boolean;
   }>;
 }
@@ -248,7 +255,7 @@ export default function InspectItemDialog({ item, onClose, onSave, prefill }: In
               const sparePartId = (p.sparePartId ?? p.sparepartId) as string | undefined;
               if (!sparePartId) return null;
               const rowId = p.id as string | undefined;
-              const catalog = await fetchSparePartById(sparePartId);
+              const catalog = await fetchSparePartById(sparePartId, true);
               const itemName = catalog?.itemName || (p.description as string) || "Unknown";
               const useFor = catalog?.useFor ?? "";
               const pictureUrl = catalog?.pictureUrl ?? "";
@@ -271,7 +278,10 @@ export default function InspectItemDialog({ item, onClose, onSave, prefill }: In
                 useFor,
                 pictureUrl,
                 stockQty,
-                quantity: (p.quantity as number) ?? 1,
+                // `||`, not `??`: a stored 0 is not a meaningful quantity — the input
+        // clamps to min 1 — and preserving it made the shared rule refuse the
+        // whole save when someone merely reopened an existing inspection.
+        quantity: (p.quantity as number) || 1,
                 condition,
                 part
               };
@@ -358,18 +368,29 @@ export default function InspectItemDialog({ item, onClose, onSave, prefill }: In
     e.preventDefault();
     setValidationError(null);
 
-    // Inspection and Solution are the only required fields on this form —
-    // they're what a technician is actually reporting, and the backend
-    // column has a [Required] constraint on both. The HTML `required`
-    // attribute on the textareas below still helps (keyboard-native, no JS
-    // needed to trigger it), but it won't catch whitespace-only text and
-    // shows a browser-native tooltip instead of this app's own error style,
-    // so it's backed up here rather than relied on alone. Service Type
-    // always carries a value (defaults to Free) and spare parts are
-    // genuinely optional — not every inspection uses a part — so neither is
-    // validated here.
-    if (!inspection.trim() || !solution.trim()) {
-      setValidationError(t("inspect.requiredFields"));
+    // Inspection and Solution are what a technician is actually reporting, and
+    // the backend column has a [Required] constraint on both. The HTML
+    // `required` attribute on the textareas below still helps (keyboard-native,
+    // no JS needed to trigger it), but it won't catch whitespace-only text and
+    // shows a browser-native tooltip instead of this app's own error style, so
+    // it's backed up here rather than relied on alone. Service Type always
+    // carries a value (defaults to Free) and spare parts are genuinely optional
+    // — not every inspection uses a part.
+    //
+    // The rule itself lives in `@/validation`, mirrored into the CamID app, so
+    // the phone's inspection sheet refuses exactly what this refuses. It adds
+    // one check this screen lacked: a line present with a zero or missing
+    // quantity, which the number input clamps on change and therefore never
+    // caught for a value arriving any other way.
+    const check = validateInspection({
+      inspection,
+      solution,
+      spareParts: lines.map((l) => ({ quantity: l.quantity })),
+    });
+    if (!check.isValid) {
+      setValidationError(
+        check.codes.inspection ? t("inspect.requiredFields") : firstValidationMessage(check, t)
+      );
       return;
     }
 
@@ -381,8 +402,11 @@ export default function InspectItemDialog({ item, onClose, onSave, prefill }: In
       serviceTypeId,
       spareParts:    lines.map((l) => ({
         sparePartId: l.sparePartId,
+        itemName:    l.itemName || l.part?.itemName || "",
+        description: l.itemName || l.part?.itemName || l.useFor || "",
         quantity:    l.quantity,
         condition:   l.condition,
+        remarks:     l.remarks || "-",
         isHoldStatus: true
       }))
     };
@@ -545,7 +569,7 @@ export default function InspectItemDialog({ item, onClose, onSave, prefill }: In
                 />
               </div>
 
-              {dropdownOpen && (partSearch.length > 0 || filteredParts.length > 0) && searchCoords &&
+              {!viewPart && dropdownOpen && (partSearch.length > 0 || filteredParts.length > 0) && searchCoords &&
                 createPortal(
                   <div
                     ref={searchPanelRef}
@@ -556,7 +580,7 @@ export default function InspectItemDialog({ item, onClose, onSave, prefill }: In
                       width: searchCoords.width,
                       transform: searchCoords.placement === "top" ? "translateY(-100%)" : undefined
                     }}
-                    className={`z-[100] bg-surface  border border-subtle  rounded-xl shadow-xl overflow-hidden ${
+                    className={`z-[9999] bg-surface border border-subtle rounded-xl shadow-2xl overflow-hidden ${
                       searchCoords.placement === "top" ? "dropdown-panel-in-top" : "dropdown-panel-in"
                     }`}
                   >
@@ -582,7 +606,7 @@ export default function InspectItemDialog({ item, onClose, onSave, prefill }: In
                                 className="w-full flex items-center gap-2 px-3 py-2 hover:bg-cushion transition-colors text-left cursor-pointer"
                               >
                                 {part.pictureUrl ? (
-                                  <img src={part.pictureUrl} alt="" width={32} height={32} loading="lazy" decoding="async" className="w-8 h-8 object-cover rounded-lg border border-subtle shrink-0" />
+                                  <img src={getImageUrl(part.pictureUrl)} alt="" width={32} height={32} loading="lazy" decoding="async" className="w-8 h-8 object-cover rounded-lg border border-subtle shrink-0 bg-white" />
                                 ) : (
                                   <div className="w-8 h-8 bg-sunken rounded-lg border border-subtle flex items-center justify-center shrink-0">
                                     <Package className="w-4 h-4 text-ink-muted" />
@@ -602,6 +626,7 @@ export default function InspectItemDialog({ item, onClose, onSave, prefill }: In
                                   title="View specification"
                                   onClick={(e) => {
                                     e.stopPropagation();
+                                    setDropdownOpen(false);
                                     setViewPart(part);
                                   }}
                                   className="shrink-0 p-1.5 rounded-lg text-ink-muted hover:text-accent hover:bg-accent-soft transition-colors"
@@ -645,7 +670,7 @@ export default function InspectItemDialog({ item, onClose, onSave, prefill }: In
                       <tr key={line.lineId} className="hover:bg-cushion ">
                         <td className="px-2 py-1.5 text-center">
                           {line.pictureUrl ? (
-                            <img src={line.pictureUrl} alt="" width={32} height={32} loading="lazy" decoding="async" className="w-8 h-8 object-cover rounded border border-subtle mx-auto" />
+                            <img src={getImageUrl(line.pictureUrl)} alt="" width={32} height={32} loading="lazy" decoding="async" className="w-8 h-8 object-cover rounded border border-subtle mx-auto bg-white" />
                           ) : (
                             <div className="w-8 h-8 bg-sunken rounded border border-subtle flex items-center justify-center mx-auto">
                               <Package className="w-4 h-4 text-ink-muted" />
@@ -653,7 +678,26 @@ export default function InspectItemDialog({ item, onClose, onSave, prefill }: In
                           )}
                         </td>
                         <td className="px-3 py-1.5">
-                          <p className="font-medium text-ink truncate max-w-[180px]">{line.itemName}</p>
+                          <div className="flex items-center gap-1.5 flex-wrap">
+                            <p className="font-medium text-ink truncate max-w-[170px]">{line.itemName}</p>
+                            {line.stockQty !== undefined && (
+                              <span
+                                className={`text-[9.5px] px-1.5 py-0.5 rounded font-bold ${
+                                  line.stockQty >= line.quantity
+                                    ? "bg-success-soft text-success-fg border border-success/20"
+                                    : line.stockQty > 0
+                                    ? "bg-warning-soft text-warning-fg border border-warning/20"
+                                    : "bg-danger-soft text-danger-fg border border-danger/20"
+                                }`}
+                              >
+                                {line.stockQty >= line.quantity
+                                  ? `សល់ ${line.stockQty}`
+                                  : line.stockQty > 0
+                                  ? `ខ្វះស្តុក (សល់ ${line.stockQty})`
+                                  : "អស់ស្តុក"}
+                              </span>
+                            )}
+                          </div>
                           <p className="text-[10px] text-ink-secondary truncate max-w-[180px]">{line.useFor}</p>
                         </td>
                         <td className="px-2 py-1.5 text-center">
@@ -670,7 +714,7 @@ export default function InspectItemDialog({ item, onClose, onSave, prefill }: In
                             dense
                             value={line.condition}
                             onChange={(v) => updateLine(line.lineId, { condition: v as SparePartLine["condition"] })}
-                            options={CONDITIONS.map((c) => ({ value: c, label: t(CONDITION_LABEL_KEYS[c]) }))}
+                            options={CONDITIONS.map((c) => ({ value: c, label: c }))}
                           />
                         </td>
                         <td className="px-2 py-1.5 text-center">

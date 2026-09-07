@@ -1,4 +1,4 @@
-﻿namespace TechnicalService.Domain.AggregatesModel.TechnicalAggregate;
+namespace TechnicalService.Domain.AggregatesModel.TechnicalAggregate;
 
 public class Service
     : Entity, IAggregateRoot
@@ -26,8 +26,12 @@ public class Service
     public ServiceLocation ServiceLocation { get; private set; }
 
     public ServiceType ServiceType { get; private set; }
+    public int ServiceTypeId => _serviceTypeId;
 
     public ServicePriority ServicePriority { get; private set; }
+    public int ServicePriorityId => _servicePriorityId;
+
+    public int ServiceStatusId => _serviceStatusId;
 
     public Guid? ItemId { get; private set; }
 
@@ -79,6 +83,10 @@ public class Service
     public Guid? VerifiedBy { get; private set; }
 
     public ServiceStatus Status { get; private set; }
+
+    public int? TelegramMessageId { get; private set; }
+
+    public void SetTelegramMessageId(int? messageId) => TelegramMessageId = messageId;
 
     private List<SparepartItem> _sparepartItems;
 
@@ -142,7 +150,8 @@ public class Service
     public void UpdateRepairService(string reportNo, DateTime serviceDate, Guid customerId, string companyName, string address,
         string contactName, string phoneNumber, string customerRequest, string inspection, string solution,
         ServiceLocation serviceLocation, int serviceTypeId, int servicePriorityId, int statusId, Guid? itemId,
-        bool hasContract, List<SparepartItem> sparepartItems)
+        bool hasContract, List<SparepartItem> sparepartItems, DateTime? finishedDate = null,
+        Guid? repairBy = null, Guid? verifiedBy = null)
     {
         ReportNo = reportNo;
         ServiceDate = serviceDate;
@@ -161,14 +170,61 @@ public class Service
         ItemId = itemId;
         HasContract = hasContract;
 
-        List<SparepartItem> parts = new();
-
-        foreach (var item in sparepartItems)
+        if (finishedDate.HasValue)
         {
-            parts.Add(new SparepartItem(item.SparepartId, item.Description, item.Quantity, item.Condition));
+            FinishedDate = finishedDate.Value;
         }
 
-        _sparepartItems = parts;
+        if (repairBy.HasValue && repairBy.Value != Guid.Empty)
+        {
+            RepairBy = repairBy.Value;
+        }
+
+        if (verifiedBy.HasValue && verifiedBy.Value != Guid.Empty)
+        {
+            VerifiedBy = verifiedBy.Value;
+        }
+
+        bool isHoldStatus = !(statusId == 5 || statusId == 6 || statusId == 12);
+
+        var existingItems = _sparepartItems.ToList();
+        var incomingList = sparepartItems.Where(x => x.SparepartId != Guid.Empty).ToList();
+        var incomingSparepartIds = incomingList.Select(x => x.SparepartId).ToHashSet();
+
+        // 1. Remove items no longer present
+        var itemsToRemove = existingItems.Where(e => !incomingSparepartIds.Contains(e.SparepartId)).ToList();
+        foreach (var item in itemsToRemove)
+        {
+            _sparepartItems.Remove(item);
+        }
+
+        // 2. Update existing or add new
+        foreach (var incoming in incomingList)
+        {
+            var existing = existingItems.FirstOrDefault(e => e.SparepartId == incoming.SparepartId);
+            if (existing != null && !itemsToRemove.Contains(existing))
+            {
+                existing.UpdateDetails(
+                    incoming.Description,
+                    incoming.Quantity,
+                    incoming.Condition,
+                    isHoldStatus);
+                if (!string.IsNullOrWhiteSpace(incoming.Remarks))
+                {
+                    existing.UpdateRemarks(incoming.Remarks);
+                }
+            }
+            else if (existing == null)
+            {
+                _sparepartItems.Add(new SparepartItem(
+                    incoming.SparepartId,
+                    incoming.Description,
+                    incoming.Quantity,
+                    incoming.Condition,
+                    isHoldStatus,
+                    incoming.Remarks));
+            }
+        }
     }
 
     public void ClearSparepartItems()

@@ -13,8 +13,24 @@
  * were built on.
  */
 
-import { type RepairServiceItem, calculateDaysTaken } from "./types";
+import { type RepairServiceItem, type SparePartItemDetail, calculateDaysTaken } from "./types";
 import { fetchUserMap, enrichTicketUsers } from "./userService";
+import { resolveCustomerTypesBatch } from "./api";
+/**
+ * Every read in this file goes through `fetchWithRetry`, never bare `fetch`.
+ *
+ * `fetch` has no default timeout, so a backend that accepts the connection and
+ * then goes quiet never rejects — and each of these calls is awaited by a
+ * report page that shows a spinner until it settles. That spinner would turn
+ * forever, with the Retry affordance unreachable behind it, which is exactly
+ * the stuck-until-reload state this app is not supposed to have.
+ *
+ * `fetchWithRetry` is the right one rather than plain `fetchWithTimeout`
+ * because all six are GETs: it only ever retries idempotent methods, and only
+ * fast failures (network error, 5xx, 429), so a genuine 20s timeout surfaces
+ * immediately instead of being silently waited out twice more.
+ */
+import { fetchWithRetry } from "@/lib/withTimeout";
 
 /**
  * How many rows one report request pulls.
@@ -69,9 +85,10 @@ async function fetchAndEnrichTickets(
   }
 
   const [res, userMap] = await Promise.all([
-    fetch(targetUrl, {
+    fetchWithRetry(targetUrl, {
       cache: "no-store",
       headers: { Accept: "application/json" },
+      label: "ticket report",
     }),
     fetchUserMap().catch(() => new Map()),
   ]);
@@ -180,9 +197,10 @@ export async function fetchSparepartUsage(
     sourceFilter: "",
   });
 
-  const res = await fetch(`/api/proxy/spareparts/usage?${params.toString()}`, {
+  const res = await fetchWithRetry(`/api/proxy/spareparts/usage?${params.toString()}`, {
     cache: "no-store",
     headers: { Accept: "application/json" },
+    label: "spare part usage",
   });
   if (!res.ok) throw new Error(`Spare part usage request failed (${res.status})`);
 
@@ -202,9 +220,10 @@ export async function fetchSparepartHold(): Promise<SparepartHoldRow[]> {
     sortDescending: "true",
   });
 
-  const res = await fetch(`/api/proxy/spareparts/hold?${params.toString()}`, {
+  const res = await fetchWithRetry(`/api/proxy/spareparts/hold?${params.toString()}`, {
     cache: "no-store",
     headers: { Accept: "application/json" },
+    label: "spare part hold",
   });
   if (!res.ok) throw new Error(`Spare part hold request failed (${res.status})`);
 
@@ -297,9 +316,10 @@ export interface StockTransactionFilters {
 }
 
 async function getStockJson<T>(path: string, params: URLSearchParams): Promise<T[]> {
-  const res = await fetch(`/api/proxy/${path}?${params.toString()}`, {
+  const res = await fetchWithRetry(`/api/proxy/${path}?${params.toString()}`, {
     cache: "no-store",
     headers: { Accept: "application/json" },
+    label: path,
   });
   if (!res.ok) throw new Error(`${path} request failed (${res.status})`);
   const data = await res.json();
@@ -427,9 +447,10 @@ export async function fetchStockReconciliation(
     fromDate: toBackendDate(from),
     toDate: toBackendDate(to, true),
   });
-  const res = await fetch(`/api/proxy/spareparts/reconciliation?${params.toString()}`, {
+  const res = await fetchWithRetry(`/api/proxy/spareparts/reconciliation?${params.toString()}`, {
     cache: "no-store",
     headers: { Accept: "application/json" },
+    label: "stock reconciliation",
   });
   if (!res.ok) throw new Error(`Stock reconciliation request failed (${res.status})`);
   return (await res.json()) as StockReconciliationResult;
@@ -559,11 +580,85 @@ const ALL_PROCESS_STATUSES: ServiceStageKey[] = [
   "Repair by Third-Party",
 ];
 
+let sparePartCatalogMap: Map<string, string> | null = null;
+let sparePartCatalogPromise: Promise<Map<string, string>> | null = null;
+
+/**
+ * Loads the spare part catalog map (cached in-memory for fast lookup)
+ * mapping part id, serial number, and part number to the human-readable item name.
+ */
+export async function fetchSparePartCatalogMap(): Promise<Map<string, string>> {
+  if (sparePartCatalogMap && sparePartCatalogMap.size > 0) return sparePartCatalogMap;
+  if (sparePartCatalogPromise) return sparePartCatalogPromise;
+
+  sparePartCatalogPromise = (async () => {
+    const map = new Map<string, string>();
+    try {
+      const res = await fetchWithRetry("/api/proxy/spareparts?pageSize=1000", {
+        headers: { Accept: "application/json" },
+        label: "spare parts catalog map",
+      });
+      if (res.ok) {
+        const data = await res.json();
+        const items = (data.items ?? data.Data ?? (Array.isArray(data) ? data : [])) as Array<{
+          id?: string;
+          Id?: string;
+          itemName?: string;
+          ItemName?: string;
+          serialNumber?: string;
+          SerialNumber?: string;
+          partNumber?: string;
+          PartNumber?: string;
+        }>;
+        items.forEach((p) => {
+          const name = (p.itemName || p.ItemName || "").trim();
+          const id = (p.id || p.Id || "").trim().toLowerCase();
+          const sn = (p.serialNumber || p.SerialNumber || "").trim().toLowerCase();
+          const pn = (p.partNumber || p.PartNumber || "").trim().toLowerCase();
+          if (name) {
+            if (id) map.set(id, name);
+            if (sn) map.set(sn, name);
+            if (pn) map.set(pn, name);
+          }
+        });
+      }
+    } catch (err) {
+      console.warn("Failed to load spare parts catalog map:", err);
+    }
+    sparePartCatalogMap = map;
+    sparePartCatalogPromise = null;
+    return map;
+  })();
+
+  return sparePartCatalogPromise;
+}
+
+/**
+ * Formats a ticket's spare parts into the exact bulleted list required by the Daily Report:
+ * e.g. "- Paper Pickup Roller" or "N/A" when empty.
+ */
+export function formatSparePartsSummary(
+  parts: SparePartItemDetail[] | undefined,
+  partMap: Map<string, string>
+): string {
+  if (!parts || parts.length === 0) return "N/A";
+  const names = parts
+    .map((p) => {
+      const id = (p.sparePartId || (p as unknown as Record<string, string>).sparepartId || "").toLowerCase();
+      const resolved = (id && partMap.get(id)) || p.itemName || p.description;
+      return resolved ? resolved.trim() : "";
+    })
+    .filter(Boolean);
+
+  if (names.length === 0) return "N/A";
+  return names.map((name) => `- ${name}`).join("\n");
+}
+
 /**
  * Fetches tickets for the daily repair report.
  * - Queries by process date filtering across all statuses (or selected statuses)
  *   so every ticket having any StatusDate in the date range is returned regardless of status.
- * - Enriches each row's displayed serviceDate with its actual status action timestamp.
+ * - Enriches each row with daysTaken, sparePartsSummary, and resolved technician full name.
  */
 export async function fetchDailyReport(
   query: DailyReportQuery
@@ -573,10 +668,6 @@ export async function fetchDailyReport(
     query.statuses.length > 0 &&
     !query.statuses.includes("All") &&
     !query.statuses.includes("");
-
-  const targetStatuses = isStatusSpecified
-    ? (query.statuses as ServiceStageKey[])
-    : ALL_PROCESS_STATUSES;
 
   const params = new URLSearchParams({
     pageNumber: "1",
@@ -604,17 +695,35 @@ export async function fetchDailyReport(
   query.companyNames?.forEach((name) => params.append("companyNames", name));
   query.userIds?.forEach((id) => params.append("userIds", id));
 
-  const enriched = await fetchAndEnrichTickets(
-    `/api/proxy/technicalservices/search?${params.toString()}`,
-    "Daily report"
-  );
+  const [enriched, partMap] = await Promise.all([
+    fetchAndEnrichTickets(
+      `/api/proxy/technicalservices/search?${params.toString()}`,
+      "Daily report"
+    ),
+    fetchSparePartCatalogMap().catch(() => new Map<string, string>()),
+  ]);
 
   return enriched.map((item) => {
     const currentStatus = item.status as ServiceStageKey;
     const info = extractStageInfo(item, currentStatus);
+    const parts = (item.sparepartItems || item.sparePartItems || []) as SparePartItemDetail[];
+    const sparePartsSummary = formatSparePartsSummary(parts, partMap);
+    const daysTaken = calculateDaysTaken(item) ?? item.daysTaken ?? 0;
+    const repairByName =
+      item.repairByName ||
+      item.repairByUserName ||
+      item.inspectByName ||
+      item.createdByName ||
+      "—";
+
     return {
       ...item,
-      serviceDate: info.stageDate || item.serviceDate,
+      // Retain original intake serviceDate for Received Date column
+      serviceDate: item.serviceDate,
+      stageDate: info.stageDate || item.serviceDate,
+      daysTaken,
+      sparePartsSummary,
+      repairByName,
     };
   });
 }
@@ -1252,6 +1361,9 @@ export async function fetchContractRenewalReport(
     companyMap.get(key)!.push(item);
   });
 
+  const companyKeys = Array.from(companyMap.keys()).filter((k) => k !== "Unspecified");
+  const companyTypes = await resolveCustomerTypesBatch(companyKeys);
+
   const rows: ContractRenewalRow[] = [];
   companyMap.forEach((items, company) => {
     const hasContract = items.some((i) => i.hasContract);
@@ -1267,9 +1379,11 @@ export async function fetchContractRenewalReport(
       suggestedAction = "Offer Maintenance Package Proposal";
     }
 
+    const resolvedType = companyTypes.get(company) || "";
+
     rows.push({
       companyName: company,
-      customerType: "Corporate",
+      customerType: resolvedType || "—",
       contactName: latestItem?.contactName || "—",
       phoneNumber: latestItem?.phoneNumber || "—",
       contractStatus: hasContract ? "Active Contract" : "Walk-in",
@@ -1335,6 +1449,9 @@ export async function fetchTopCustomersReport(
     companyMap.get(key)!.push(item);
   });
 
+  const topCompanyKeys = Array.from(companyMap.keys()).filter((k) => k !== "Unspecified");
+  const topCompanyTypes = await resolveCustomerTypesBatch(topCompanyKeys);
+
   const list: Omit<TopCustomerRow, "rank">[] = [];
   companyMap.forEach((items, company) => {
     const totalJobs = items.length;
@@ -1354,9 +1471,11 @@ export async function fetchTopCustomersReport(
       tier = "Gold";
     }
 
+    const resolvedType = topCompanyTypes.get(company) || "";
+
     list.push({
       companyName: company,
-      customerType: "Corporate",
+      customerType: resolvedType || "—",
       totalJobs,
       finishedJobs,
       chargeableJobs,
@@ -1494,9 +1613,10 @@ export interface AnnualTechnicalAutoData {
 }
 
 export async function fetchAnnualTechnicalMatrix(year: number): Promise<AnnualTechnicalAutoData> {
-  const res = await fetch(`/api/proxy/technicalservices/annual-matrix?year=${year}`, {
+  const res = await fetchWithRetry(`/api/proxy/technicalservices/annual-matrix?year=${year}`, {
     cache: "no-store",
     headers: { Accept: "application/json" },
+    label: "annual technical matrix",
   });
 
   if (!res.ok) {

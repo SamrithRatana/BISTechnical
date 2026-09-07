@@ -123,7 +123,11 @@ export const LIFECYCLE_STAGES: readonly LifecycleStage[] = [
   {
     status: "Customer Rejected",
     route: "/rejected",
-    topicId: "rejected",
+    // Both branch statuses share one page in the catalogue: the manual
+    // documents them together because the reader's question ("the customer
+    // said no / the machine is dead — now what?") is the same question, and
+    // the two rows feed the same two reports.
+    topicId: "rejected-unrepairable",
     accent: "rose",
     label: { en: "Branch — declined", km: "ផ្លូវបំបែក — អតិថិជនបដិសេធ" },
     note: {
@@ -134,7 +138,7 @@ export const LIFECYCLE_STAGES: readonly LifecycleStage[] = [
   {
     status: "Unrepairable",
     route: "/unrepairable",
-    topicId: "unrepairable",
+    topicId: "rejected-unrepairable",
     accent: "rose",
     label: { en: "Branch — beyond repair", km: "ផ្លូវបំបែក — ជួសជុលមិនកើត" },
     note: {

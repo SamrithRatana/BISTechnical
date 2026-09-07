@@ -124,7 +124,7 @@ export default function SparePartSpecModal({ part, onClose }: SparePartSpecModal
         open={!isFullscreen}
         onClose={onClose}
         maxWidth="max-w-lg xl:max-w-xl"
-        zIndex={100}
+        zIndex={300}
         labelledBy="spare-part-spec-title"
         placement="center"
         panelVariant="glass"
@@ -268,7 +268,7 @@ export default function SparePartSpecModal({ part, onClose }: SparePartSpecModal
                       return (
                         <span
                           key={idx}
-                          className="inline-flex items-center px-2.5 py-1 rounded-lg bg-white/80 dark:bg-white/10 backdrop-blur-xs border border-black/[0.08] dark:border-white/[0.12] text-xs font-medium text-slate-800 dark:text-slate-200 shadow-2xs"
+                          className="inline-flex items-center px-2.5 py-1 rounded-lg bg-white dark:bg-surface border border-subtle text-xs font-bold text-ink shadow-2xs"
                         >
                           {trimmed}
                         </span>

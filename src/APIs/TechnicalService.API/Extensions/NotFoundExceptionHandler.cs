@@ -13,9 +13,7 @@ namespace TechnicalService.API.Extensions;
 /// and asking for a rental item by an id that isn't there produced a 500.
 ///
 /// Handling it here rather than editing each query keeps one rule for the whole
-/// API and leaves the queries' existing contract alone. It also matters now
-/// that errors are reported: without this, every mistyped id would arrive in
-/// Sentry as a server fault and bury the real ones.
+/// API and leaves the queries' existing contract alone.
 /// </summary>
 internal sealed class NotFoundExceptionHandler(IProblemDetailsService problemDetailsService)
     : IExceptionHandler
@@ -27,8 +25,7 @@ internal sealed class NotFoundExceptionHandler(IProblemDetailsService problemDet
     {
         if (exception is not KeyNotFoundException)
         {
-            // Not ours — let the next handler (and the default 500 path) run,
-            // which is also what reports the exception to Sentry.
+            // Not ours — let the next handler (and the default 500 path) run.
             return false;
         }
 

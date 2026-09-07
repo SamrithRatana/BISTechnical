@@ -16,8 +16,9 @@
 import React from "react";
 import Link from "next/link";
 import { motion } from "framer-motion";
-import { BookOpen, Globe, Layers, Smartphone } from "lucide-react";
+import { BookOpen, Globe, Layers, Moon, Smartphone, Sun } from "lucide-react";
 import { useI18n } from "@/i18n/LanguageProvider";
+import { useTheme } from "@/theme/ThemeProvider";
 import BrandChip from "./BrandChip";
 import { useLoginMotionMode } from "./useLoginMotionMode";
 
@@ -35,6 +36,7 @@ const MotionLink = motion.create(Link);
 
 export function LoginTopBar() {
   const { lang, toggleLang } = useI18n();
+  const { isDark, update } = useTheme();
   const full = useLoginMotionMode() === "full";
 
   return (
@@ -43,14 +45,14 @@ export function LoginTopBar() {
         href="/download"
         whileHover={{ scale: 1.03, y: -1 }}
         whileTap={{ scale: 0.97 }}
-        className="justify-self-start flex items-center gap-1.5 sm:gap-2 px-2.5 sm:px-3.5 py-1 sm:py-1.5 rounded-full bg-slate-900/90 border border-cyan-500/30 hover:border-cyan-400 text-xs text-cyan-300 backdrop-blur-md shadow-lg shadow-black/40 transition-colors group"
-        title="Download CAM ID Mobile App for Android & iOS"
+        className="justify-self-start flex items-center gap-1.5 sm:gap-2 px-2.5 sm:px-3 py-1 sm:py-1.5 rounded-full bg-white/95 dark:bg-slate-900/90 border border-slate-200/80 dark:border-white/15 hover:border-cyan-500/50 text-xs text-slate-700 dark:text-slate-200 backdrop-blur-md shadow-[0_2px_8px_-2px_rgba(15,23,42,0.06)] hover:shadow-md dark:shadow-lg dark:shadow-black/40 transition-all"
+        title="Download CAM ID Mobile App"
       >
         <span className="relative flex">
-          <Smartphone className="w-3.5 h-3.5 text-cyan-400 group-hover:scale-110 transition-transform" />
+          <Smartphone className="w-3.5 h-3.5 text-cyan-500 dark:text-cyan-400 group-hover:scale-110 transition-transform" />
           <span className={`absolute -top-0.5 -right-0.5 w-1.5 h-1.5 rounded-full bg-cyan-400 ${full ? "animate-ping" : ""}`} />
         </span>
-        <span className="font-bold text-white text-[10.5px] sm:text-xs whitespace-nowrap">
+        <span className="font-bold text-slate-800 dark:text-white text-[10.5px] sm:text-xs whitespace-nowrap">
           {/* The long label is what gives way while three pills share the
               narrow bar — the icon still carries the meaning. The breakpoint
               is `lg` because that is where the bar itself grows from
@@ -65,22 +67,43 @@ export function LoginTopBar() {
 
       <DocsPill full={full} />
 
-      <motion.button
-        type="button"
-        whileHover={{ scale: 1.03, y: -1 }}
-        whileTap={{ scale: 0.97 }}
-        onClick={toggleLang}
-        className="justify-self-end flex items-center gap-1.5 sm:gap-2 px-2.5 sm:px-3.5 py-1 sm:py-1.5 rounded-full bg-slate-900/90 border border-white/15 hover:border-emerald-400/50 text-xs text-slate-200 backdrop-blur-md shadow-lg shadow-black/40 transition-colors cursor-pointer"
-        title="Switch Language / ប្តូរភាសា"
-      >
-        <Globe className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
-        <span className="font-semibold text-[10.5px] sm:text-xs whitespace-nowrap">
-          <span className="hidden lg:inline">
-            {lang === "km" ? "🇰🇭 ភាសាខ្មែរ (KM)" : "🇬🇧 English (EN)"}
+      <div className="justify-self-end flex items-center gap-1 sm:gap-1.5">
+        <motion.button
+          type="button"
+          whileHover={{ scale: 1.04, y: -1 }}
+          whileTap={{ scale: 0.97 }}
+          onClick={() => update({ mode: isDark ? "light" : "dark" })}
+          className="flex items-center gap-1 sm:gap-1.5 px-2 sm:px-2.5 py-1 sm:py-1.5 rounded-full bg-white/95 dark:bg-slate-900/90 border border-slate-200/80 dark:border-white/15 hover:border-amber-400/60 dark:hover:border-amber-400/50 text-xs text-slate-700 dark:text-slate-200 backdrop-blur-md shadow-[0_2px_8px_-2px_rgba(15,23,42,0.06)] hover:shadow-md dark:shadow-lg dark:shadow-black/40 transition-all cursor-pointer"
+          title={isDark ? "ប្តូរទៅ Light Mode / Switch to Light Mode" : "ប្តូរទៅ Dark Mode / Switch to Dark Mode"}
+          aria-label="Toggle dark/light theme"
+        >
+          {isDark ? (
+            <Sun className="w-3.5 h-3.5 text-amber-400 shrink-0" />
+          ) : (
+            <Moon className="w-3.5 h-3.5 text-indigo-500 shrink-0" />
+          )}
+          <span className="font-semibold text-[10px] sm:text-xs whitespace-nowrap hidden sm:inline">
+            {isDark ? "Light" : "Dark"}
           </span>
-          <span className="lg:hidden">{lang === "km" ? "ខ្មែរ" : "EN"}</span>
-        </span>
-      </motion.button>
+        </motion.button>
+
+        <motion.button
+          type="button"
+          whileHover={{ scale: 1.03, y: -1 }}
+          whileTap={{ scale: 0.97 }}
+          onClick={toggleLang}
+          className="flex items-center gap-1.5 sm:gap-2 px-2.5 sm:px-3 py-1 sm:py-1.5 rounded-full bg-white/95 dark:bg-slate-900/90 border border-slate-200/80 dark:border-white/15 hover:border-emerald-500/60 dark:hover:border-emerald-400/50 text-xs text-slate-700 dark:text-slate-200 backdrop-blur-md shadow-[0_2px_8px_-2px_rgba(15,23,42,0.06)] hover:shadow-md dark:shadow-lg dark:shadow-black/40 transition-all cursor-pointer"
+          title="Switch Language / ប្តូរភាសា"
+        >
+          <Globe className="w-3.5 h-3.5 text-emerald-500 dark:text-emerald-400 shrink-0" />
+          <span className="font-semibold text-[10.5px] sm:text-xs whitespace-nowrap">
+            <span className="hidden lg:inline">
+              {lang === "km" ? "🇰🇭 ភាសាខ្មែរ (KM)" : "🇬🇧 English (EN)"}
+            </span>
+            <span className="lg:hidden">{lang === "km" ? "ខ្មែរ" : "EN"}</span>
+          </span>
+        </motion.button>
+      </div>
     </div>
   );
 }
@@ -99,7 +122,7 @@ function DocsPill({ full }: { full: boolean }) {
       href="/docs"
       whileHover={{ scale: 1.04, y: -1 }}
       whileTap={{ scale: 0.97 }}
-      className="justify-self-center group relative flex items-center gap-1.5 overflow-hidden rounded-full border border-violet-400/40 bg-slate-900/90 px-3 py-1 text-xs text-violet-200 shadow-lg shadow-black/40 backdrop-blur-md transition-colors hover:border-violet-300 sm:gap-2 sm:px-4 sm:py-1.5"
+      className="justify-self-center group relative flex items-center gap-1.5 overflow-hidden rounded-full border border-violet-300/60 dark:border-violet-400/40 bg-white/95 dark:bg-slate-900/90 px-3 py-1 text-xs text-violet-700 dark:text-violet-200 shadow-[0_2px_8px_-2px_rgba(15,23,42,0.06)] hover:shadow-md dark:shadow-lg dark:shadow-black/40 backdrop-blur-md transition-all hover:border-violet-400 dark:hover:border-violet-300 sm:gap-2 sm:px-4 sm:py-1.5"
       title="System documentation — ឯកសារណែនាំប្រើប្រាស់ប្រព័ន្ធ"
       aria-label="Open the system documentation"
     >
@@ -118,17 +141,17 @@ function DocsPill({ full }: { full: boolean }) {
       )}
 
       <span className="relative flex">
-        <BookOpen className="w-3.5 h-3.5 text-violet-300 transition-transform group-hover:scale-110" />
+        <BookOpen className="w-3.5 h-3.5 text-violet-500 dark:text-violet-300 transition-transform group-hover:scale-110" />
         <span
-          className={`absolute -top-0.5 -right-0.5 h-1.5 w-1.5 rounded-full bg-violet-300 ${
+          className={`absolute -top-0.5 -right-0.5 h-1.5 w-1.5 rounded-full bg-violet-400 dark:bg-violet-300 ${
             full ? "animate-pulse" : ""
           }`}
         />
       </span>
-      <span className="relative text-[10.5px] font-bold tracking-wide text-white sm:text-xs">
+      <span className="relative text-[10.5px] font-bold tracking-wide text-slate-800 dark:text-white sm:text-xs">
         Docs
       </span>
-      <span className="relative hidden whitespace-nowrap text-[10px] font-medium text-violet-300/80 lg:inline">
+      <span className="relative hidden whitespace-nowrap text-[10px] font-medium text-violet-600/90 dark:text-violet-300/80 lg:inline">
         ឯកសារណែនាំ
       </span>
     </MotionLink>
@@ -142,11 +165,11 @@ export function LoginFooter() {
   const full = useLoginMotionMode() === "full";
 
   return (
-    <div className="mt-1 xl:mt-2 mb-0.5 z-20 flex items-center gap-2 px-3 py-0.5 sm:py-1 rounded-full bg-slate-900/80 border border-white/10 text-[9.5px] sm:text-[10.5px] text-slate-400 font-mono shadow-lg shadow-black/40 backdrop-blur-md select-none shrink-0">
-      <span className="text-slate-300 font-semibold">v2.4 Enterprise</span>
-      <span className="text-slate-600">•</span>
-      <span className="flex items-center gap-1.5 text-emerald-400 font-medium">
-        <span className={`w-1.5 h-1.5 rounded-full bg-emerald-400 shadow-[0_0_8px_rgba(16,185,129,0.8)] ${full ? "animate-pulse" : ""}`} />
+    <div className="mt-1 xl:mt-2 mb-0.5 z-20 flex items-center gap-2 px-3 py-0.5 sm:py-1 rounded-full bg-white/95 dark:bg-slate-900/80 border border-slate-200/80 dark:border-white/10 text-[9.5px] sm:text-[10.5px] text-slate-500 dark:text-slate-400 font-mono shadow-[0_2px_8px_-2px_rgba(15,23,42,0.06)] dark:shadow-lg dark:shadow-black/40 backdrop-blur-md select-none shrink-0">
+      <span className="text-slate-700 dark:text-slate-300 font-semibold">v2.4 Enterprise</span>
+      <span className="text-slate-300 dark:text-slate-600">•</span>
+      <span className="flex items-center gap-1.5 text-emerald-600 dark:text-emerald-400 font-medium">
+        <span className={`w-1.5 h-1.5 rounded-full bg-emerald-500 dark:bg-emerald-400 shadow-[0_0_8px_rgba(16,185,129,0.8)] ${full ? "animate-pulse" : ""}`} />
         <span>{lang === "km" ? "ប្រព័ន្ធ Microservices ទាំងអស់ដំណើរការធម្មតា" : "All Microservices Operational"}</span>
       </span>
     </div>
@@ -164,10 +187,10 @@ export function MobileMethodHeader({ selectorOpen, onToggle }: MobileMethodHeade
   const { lang, t } = useI18n();
 
   return (
-    <div className="lg:hidden p-3 sm:p-3.5 border-b border-white/10 flex items-center justify-between bg-slate-950/80 sticky top-0 z-20 backdrop-blur-md">
+    <div className="lg:hidden p-3 sm:p-3.5 border-b border-slate-200 dark:border-white/10 flex items-center justify-between bg-white/95 dark:bg-slate-950/80 sticky top-0 z-20 backdrop-blur-md">
       <div className="flex items-center gap-2 sm:gap-2.5">
         <BrandChip size="sm" />
-        <span className="font-bold text-xs sm:text-sm tracking-tight text-white block">
+        <span className="font-bold text-xs sm:text-sm tracking-tight text-slate-900 dark:text-white block">
           {t("login.brandTitle")}
         </span>
       </div>
@@ -175,7 +198,7 @@ export function MobileMethodHeader({ selectorOpen, onToggle }: MobileMethodHeade
       <button
         type="button"
         onClick={onToggle}
-        className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-emerald-500/20 border border-emerald-500/40 text-emerald-300 text-xs font-bold transition-colors cursor-pointer"
+        className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-emerald-500/15 dark:bg-emerald-500/20 border border-emerald-500/30 dark:border-emerald-500/40 text-emerald-700 dark:text-emerald-300 text-xs font-bold transition-colors cursor-pointer"
       >
         <Layers className="w-3.5 h-3.5" />
         <span>

@@ -23,6 +23,16 @@ export interface GlobalBranding {
 
 let cachedBranding: GlobalBranding | null = null;
 let brandingPromise: Promise<GlobalBranding | null> | null = null;
+/**
+ * Negative cache (same convention as `fetchUserMap`'s USER_MAP_EMPTY_TTL_MS):
+ * Sidebar calls `fetchAppLogoUrl` on every mount and Sidebar remounts on every
+ * navigation, so with the branding endpoint down every route change was a
+ * fresh request, forever, with no backoff.
+ */
+let brandingFailedAt = 0;
+const BRANDING_RETRY_MS = 60_000;
+
+const LOCAL_STORAGE_BRANDING_KEY = "system_branding_cache";
 
 function authHeaders(): Record<string, string> {
   const headers: Record<string, string> = { "Content-Type": "application/json" };
@@ -36,7 +46,21 @@ function authHeaders(): Record<string, string> {
 /** Fetches global company branding from server (Public endpoint, works before and after login) */
 export async function fetchGlobalBranding(): Promise<GlobalBranding | null> {
   if (cachedBranding) return cachedBranding;
+
+  // Hydrate from localStorage immediately if available for 0ms initial render
+  if (typeof window !== "undefined" && !cachedBranding) {
+    try {
+      const stored = localStorage.getItem(LOCAL_STORAGE_BRANDING_KEY);
+      if (stored) {
+        cachedBranding = JSON.parse(stored) as GlobalBranding;
+      }
+    } catch {}
+  }
+
   if (brandingPromise) return brandingPromise;
+  if (brandingFailedAt && Date.now() - brandingFailedAt < BRANDING_RETRY_MS) {
+    return cachedBranding;
+  }
 
   brandingPromise = (async () => {
     try {
@@ -44,23 +68,34 @@ export async function fetchGlobalBranding(): Promise<GlobalBranding | null> {
         headers: authHeaders(),
         cache: "no-store",
       });
-      if (!res.ok) return null;
+      if (!res.ok) return cachedBranding;
       const data = (await res.json()) as GlobalBranding;
-      return {
+      const result: GlobalBranding = {
         logoUrl: data.logoUrl ?? null,
         accentColor: data.accentColor ?? null,
         logoScale: typeof data.logoScale === "number" ? data.logoScale : 130,
         surfaceStyle: data.surfaceStyle || "cushion",
       };
+      if (typeof window !== "undefined") {
+        try {
+          localStorage.setItem(LOCAL_STORAGE_BRANDING_KEY, JSON.stringify(result));
+        } catch {}
+      }
+      return result;
     } catch {
-      return null;
+      return cachedBranding;
     }
   })();
 
   const result = await brandingPromise;
-  if (result) cachedBranding = result;
+  if (result) {
+    cachedBranding = result;
+    brandingFailedAt = 0;
+  } else {
+    brandingFailedAt = Date.now();
+  }
   brandingPromise = null;
-  return result;
+  return cachedBranding;
 }
 
 /** Updates global branding in SQL Server database (Admin/SuperAdmin only) */
@@ -74,6 +109,13 @@ export async function updateGlobalBranding(patch: Partial<GlobalBranding>): Prom
     if (res.ok) {
       if (cachedBranding) {
         cachedBranding = { ...cachedBranding, ...patch };
+      }
+      if (typeof window !== "undefined") {
+        try {
+          if (cachedBranding) {
+            localStorage.setItem(LOCAL_STORAGE_BRANDING_KEY, JSON.stringify(cachedBranding));
+          }
+        } catch {}
       }
       return true;
     }
@@ -92,4 +134,55 @@ export async function fetchAppLogoUrl(): Promise<string | null> {
 /** Admin-only server-side; a non-admin caller gets a 403 from the API. */
 export async function updateAppLogoUrl(url: string): Promise<boolean> {
   return await updateGlobalBranding({ logoUrl: url });
+}
+
+/**
+ * True when a bearer token exists. The `user-theme` endpoints are per-user and
+ * reject anonymous calls, and `ThemeProvider`/`PerformanceProvider` mount on
+ * every page including `/login` — calling them signed out guaranteed 401s and
+ * matching console errors on each login-page visit. Storage read inside the
+ * try: `localStorage` itself throws when storage is blocked.
+ */
+function hasAuthToken(): boolean {
+  if (typeof window === "undefined") return false;
+  try {
+    return Boolean(localStorage.getItem("jwt_token"));
+  } catch {
+    return false;
+  }
+}
+
+export async function fetchUserThemePreferences(): Promise<string | null> {
+  if (!hasAuthToken()) return null;
+  try {
+    const res = await fetch("/api/proxy/AppSettings/user-theme?service=jwt", {
+      headers: authHeaders(),
+      cache: "no-store",
+    });
+    if (!res.ok) return null;
+    const data = await res.json();
+    return data?.themePreferencesJson ?? null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Persists the authenticated user's personal theme preferences to database
+ */
+export async function updateUserThemePreferences(themeJson: string): Promise<boolean> {
+  // Same guard as the read path: accepting the Lite Mode prompt on /login
+  // used to PUT to this per-user endpoint and collect the very 401 the
+  // fetch-side guard removed.
+  if (!hasAuthToken()) return false;
+  try {
+    const res = await fetch("/api/proxy/AppSettings/user-theme?service=jwt", {
+      method: "PUT",
+      headers: authHeaders(),
+      body: JSON.stringify({ themePreferencesJson: themeJson }),
+    });
+    return res.ok;
+  } catch {
+    return false;
+  }
 }

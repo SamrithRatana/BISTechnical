@@ -15,8 +15,11 @@ import {
   fetchSparePartById,
   createItem,
   deleteTechnicalService,
+  updateSparepartItemRemarks,
   invalidateCachePrefix
 } from "@/services/api";
+import { toast } from "react-hot-toast";
+import { RemarkIndicator } from "@/components/RemarkIndicator";
 import {
   calculateDaysTaken,
   toBackendLocalDateTime,
@@ -25,12 +28,18 @@ import {
   getServicePriorityId,
   normaliseServicePriority
 } from "@/services/types";
-import { fetchUserMap, resolveUserNameSync, getCurrentUserGuid } from "@/services/userService";
+import { fetchUserMap, resolveUserNameSync, getCurrentUserGuid, getCurrentUserFullName } from "@/services/userService";
 import { useInfiniteList } from "@/hooks/useInfiniteList";
 import type { ActionValues } from "./ActionBus";
 import InfiniteScrollStatus from "./InfiniteScrollStatus";
 import { ModalWrapper } from "@/components/av/ModalWrapper";
 import { useI18n } from "@/i18n/LanguageProvider";
+import { firstValidationMessage } from "@/i18n/validationMessage";
+import { validateTicket } from "@/validation";
+import { sendTelegramNotification, saveServiceTelegramMessage } from "@/services/telegramService";
+import { buildTelegramMessage } from "@/services/telegramMessageBuilder";
+import { dispatchTelegramNotificationSafe } from "@/services/api";
+import { clearListCache } from "@/hooks/useInfiniteList";
 import type { TranslationKey } from "@/i18n/translations";
 import {
   translatePriority,
@@ -53,6 +62,7 @@ import {
 } from "lucide-react";
 import ModernSelect from "./ModernSelect";
 import MediaLightbox from "./MediaLightbox";
+import { getImageUrl } from "@/lib/utils";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Types
@@ -101,7 +111,7 @@ function ticketPrefillPatch(values: ActionValues): Partial<RepairServiceItem> {
 
   if (values.serviceDate) {
     const parsed = new Date(values.serviceDate);
-    if (!Number.isNaN(parsed.getTime())) patch.serviceDate = parsed.toISOString();
+    if (!Number.isNaN(parsed.getTime())) patch.serviceDate = toBackendLocalDateTime(parsed);
   }
 
   const bool = (raw?: string) => (raw === undefined ? undefined : /^(true|yes|1|y)$/i.test(raw.trim()));
@@ -116,10 +126,25 @@ function ticketPrefillPatch(values: ActionValues): Partial<RepairServiceItem> {
 // ─────────────────────────────────────────────────────────────────────────────
 // Helpers
 // ─────────────────────────────────────────────────────────────────────────────
-function fmtDate(d?: string | null): string | null {
+function fmtDate(d?: string | null, referenceDate?: string | null): string | null {
   if (!d) return null;
   try {
-    const date = new Date(d);
+    let date = new Date(d);
+    if (Number.isNaN(date.getTime())) return d;
+
+    // If milestone timestamp was written in UTC without timezone marker (e.g. 07:29 when intake was 14:21),
+    // adjust +7 hours to match Cambodia local wall-clock time
+    const isUnmarkedIso = !/(?:Z|[+-]\d{2}:?\d{2})$/i.test(d.trim());
+    if (isUnmarkedIso && referenceDate && d !== referenceDate) {
+      const refDt = new Date(referenceDate);
+      if (!Number.isNaN(refDt.getTime())) {
+        const diffMs = refDt.getTime() - date.getTime();
+        if (diffMs > 2 * 3600 * 1000 && diffMs < 9 * 3600 * 1000) {
+          date = new Date(date.getTime() + 7 * 3600 * 1000);
+        }
+      }
+    }
+
     const datePart = date.toLocaleDateString("en-GB", {
       year: "numeric",
       month: "2-digit",
@@ -134,6 +159,22 @@ function fmtDate(d?: string | null): string | null {
 /** True when a datetime string carries an explicit zone (`Z` or `±HH:MM`). */
 function hasExplicitZone(s: string): boolean {
   return /(?:Z|[+-]\d{2}:?\d{2})$/.test(s);
+}
+
+/**
+ * Normalizes a datetime for sending to backend: converts any Z-marked or zoned ISO string
+ * to local Phnom Penh wall-clock (YYYY-MM-DDTHH:MM:SS) so SQL Server never stores a UTC instant as local time.
+ */
+function normalizeServiceDate(val?: string | null): string {
+  if (!val) return toBackendLocalDateTime();
+  const s = val.trim();
+  if (hasExplicitZone(s)) {
+    const d = new Date(s);
+    if (!Number.isNaN(d.getTime())) {
+      return toBackendLocalDateTime(d);
+    }
+  }
+  return s;
 }
 
 /**
@@ -287,9 +328,14 @@ function getPriorityBadgeClass(priority?: string | null): string {
 function ViewContent({ item }: { item: RepairServiceItem }) {
   const { t } = useI18n();
   const [previewPart, setPreviewPart] = useState<SparePartItemDetail | null>(null);
-  const spareParts = item.sparePartItems ?? item.sparepartItems ?? [];
-  const totalQty = spareParts.reduce((s, p) => s + p.quantity, 0);
-  const grandTotal = spareParts.reduce(
+  const [partsList, setPartsList] = useState<SparePartItemDetail[]>(() => item.sparePartItems ?? item.sparepartItems ?? []);
+
+  useEffect(() => {
+    setPartsList(item.sparePartItems ?? item.sparepartItems ?? []);
+  }, [item]);
+
+  const totalQty = partsList.reduce((s, p) => s + p.quantity, 0);
+  const grandTotal = partsList.reduce(
     (s, p) => s + (p.defaultPrice ?? 0) * p.quantity,
     0
   );
@@ -314,14 +360,24 @@ function ViewContent({ item }: { item: RepairServiceItem }) {
       {/* ── Top Summary Header Strip ── */}
       <div className="flex flex-wrap items-center justify-between gap-3 p-3.5 rounded-2xl bg-cushion border border-subtle">
         <div className="flex items-center gap-2.5 flex-wrap text-sm">
-          <span className="font-mono font-bold text-ink bg-surface border border-subtle px-3 py-1 rounded-xl shadow-2xs text-sm">
-            {item.reportNo || "TICKET"}
-          </span>
           {days != null && (
-            <span className="px-3 py-1 rounded-xl bg-surface border border-subtle text-ink font-bold text-xs sm:text-sm shadow-2xs">
-              {days === 1 ? t("detail.day", { count: days }) : t("detail.days", { count: days })}
-            </span>
+            <div className="flex items-center gap-1.5 px-3 py-1 rounded-xl bg-surface border border-subtle text-ink text-xs sm:text-sm shadow-2xs">
+              <span className="font-semibold text-ink-secondary">រយៈពេល:</span>
+              <span className="font-bold text-ink">
+                {days === 1 ? t("detail.day", { count: days }) : t("detail.days", { count: days })}
+              </span>
+            </div>
           )}
+          <div className="flex items-center gap-1.5 px-3 py-1 rounded-xl bg-surface border border-subtle shadow-2xs text-xs sm:text-sm">
+            <span className="font-semibold text-ink-secondary">ជួសជុលមានកុងត្រា:</span>
+            <span className={`font-bold px-2 py-0.5 rounded-lg text-xs ${
+              item.hasContract
+                ? "bg-emerald-500/15 text-emerald-600 border border-emerald-500/30 font-bold"
+                : "bg-zinc-500/15 text-zinc-500 border border-zinc-500/30"
+            }`}>
+              {item.hasContract ? "Yes" : "No"}
+            </span>
+          </div>
         </div>
         <div className="flex items-center gap-2.5 flex-wrap">
           {item.servicePriority && (
@@ -356,7 +412,7 @@ function ViewContent({ item }: { item: RepairServiceItem }) {
           </div>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 pt-1">
             {timelineMilestones.map((m, idx) => {
-              const formattedDate = fmtDate(m.date);
+              const formattedDate = fmtDate(m.date, item.serviceDate);
               const resolvedName = (m.byName && isRealName(m.byName))
                 ? m.byName.trim()
                 : resolveUserNameSync(m.byGuid || "");
@@ -426,7 +482,7 @@ function ViewContent({ item }: { item: RepairServiceItem }) {
               <span className="text-xs font-bold uppercase tracking-wider text-ink-muted block">{t("field.serialNumber")}</span>
               <p className="font-mono text-ink mt-0.5 font-bold bg-sunken px-2.5 py-1 rounded-lg border border-subtle inline-block text-xs sm:text-[13px]">{item.serialNumber || "—"}</p>
             </div>
-            <div className="grid grid-cols-2 gap-3 pt-2 border-t border-subtle/60">
+            <div className="grid grid-cols-3 gap-2.5 pt-2 border-t border-subtle/60">
               <div>
                 <span className="text-xs font-bold uppercase tracking-wider text-ink-muted block">{t("field.serviceLocation")}</span>
                 <p className="font-semibold text-ink mt-0.5 text-xs sm:text-sm">{translateServiceLocation(item.serviceLocation, t)}</p>
@@ -434,6 +490,16 @@ function ViewContent({ item }: { item: RepairServiceItem }) {
               <div>
                 <span className="text-xs font-bold uppercase tracking-wider text-ink-muted block">{t("field.serviceType")}</span>
                 <p className="font-semibold text-ink mt-0.5 text-xs sm:text-sm">{translateServiceType(item.serviceType, t)}</p>
+              </div>
+              <div>
+                <span className="text-xs font-bold uppercase tracking-wider text-ink-muted block">ជួសជុលមានកុងត្រា</span>
+                <span className={`inline-block font-bold mt-0.5 px-2 py-0.5 rounded text-xs ${
+                  item.hasContract
+                    ? "bg-emerald-500/15 text-emerald-600 border border-emerald-500/30 font-bold"
+                    : "bg-zinc-500/15 text-zinc-500 border border-zinc-500/30"
+                }`}>
+                  {item.hasContract ? "Yes" : "No"}
+                </span>
               </div>
             </div>
           </div>
@@ -469,7 +535,7 @@ function ViewContent({ item }: { item: RepairServiceItem }) {
       )}
 
       {/* ── Spare Parts Table (Modern Smart Table Layout) ── */}
-      {spareParts.length > 0 && (
+      {partsList.length > 0 && (
         <div className="mt-3 space-y-3">
           <div className="flex items-center justify-between">
             <h3 className="text-sm font-bold text-ink flex items-center gap-2">
@@ -477,7 +543,7 @@ function ViewContent({ item }: { item: RepairServiceItem }) {
               <span>{t("detail.sparePartDetails")}</span>
             </h3>
             <span className="text-xs font-bold text-accent bg-accent-soft px-3 py-1 rounded-full border border-accent/20">
-              {t("detail.totalPartsSummary", { items: spareParts.length, units: totalQty })}
+              {t("detail.totalPartsSummary", { items: partsList.length, units: totalQty })}
             </span>
           </div>
 
@@ -495,7 +561,7 @@ function ViewContent({ item }: { item: RepairServiceItem }) {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-subtle/60">
-                  {spareParts.map((sp) => {
+                  {partsList.map((sp) => {
                     const badge = resolveStockBadge(
                       item.status,
                       sp.condition,
@@ -515,13 +581,13 @@ function ViewContent({ item }: { item: RepairServiceItem }) {
                               title="Click to view full image & stock details"
                             >
                               <img
-                                src={sp.pictureUrl}
+                                src={getImageUrl(sp.pictureUrl)}
                                 alt={sp.itemName || "part"}
                                 width={44}
                                 height={44}
                                 loading="lazy"
                                 decoding="async"
-                                className="w-full h-full object-cover group-hover:opacity-90"
+                                className="w-full h-full object-cover group-hover:opacity-90 bg-white"
                               />
                               <div className="absolute inset-0 bg-black/20 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
                                 <Eye className="w-4 h-4 text-white drop-shadow" />
@@ -577,24 +643,69 @@ function ViewContent({ item }: { item: RepairServiceItem }) {
                           {sp.defaultPrice != null ? `$${sp.defaultPrice.toFixed(2)}` : <span className="text-ink-muted font-normal">—</span>}
                         </td>
 
-                        {/* 6. Stock Status (with Mouse Hover Tooltip showing Stock Qty) */}
+                        {/* 6. Stock Status & Remark */}
                         <td className="px-3.5 py-2.5 text-center align-middle">
-                          <div className="relative group/stock inline-block">
-                            <span
-                              className="inline-flex items-center gap-1.5 text-xs font-bold px-3 py-1 rounded-full shadow-2xs cursor-pointer select-none transition-transform hover:scale-105"
-                              style={{ background: badge.bg, color: badge.fg }}
-                              title={`ចំនួនស្តុកដែលនៅសល់៖ ${sp.stockQuantity ?? 0} គ្រឿង`}
-                            >
-                              {badge.labelKey === "stockBadge.allDispatched" && <CheckCircle2 className="w-3.5 h-3.5 shrink-0" />}
-                              {badge.labelKey === "stockBadge.noStockDeduction" && <Wrench className="w-3.5 h-3.5 shrink-0" />}
-                              {t(badge.labelKey)}
-                            </span>
+                          <div className="inline-flex items-center gap-1.5 justify-center relative">
+                            <div className="relative group/stock inline-block">
+                              <span
+                                className="inline-flex items-center gap-1.5 text-xs font-bold px-3 py-1 rounded-full shadow-2xs cursor-pointer select-none transition-transform hover:scale-105"
+                                style={{ background: badge.bg, color: badge.fg }}
+                                title={`ចំនួនស្តុកដែលនៅសល់៖ ${sp.stockQuantity ?? 0} គ្រឿង`}
+                              >
+                                {badge.labelKey === "stockBadge.allDispatched" && <CheckCircle2 className="w-3.5 h-3.5 shrink-0" />}
+                                {badge.labelKey === "stockBadge.noStockDeduction" && <Wrench className="w-3.5 h-3.5 shrink-0" />}
+                                {t(badge.labelKey)}
+                              </span>
 
-                            {/* Tooltip on Mouse Hover */}
-                            <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 px-3 py-1.5 rounded-xl bg-slate-900/95 text-white text-xs font-medium whitespace-nowrap shadow-xl opacity-0 pointer-events-none group-hover/stock:opacity-100 transition-opacity z-50 flex items-center gap-1.5 border border-white/10">
-                              <Package className="w-3.5 h-3.5 text-accent" />
-                              <span>ស្តុកនៅសល់៖ <strong className="font-mono text-amber-300 font-bold">{sp.stockQuantity ?? 0}</strong> គ្រឿង</span>
+                              {/* Tooltip on Mouse Hover */}
+                              <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 px-3 py-1.5 rounded-xl bg-slate-900/95 text-white text-xs font-medium whitespace-nowrap shadow-xl opacity-0 pointer-events-none group-hover/stock:opacity-100 transition-opacity z-50 flex items-center gap-1.5 border border-white/10">
+                                <Package className="w-3.5 h-3.5 text-accent" />
+                                <span>ស្តុកនៅសល់៖ <strong className="font-mono text-amber-300 font-bold">{sp.stockQuantity ?? 0}</strong> គ្រឿង</span>
+                              </div>
                             </div>
+
+                            {/* 💬 Remark Indicator */}
+                            <RemarkIndicator
+                              sparePartId={sp.id || sp.sparePartId}
+                              remarks={sp.remarks}
+                              remarksUpdatedAt={sp.remarksUpdatedAt}
+                              allowEdit={true}
+                              onSave={async (newVal) => {
+                                const targetId = sp.id || sp.sparePartId;
+                                if (targetId) {
+                                  const ok = await updateSparepartItemRemarks(targetId, newVal);
+                                  if (ok) {
+                                    const updatedParts = partsList.map((p) =>
+                                      (p.id === sp.id || p.sparePartId === sp.sparePartId)
+                                        ? {
+                                            ...p,
+                                            remarks: newVal,
+                                            remarksUpdatedAt: new Date().toISOString()
+                                          }
+                                        : p
+                                    );
+                                    setPartsList(updatedParts);
+                                    toast.success("បានកត់សម្គាល់ជោគជ័យ", { position: "bottom-right" });
+
+                                    // 🚀 Update Telegram message in-place with updated remarks!
+                                    if (item.id) {
+                                      void dispatchTelegramNotificationSafe(
+                                        {
+                                          ...item,
+                                          sparePartItems: updatedParts,
+                                          sparepartItems: updatedParts,
+                                        },
+                                        item.status,
+                                        undefined,
+                                        true // forceEdit in-place
+                                      );
+                                    }
+                                  } else {
+                                    toast.error("មិនអាចកត់សម្គាល់បានទេ", { position: "bottom-right" });
+                                  }
+                                }
+                              }}
+                            />
                           </div>
                         </td>
                       </tr>
@@ -608,7 +719,7 @@ function ViewContent({ item }: { item: RepairServiceItem }) {
             <div className="bg-cushion/90 px-4 py-3 border-t border-subtle flex items-center justify-between flex-wrap gap-3 text-xs sm:text-sm">
               <div className="flex items-center gap-2 font-semibold text-ink-secondary">
                 <Package className="w-4 h-4 text-accent" />
-                <span>{t("detail.totalPartsSummary", { items: spareParts.length, units: totalQty })}</span>
+                <span>{t("detail.totalPartsSummary", { items: partsList.length, units: totalQty })}</span>
               </div>
               <div className="flex items-center gap-2.5">
                 <span className="text-xs font-bold text-ink-muted uppercase tracking-wider">{t("detail.total")}</span>
@@ -631,9 +742,9 @@ function ViewContent({ item }: { item: RepairServiceItem }) {
           part={previewPart}
         >
           <img
-            src={previewPart.pictureUrl || ""}
+            src={getImageUrl(previewPart.pictureUrl)}
             alt={previewPart.itemName || "part"}
-            className="max-h-[70vh] max-w-full object-contain rounded-2xl mx-auto shadow-2xl"
+            className="max-h-[70vh] max-w-full object-contain rounded-2xl mx-auto shadow-2xl bg-white"
           />
         </MediaLightbox>
       )}
@@ -688,6 +799,8 @@ function EditContent({
   const inputCls =
     "w-full px-3.5 py-2.5 text-xs border border-subtle rounded-xl bg-surface text-ink placeholder-ink-muted focus:ring-2 focus:ring-accent/20 focus:border-accent outline-none transition-colors duration-150";
   const labelCls = "text-xs font-semibold text-ink-secondary";
+  const disabledInputCls =
+    "w-full px-3.5 py-2.5 text-xs border border-subtle rounded-xl bg-sunken/60 text-ink/75 cursor-not-allowed select-none outline-none";
 
   // ── Company Autocomplete state ──
   const [showCompanyDropdown, setShowCompanyDropdown] = useState(false);
@@ -733,29 +846,48 @@ function EditContent({
   });
 
   const handleCompanySearch = (val: string) => {
-    setFormData({ ...formData, companyName: val, customerId: undefined });
+    const trimmed = val.trim().toLowerCase();
+    const matched = companies.find((c: CustomerItem) => c.companyName.trim().toLowerCase() === trimmed);
+    setFormData({
+      ...formData,
+      companyName: val,
+      customerId: matched ? matched.id : (val.trim() === (formData.companyName || "").trim() ? formData.customerId : undefined),
+      ...(!val.trim() ? { contactName: "", phoneNumber: "", address: "" } : {})
+    });
     setCompanySearchQuery(val);
     setShowCompanyDropdown(val.trim().length >= 1);
   };
 
   const handleSelectCompany = (comp: CustomerItem) => {
+    const rawContact = comp.contactName ?? "";
+    const cleanContact = (rawContact && rawContact !== "—") ? rawContact.trim() : "";
+    const rawPhone = comp.phoneNumber ?? "";
+    const cleanPhone = (rawPhone && rawPhone !== "—") ? rawPhone.trim() : "";
+    const rawAddress = comp.address ?? "";
+    const cleanAddress = (rawAddress && rawAddress !== "—") ? rawAddress.trim() : "";
+
     setFormData({
       ...formData,
       customerId: comp.id,
       companyName: comp.companyName,
-      phoneNumber: comp.phoneNumber && comp.phoneNumber !== "—" ? comp.phoneNumber : (formData.phoneNumber ?? ""),
-      contactName: comp.contactName && comp.contactName !== "—" ? comp.contactName : (formData.contactName ?? ""),
-      address: comp.address && comp.address !== "—" ? comp.address : (formData.address ?? "")
+      phoneNumber: cleanPhone,
+      contactName: cleanContact,
+      address: cleanAddress
     });
     setShowCompanyDropdown(false);
   };
 
-  // Editing item/serial text after a selection invalidates the previously
+  // Editing item text after a selection invalidates the previously
   // resolved itemId — clearing it here stops a stale id (pointing at the
   // item the user *used to* have selected) from silently riding along to
   // submit once the visible text no longer matches it.
-  const handleItemSearch = (val: string, field: "itemName" | "serialNumber") => {
-    setFormData({ ...formData, [field]: val, itemId: undefined });
+  const handleItemSearch = (val: string, field: "itemName" | "serialNumber" = "itemName") => {
+    setFormData({
+      ...formData,
+      [field]: val,
+      itemId: undefined,
+      ...(field === "itemName" && !val.trim() ? { serialNumber: "" } : {})
+    });
     setItemSearchQuery(val);
     setShowItemDropdown(val.trim().length >= 1);
   };
@@ -819,6 +951,28 @@ function EditContent({
           </div>
         )}
 
+        {/* ── Top Options: Contract & External Repair (ដូចគំរូ Modal system UI ចាស់) ── */}
+        <div className="flex flex-wrap items-center gap-5 p-3 rounded-xl bg-cushion/80 border border-subtle">
+          <label className="flex items-center gap-2 text-xs sm:text-sm font-semibold text-ink cursor-pointer select-none">
+            <input
+              type="checkbox"
+              checked={!!formData.hasContract}
+              onChange={(e) => setFormData({ ...formData, hasContract: e.target.checked })}
+              className="w-4 h-4 rounded text-accent focus:ring-accent/40 border-subtle cursor-pointer"
+            />
+            <span>{t("field.serviceWithContract")}</span>
+          </label>
+          <label className="flex items-center gap-2 text-xs sm:text-sm font-semibold text-ink cursor-pointer select-none">
+            <input
+              type="checkbox"
+              checked={!!formData.isThirdPartyRepair}
+              onChange={(e) => setFormData({ ...formData, isThirdPartyRepair: e.target.checked })}
+              className="w-4 h-4 rounded text-accent focus:ring-accent/40 border-subtle cursor-pointer"
+            />
+            <span>{t("detail.thirdPartyRepair")}</span>
+          </label>
+        </div>
+
       {/* Service Date — kept at the top: it is the ticket's anchor date and
           the field most often corrected on arrival. */}
       <div>
@@ -853,7 +1007,8 @@ function EditContent({
               onChange={(e) => handleCompanySearch(e.target.value)}
               onFocus={() => {
                 if ((formData.companyName || "").trim().length >= 1) {
-                  handleCompanySearch(formData.companyName);
+                  setCompanySearchQuery(formData.companyName || "");
+                  setShowCompanyDropdown(true);
                 }
               }}
               className={inputCls}
@@ -862,7 +1017,7 @@ function EditContent({
             {showCompanyDropdown && companies.length > 0 && (
               <div
                 ref={companyScrollRootRef}
-                className="absolute left-0 right-0 top-full mt-1 z-50 bg-surface border border-subtle rounded-xl shadow-xl max-h-60 overflow-y-auto text-xs"
+                className="absolute left-0 right-0 top-full mt-1 z-50 bg-surface border border-subtle rounded-xl shadow-xl max-h-60 overflow-y-auto overscroll-contain text-xs"
               >
                 <div className="sticky top-0 bg-cushion px-3 py-2 border-b border-subtle flex items-center justify-between font-semibold text-ink-secondary ">
                   <span className="flex items-center gap-1.5">
@@ -912,15 +1067,39 @@ function EditContent({
           </div>
           <div className="space-y-1">
             <label className={labelCls}>{t("field.contactName")}</label>
-            <input type="text" value={formData.contactName || ""}
+            <input
+              type="text"
+              value={formData.contactName || ""}
+              readOnly
               disabled
-              className={`${inputCls} disabled:bg-sunken disabled:text-ink-secondary disabled:cursor-not-allowed `} />
+              tabIndex={-1}
+              className={disabledInputCls}
+              placeholder={t("field.contactName")}
+            />
           </div>
           <div className="space-y-1">
-            <label className={labelCls}>{t("field.address")}</label>
-            <input type="text" value={formData.address || ""}
+            <label className={labelCls}>{t("field.phoneNumber")}</label>
+            <input
+              type="text"
+              value={formData.phoneNumber || ""}
+              readOnly
               disabled
-              className={`${inputCls} disabled:bg-sunken disabled:text-ink-secondary disabled:cursor-not-allowed `} />
+              tabIndex={-1}
+              className={disabledInputCls}
+              placeholder="e.g. 012 345 678"
+            />
+          </div>
+          <div className="space-y-1 md:col-span-2">
+            <label className={labelCls}>{t("field.address")}</label>
+            <textarea
+              rows={2}
+              value={formData.address || ""}
+              readOnly
+              disabled
+              tabIndex={-1}
+              className={`${disabledInputCls} resize-none`}
+              placeholder={t("field.address")}
+            />
           </div>
         </div>
       </div>
@@ -949,7 +1128,7 @@ function EditContent({
             {showItemDropdown && itemModels.length > 0 && (
               <div
                 ref={itemScrollRootRef}
-                className="absolute left-0 right-0 top-full mt-1 z-50 bg-surface border border-subtle rounded-xl shadow-xl max-h-60 overflow-y-auto text-xs"
+                className="absolute left-0 right-0 top-full mt-1 z-50 bg-surface border border-subtle rounded-xl shadow-xl max-h-60 overflow-y-auto overscroll-contain text-xs"
               >
                 <div className="sticky top-0 bg-cushion px-3 py-2 border-b border-subtle flex items-center justify-between font-semibold text-ink-secondary ">
                   <span className="flex items-center gap-1.5">
@@ -1016,15 +1195,11 @@ function EditContent({
             <input
               type="text"
               value={formData.serialNumber || ""}
-              required
-              onChange={(e) => handleItemSearch(e.target.value, "serialNumber")}
-              onFocus={() => {
-                if ((formData.serialNumber || "").trim().length >= 1) {
-                  handleItemSearch(formData.serialNumber, "serialNumber");
-                }
-              }}
-              className={`${inputCls} font-mono`}
-              placeholder={t("detail.typeSerial")}
+              readOnly
+              disabled
+              tabIndex={-1}
+              className={`${disabledInputCls} font-mono`}
+              placeholder={t("field.serialNumber")}
             />
           </div>
         </div>
@@ -1035,10 +1210,15 @@ function EditContent({
             overwrites those columns with whatever it receives. */}
         <div className="grid grid-cols-1 gap-3 mt-3">
           <div className="space-y-1">
-            <label className={labelCls}>{t("detail.customerRequestIssue")}</label>
-            <textarea rows={2} value={formData.customerRequest || ""}
+            <label className={labelCls}>{t("detail.customerRequestIssue")} *</label>
+            <textarea
+              rows={2}
+              value={formData.customerRequest || ""}
+              required
               onChange={(e) => setFormData({ ...formData, customerRequest: e.target.value })}
-              className={inputCls} placeholder={t("detail.issueReported")} />
+              className={inputCls}
+              placeholder={t("detail.issueReported")}
+            />
           </div>
         </div>
       </div>
@@ -1076,20 +1256,6 @@ function EditContent({
             />
           </div>
         </div>
-        <div className="flex items-center gap-4 mt-3">
-          <label className="flex items-center gap-2 text-xs text-ink-secondary cursor-pointer">
-            <input type="checkbox" checked={!!formData.hasContract}
-              onChange={(e) => setFormData({ ...formData, hasContract: e.target.checked })}
-              className="rounded" />
-            {t("detail.hasContract")}
-          </label>
-          <label className="flex items-center gap-2 text-xs text-ink-secondary cursor-pointer">
-            <input type="checkbox" checked={!!formData.isThirdPartyRepair}
-              onChange={(e) => setFormData({ ...formData, isThirdPartyRepair: e.target.checked })}
-              className="rounded" />
-            {t("detail.thirdPartyRepair")}
-          </label>
-        </div>
       </div>
       </div>
 
@@ -1113,10 +1279,16 @@ function EditContent({
 // Main export
 // ─────────────────────────────────────────────────────────────────────────────
 export default function ServiceDetailModal({ item, onClose, mode = "view", onSave, prefill }: ModalProps) {
-  // Every hook must run before the `!item` bail-out below — React requires an
-  // identical hook order on every render of a component instance.
   const later = useSafeTimeout();
-  const [currentMode, setCurrentMode] = useState<"view" | "edit">(mode);
+  const isReceivedStage =
+    !item ||
+    item.id.startsWith("new-") ||
+    (item.status || "").toLowerCase().includes("reciev") ||
+    (item.status || "").toLowerCase().includes("receiv");
+
+  const [currentMode, setCurrentMode] = useState<"view" | "edit">(
+    isReceivedStage ? mode : "view"
+  );
   const [formData, setFormData] = useState<RepairServiceItem>(
     () => ({ ...(item ?? {}) }) as RepairServiceItem
   );
@@ -1128,6 +1300,14 @@ export default function ServiceDetailModal({ item, onClose, mode = "view", onSav
   const [fullItem, setFullItem] = useState<RepairServiceItem | null>(null);
   const [, setForceUpdate] = useState(0);
   const { t } = useI18n();
+
+  useEffect(() => {
+    if (!isReceivedStage && !item?.id.startsWith("new-")) {
+      setCurrentMode("view");
+    } else {
+      setCurrentMode(mode);
+    }
+  }, [mode, item, isReceivedStage]);
 
   useEffect(() => {
     if (item) {
@@ -1183,7 +1363,7 @@ export default function ServiceDetailModal({ item, onClose, mode = "view", onSav
         ? await Promise.all(
             rawParts.map(async (p) => {
               const sparePartId = (p.sparePartId ?? p.sparepartId) as string | undefined;
-              const catalog = sparePartId ? await fetchSparePartById(sparePartId) : null;
+              const catalog = sparePartId ? await fetchSparePartById(sparePartId, true) : null;
               return {
                 ...p,
                 id: (p.id as string) ?? "",
@@ -1214,7 +1394,9 @@ export default function ServiceDetailModal({ item, onClose, mode = "view", onSav
   // Re-running on `fullItem` puts the user's instruction back on top.
   useEffect(() => {
     if (!prefill) return;
-    setFormData((prev) => ({ ...prev, ...ticketPrefillPatch(prefill) }));
+    queueMicrotask(() => {
+      setFormData((prev) => ({ ...prev, ...ticketPrefillPatch(prefill) }));
+    });
   }, [prefill, fullItem]);
 
   if (!item) return null;
@@ -1229,8 +1411,31 @@ export default function ServiceDetailModal({ item, onClose, mode = "view", onSav
     // block here with a clear message instead of silently sending a
     // fabricated/placeholder id that would fail server-side or mislink the
     // ticket to the wrong device.
-    if (!formData.itemId) {
-      setSubmitError(t("detail.selectItemFirst"));
+    //
+    // That check, and the ones the CamID intake form has always run beside it,
+    // now come from `@/validation` — the folder mirrored into the phone — so a
+    // ticket this screen accepts is one the phone would accept too. The desktop
+    // was previously checking only `itemId`, and would happily save a ticket
+    // with no company name, no serial number and an unusable phone number.
+    const check = validateTicket({
+      companyName: formData.companyName,
+      contactName: formData.contactName,
+      phoneNumber: formData.phoneNumber,
+      address: formData.address,
+      itemName: formData.itemName,
+      serialNumber: formData.serialNumber,
+      itemId: formData.itemId,
+      customerRequest: formData.customerRequest,
+      mode: formData.id.startsWith("new-") ? "create" : "edit",
+    });
+    if (!check.isValid) {
+      // `selectItemFirst` keeps this screen's own long-standing wording, but
+      // only when it is the FIRST failure — special-casing it unconditionally
+      // hid a missing serial number behind "select an item first".
+      const firstField = Object.keys(check.codes)[0];
+      setSubmitError(
+        firstField === "itemId" ? t("detail.selectItemFirst") : firstValidationMessage(check, t)
+      );
       return;
     }
 
@@ -1278,17 +1483,33 @@ export default function ServiceDetailModal({ item, onClose, mode = "view", onSav
         }))
         .filter((p) => Boolean(p.sparepartId));
 
+      // Ensure customerId is resolved if user selected or typed an existing company
+      let resolvedCustomerId = formData.customerId;
+      if ((!resolvedCustomerId || resolvedCustomerId === "00000000-0000-0000-0000-000000000000") && formData.companyName?.trim()) {
+        const companyNameTrimmed = formData.companyName.trim().toLowerCase();
+        try {
+          const lookup = await fetchCustomerCenter(1, 20, formData.companyName.trim());
+          const found = (lookup.items || []).find(
+            (c: CustomerItem) => c.companyName.trim().toLowerCase() === companyNameTrimmed
+          );
+          if (found) resolvedCustomerId = found.id;
+        } catch {
+          // graceful fallback
+        }
+      }
+
       if (isNew) {
         // A brand-new ticket only has receive-item info — nothing inspected
         // or repaired yet — so this narrower DTO is the right one here.
         const payload: Record<string, unknown> = {
-          customerId: formData.customerId || "00000000-0000-0000-0000-000000000000",
+          customerId: resolvedCustomerId || "00000000-0000-0000-0000-000000000000",
           companyName: formData.companyName || "N/A",
           address: formData.address || "",
           contactName: formData.contactName || "",
           phoneNumber: formData.phoneNumber || "",
           hasContract: Boolean(formData.hasContract),
-          serviceDate: formData.serviceDate || toBackendLocalDateTime(),
+          isThirdPartyRepair: Boolean(formData.isThirdPartyRepair),
+          serviceDate: normalizeServiceDate(formData.serviceDate),
           reportNo: null,
           serviceLocation: locationEnum,
           servicePriorityId: priorityId,
@@ -1311,6 +1532,52 @@ export default function ServiceDetailModal({ item, onClose, mode = "view", onSav
           );
           setIsSaving(false);
           return;
+        }
+
+        // Fetch newly created record from backend to get its generated ReportNo & ID
+        let finalReportNo = formData.reportNo || "";
+        let createdServiceId: string | undefined = undefined;
+        try {
+          const checkRes = await fetch("/api/proxy/technicalservices/search?pageNumber=1&pageSize=1&sortBy=reportNo&sortDescending=true&api-version=1.0", { headers });
+          if (checkRes.ok) {
+            const checkData = await checkRes.json();
+            const first = checkData?.items?.[0];
+            if (first) {
+              if (first.reportNo) finalReportNo = first.reportNo;
+              if (first.id) createdServiceId = first.id;
+            }
+          }
+        } catch {}
+
+        // Resolve current user display name
+        const currentUserName = getCurrentUserFullName();
+
+        const dateStr = formData.serviceDate
+          ? new Date(formData.serviceDate).toLocaleDateString("en-GB") + " " + new Date(formData.serviceDate).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" })
+          : new Date().toLocaleDateString("en-GB") + " " + new Date().toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" });
+
+        const msgHtml = buildTelegramMessage("ItemReceived", {
+          reportNo: finalReportNo,
+          companyName: formData.companyName || "N/A",
+          address: formData.address,
+          contactPerson: formData.contactName,
+          phoneNumber: formData.phoneNumber,
+          serviceDate: dateStr,
+          serviceLocation: locationEnum,
+          itemName: formData.itemName || "N/A",
+          serialNumber: formData.serialNumber || "N/A",
+          hasContract: Boolean(formData.hasContract),
+          customerRequest: formData.customerRequest || "No",
+          receivedByName: currentUserName
+        }, false);
+
+        try {
+          const sendRes = await sendTelegramNotification("ItemReceived", msgHtml);
+          if (sendRes.success && sendRes.messageId && createdServiceId) {
+            void saveServiceTelegramMessage(createdServiceId, "ItemReceived", sendRes.messageId);
+          }
+        } catch (tgErr) {
+          console.warn("ItemReceived telegram dispatch failed:", tgErr);
         }
       } else {
         // Editing goes through UpdateRepairServiceCommand.
@@ -1358,14 +1625,14 @@ export default function ServiceDetailModal({ item, onClose, mode = "view", onSav
 
         const servicePayload = {
           id: formData.id,
-          customerId: formData.customerId || "00000000-0000-0000-0000-000000000000",
+          customerId: resolvedCustomerId || "00000000-0000-0000-0000-000000000000",
           companyName: formData.companyName || "N/A",
           address: formData.address || "",
           contactName: formData.contactName || "",
           phoneNumber: formData.phoneNumber || "",
           itemId: formData.itemId,
           reportNo: formData.reportNo,
-          serviceDate: formData.serviceDate || toBackendLocalDateTime(),
+          serviceDate: normalizeServiceDate(formData.serviceDate),
           customerRequest:
             formData.customerRequest?.trim() || formData.inspection?.trim() || "Receive Item Service Request",
           inspection: formData.inspection || "",
@@ -1375,6 +1642,7 @@ export default function ServiceDetailModal({ item, onClose, mode = "view", onSav
           servicePriorityId: priorityId,
           statusId,
           hasContract: Boolean(formData.hasContract),
+          isThirdPartyRepair: Boolean(formData.isThirdPartyRepair),
           sparepartItems: spareparts
         };
 
@@ -1399,6 +1667,11 @@ export default function ServiceDetailModal({ item, onClose, mode = "view", onSav
       invalidateCachePrefix("repairservices");
       invalidateCachePrefix("dashboard");
 
+      // Sync/edit telegram notification if an existing ticket is modified (ONLY on real existing tickets in edit mode)
+      if (!isNew && currentMode === "edit" && formData.id && !formData.id.startsWith("new-")) {
+        void dispatchTelegramNotificationSafe(formData, formData.status || "Item Recieved", undefined, true);
+      }
+
       setSaveSuccess(true);
       if (onSave) onSave(savedItem);
       // Cancelled on unmount: all three of these touch state or the
@@ -1418,6 +1691,8 @@ export default function ServiceDetailModal({ item, onClose, mode = "view", onSav
   const isView = currentMode === "view";
   const modalWrapperClass = "bg-surface border border-subtle shadow-soft-xl text-ink";
   const headerBgClass = "border-b border-subtle bg-cushion";
+  const currentItem = fullItem ?? item;
+  const currentDays = currentItem?.daysTaken ?? (currentItem ? calculateDaysTaken(currentItem) : null);
 
 
   return (
@@ -1440,40 +1715,44 @@ export default function ServiceDetailModal({ item, onClose, mode = "view", onSav
               <h2 id="service-detail-title" className="text-sm font-bold text-ink flex items-center gap-2">
                 {isView ? t("detail.viewTitle") : t("detail.editTitle")}
                 <span className="font-mono text-xs px-2 py-0.5 rounded bg-info-soft text-info-fg">
-                  {item.reportNo || "TICKET"}
+                  {currentItem.reportNo || "TICKET"}
                 </span>
               </h2>
-              <p className="text-xs text-ink-secondary mt-0.5">
-                {t("detail.receivedPrefix")} {fmtDate(item.serviceDate) ?? "N/A"}
-                &nbsp;·&nbsp;
-                <span className={`text-[11px] font-semibold px-1.5 py-0.5 rounded-full ${getStatusBadgeClass(item.status)}`}>
-                  {translateStatus(item.status, t)}
+              <p className="text-xs text-ink-secondary mt-0.5 flex items-center gap-1.5 flex-wrap">
+                <span>{t("detail.receivedPrefix")} {fmtDate(currentItem.serviceDate) ?? "N/A"}</span>
+                <span>·</span>
+                <span className={`text-[11px] font-semibold px-1.5 py-0.5 rounded-full ${getStatusBadgeClass(currentItem.status)}`}>
+                  {translateStatus(currentItem.status, t)}
                 </span>
               </p>
             </div>
           </div>
 
           <div className="flex items-center gap-2">
-            {/* Toggle VIEW / EDIT */}
-            <button
-              type="button"
-              onClick={() => setCurrentMode(isView ? "edit" : "view")}
-              className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg border border-subtle text-ink-secondary hover:bg-sunken transition-colors"
-            >
-              {isView ? (
-                <><Edit3 className="w-3.5 h-3.5" /> {t("action.edit")}</>
-              ) : (
-                <><Eye className="w-3.5 h-3.5" /> {t("action.view")}</>
-              )}
-            </button>
-            <button
-              type="button"
-              onClick={() => setShowConfirmDelete(true)}
-              className="p-1.5 rounded-lg text-ink-muted hover:text-danger hover:bg-danger-soft transition-colors"
-              title={t("action.deleteTicket")}
-            >
-              <Trash2 className="w-4 h-4" />
-            </button>
+            {/* Toggle VIEW / EDIT - only available on intake */}
+            {isReceivedStage && (
+              <>
+                <button
+                  type="button"
+                  onClick={() => setCurrentMode(isView ? "edit" : "view")}
+                  className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg border border-subtle text-ink-secondary hover:bg-sunken transition-colors"
+                >
+                  {isView ? (
+                    <><Edit3 className="w-3.5 h-3.5" /> {t("action.edit")}</>
+                  ) : (
+                    <><Eye className="w-3.5 h-3.5" /> {t("action.view")}</>
+                  )}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setShowConfirmDelete(true)}
+                  className="p-1.5 rounded-lg text-ink-muted hover:text-danger hover:bg-danger-soft transition-colors"
+                  title={t("action.deleteTicket")}
+                >
+                  <Trash2 className="w-4 h-4" />
+                </button>
+              </>
+            )}
             <button
               onClick={onClose}
               className="p-1.5 rounded-lg text-ink-muted hover:text-ink-secondary hover:bg-sunken transition-colors"
@@ -1535,7 +1814,7 @@ export default function ServiceDetailModal({ item, onClose, mode = "view", onSav
                   const ok = await deleteTechnicalService(item.id);
                   setIsDeleting(false);
                   setShowConfirmDelete(false);
-                  if (onSave) onSave({ ...item, id: "" } as any);
+                  if (onSave) onSave({ ...item, id: "" });
                   onClose();
                 }}
                 disabled={isDeleting}

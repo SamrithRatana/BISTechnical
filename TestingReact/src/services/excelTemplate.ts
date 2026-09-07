@@ -48,6 +48,8 @@ export interface FillTemplateOptions {
   summary?: string;
   /** Formats a raw record value for display. */
   format?: (field: string, value: unknown) => string;
+  /** Custom scalar or column-total replacements (e.g. total_m1..total_m12, total) */
+  columnTotals?: Record<string, number | string>;
 }
 
 const PLACEHOLDER = /\{\{\s*([A-Za-z0-9_.]+)\s*\}\}/;
@@ -144,6 +146,7 @@ export async function fillTemplate({
   labels,
   summary,
   format = defaultFormat,
+  columnTotals,
 }: FillTemplateOptions): Promise<Workbook> {
   const ExcelJS = await loadExcelJS();
 
@@ -254,8 +257,9 @@ export async function fillTemplate({
       if (token === "title") cell.value = title;
       else if (token === "subtitle") cell.value = subtitle ?? "";
       else if (token === "grandTotal") cell.value = labels.grandTotal;
-      else if (token === "total") cell.value = totalRecords;
+      else if (token === "total") cell.value = columnTotals?.["total"] ?? totalRecords;
       else if (token === "summary") cell.value = summary ?? "";
+      else if (columnTotals && token in columnTotals) cell.value = columnTotals[token];
     });
   });
 

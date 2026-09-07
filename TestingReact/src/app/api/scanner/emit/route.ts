@@ -32,6 +32,26 @@ export async function POST(req: NextRequest) {
       );
     }
 
+    const phoneUserName = typeof body.userName === "string" ? body.userName.trim() : "";
+    const phoneUserId = typeof body.userId === "string" ? body.userId.trim() : "";
+
+    // ── STRICT ACCOUNT MISMATCH GUARD ──
+    if (session && session.ownerUserName && phoneUserName) {
+      if (session.ownerUserName.trim().toLowerCase() !== phoneUserName.toLowerCase()) {
+        console.warn(`[ScannerEmit] Account mismatch rejected: Phone=${phoneUserName}, PC=${session.ownerUserName}`);
+        return NextResponse.json(
+          {
+            error: "ACCOUNT_MISMATCH",
+            mismatch: true,
+            phoneUser: phoneUserName,
+            pcUser: session.ownerUserName,
+            message: `Account mismatch: Phone is logged in as '${phoneUserName}', but Web PC workspace belongs to '${session.ownerUserName}'.`,
+          },
+          { status: 403 }
+        );
+      }
+    }
+
     if (type === "join") {
       const userAgent = req.headers.get("user-agent") || "";
       const forwardedFor = req.headers.get("x-forwarded-for") || "";
@@ -53,7 +73,12 @@ export async function POST(req: NextRequest) {
         type: "phone-joined",
         sessionId,
       });
-      return NextResponse.json({ success: true, status: "phone-joined", device: deviceName });
+      return NextResponse.json({
+        success: true,
+        status: "phone-joined",
+        device: deviceName,
+        pcUser: session?.ownerUserName,
+      });
     }
 
     if (type === "scan") {

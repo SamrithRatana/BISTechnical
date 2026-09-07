@@ -1,4 +1,31 @@
 /**
+ * SUPERSEDED - NOTHING IMPORTS THIS FILE.
+ *
+ * This is the older chapter/topic catalogue (`DOCS_CHAPTERS`, 56 topics across
+ * `gettingStarted.ts`, `start*.ts`, `workflow*.ts`, `inventory*.ts`,
+ * `reports*.ts`, `admin*.ts`). The card-grid components that rendered it -
+ * `ChapterNav`, `ChapterSection`, `TopicCard` - were removed in the 2026-09-01
+ * docs restructure; the page now renders `content/docsData.ts`'s article
+ * catalogue instead.
+ *
+ * It is KEPT rather than deleted because the prose is authored bilingual
+ * documentation and several topics are better written than their article
+ * counterparts - five of them (`inspection`, `confirmed-sale`,
+ * `approve-repair`, `rejected`, `unrepairable`) were ported into
+ * `articlesWorkflow*.ts` to fix six dead stops on the lifecycle rail. The
+ * remaining ~50 have not been reviewed against the articles.
+ *
+ * Two live modules still sit in this folder and are NOT superseded - import
+ * them directly, never through this file:
+ *   - `content/lifecycle.ts`  (LIFECYCLE_STAGES, drawn by `LifecycleRail`)
+ *   - `content/heroCopy.ts`   (all page furniture copy)
+ *
+ * Next step is a decision, not a cleanup: merge the remaining topics into the
+ * article catalogue, or delete this subtree. Until then it costs the reader
+ * nothing - with no importer, the bundler never puts it in a chunk.
+ */
+
+/**
  * @file components/docs/content/index.ts
  * @description The manual, assembled — chapter order, the counts the hero
  * quotes, and the integrity check that keeps both honest.

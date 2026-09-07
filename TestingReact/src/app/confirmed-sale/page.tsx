@@ -21,6 +21,7 @@ export default function ConfirmedSalePage() {
         activeTabKey={activeTabKey}
         tabs={CONFIRMED_SALE_TABS}
         onTabChange={setActiveTabKey}
+        disableStatusDropdown={activeTabKey !== "Sale Confirmed"}
       />
     </PageWrapper>
   );

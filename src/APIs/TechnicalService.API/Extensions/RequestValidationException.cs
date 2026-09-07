@@ -7,8 +7,8 @@ namespace TechnicalService.API.Extensions;
 /// Mapped to a 400 by <see cref="ValidationExceptionHandler"/>, the same way
 /// <see cref="KeyNotFoundException"/> is mapped to a 404 by
 /// <c>NotFoundExceptionHandler</c>. Having a dedicated type means a bad value
-/// is distinguishable from a genuine server fault, so it neither returns a 500
-/// to the caller nor lands in Sentry as one.
+/// is distinguishable from a genuine server fault, so it returns a 400 Bad Request
+/// rather than a 500 server fault.
 /// </remarks>
 public sealed class RequestValidationException : Exception
 {

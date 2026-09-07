@@ -1,28 +1,60 @@
 "use client";
 
-import React, { useState, useCallback } from "react";
+import React, { useState, useCallback, useMemo } from "react";
+import dynamic from "next/dynamic";
 import { motion } from "framer-motion";
-import { Download, Eye, Edit3, Search, RefreshCw, Plus, Printer, Trash2, ShieldCheck, Inbox } from "lucide-react";
+import Link from "next/link";
+import {
+  Download,
+  Search,
+  RefreshCw,
+  Plus,
+  Trash2,
+  Inbox,
+  ClipboardList,
+  ArrowUpRight,
+  Printer,
+} from "lucide-react";
 import toast from "react-hot-toast";
+import { cn } from "@/lib/utils";
 import { DUR, EASE_OUT } from "@/lib/animations";
 import { fetchRepairServices, updateServiceStatus, deleteTechnicalService, RepairServiceItem, invalidateCachePrefix } from "@/services/api";
-import { getActionUserForStatus } from "@/services/types";
 import { useRealtimeTickets } from "@/hooks/useRealtimeTickets";
 import { useDebouncedValue } from "@/hooks/useDebouncedValue";
 import { useSearchQueryParam } from "@/hooks/useSearchQueryParam";
 import { useSearchAction } from "@/hooks/useSearchAction";
-import { useInfiniteList } from "@/hooks/useInfiniteList";
+import { useInfiniteList, clearListCache } from "@/hooks/useInfiniteList";
 import InfiniteScrollStatus from "./InfiniteScrollStatus";
 import { EmptyState, SkeletonRows } from "@/components/av";
-import ServiceDetailModal from "./ServiceDetailModal";
-import ApproveRepairDialog from "./ApproveRepairDialog";
-import HighlightText from "./HighlightText";
 import StatusTabMenu, { TabItem } from "./StatusTabMenu";
-import PrintPreviewSidebar from "./PrintPreviewSidebar";
+import TicketRow from "./ServiceTableRow";
 import { useActionHandler, type ActionValues } from "./ActionBus";
 import { useI18n } from "@/i18n/LanguageProvider";
-import { translatePriority, translateStatus } from "@/i18n/statusLabel";
+import { useTheme } from "@/theme/ThemeProvider";
+import type { CrudStyleName } from "@/theme/themeConfig";
+import EnterpriseRibbonToolbar from "./crud/EnterpriseRibbonToolbar";
+import ColumnVisibilityDropdown, { type ColumnDefinition } from "./crud/ColumnVisibilityDropdown";
+import ColumnHeaderFilter from "./crud/ColumnHeaderFilter";
+import { useUserPermissions } from "@/hooks/useUserPermissions";
 import { ModalWrapper } from "@/components/av/ModalWrapper";
+import StockShortageAlertModal, { parseStockErrorMessage, StockShortageDetails } from "./StockShortageAlertModal";
+import { toBackendLocalDateTime, getActionUserForStatus } from "@/services/types";
+
+import { transitionGuard, type TransitionCode } from "@/validation";
+import type { TranslationKey } from "@/i18n/translations";
+
+const REFUSAL_KEYS: Record<TransitionCode, TranslationKey> = {
+  cannotApproveSpareParts: "msg.cannotApproveSpareParts",
+  cannotApproveCharge: "msg.cannotApproveCharge",
+  cannotSendSparePartsCharge: "msg.cannotSendSparePartsCharge",
+  cannotApproveFreeWithSpareParts: "msg.cannotApproveFreeWithSpareParts",
+};
+
+// Lazy-load heavy dialog modals on demand so the initial table paint is instantaneous (0ms)
+const ServiceDetailModal = dynamic(() => import("./ServiceDetailModal"), { ssr: false });
+const ApproveRepairDialog = dynamic(() => import("./ApproveRepairDialog"), { ssr: false });
+const PrintPreviewSidebar = dynamic(() => import("./PrintPreviewSidebar"), { ssr: false });
+const ApproveValidationModal = dynamic(() => import("./ApproveValidationModal"), { ssr: false });
 
 interface ServiceTableProps {
   activeFilter: string;
@@ -37,262 +69,42 @@ interface ServiceTableProps {
    * dropdown at all. Matches RepairItemList.razor's OnApplyButtonClick.
    */
   requireApproval?: boolean;
-}
-
-const getStatusBadge = (status: string) => {
-  const s = status?.toUpperCase() || "";
-  if (s === "FINISHED")
-    return "bg-success-soft text-success-fg ";
-  if (s.includes("AWAITING CUSTOMER"))
-    return "bg-warning-soft text-warning-fg ";
-  if (s.includes("AWAITING SPAREPART") || s.includes("SENT SPAREPARTS"))
-    return "bg-info-soft text-info-fg ";
-  if (s.includes("THIRD-PARTY") || s.includes("THIRD PARTY"))
-    return "bg-accent-soft text-accent ";
-  if (s.includes("REJECTED"))
-    return "bg-danger-soft text-danger-fg ";
-  if (s.includes("UNREPAIRABLE"))
-    return "bg-warning-soft text-warning-fg ";
-  if (s.includes("REPAIRING"))
-    return "bg-info-soft text-info-fg ";
-  return "bg-sunken text-ink ";
-};
-
-const getPriorityBadge = (priority: string) => {
-  switch (priority?.toUpperCase()) {
-    case "HIGH":
-      return "bg-danger-soft text-danger-fg border-danger ";
-    case "LOW":
-      return "bg-success-soft text-success-fg border-success ";
-    default:
-      return "bg-warning-soft text-warning-fg border-warning ";
-  }
-};
-
-function RenderStatusSelect({
-  row,
-  effectiveFilter,
-  onStatusChange,
-}: {
-  row: RepairServiceItem;
-  effectiveFilter: string;
-  onStatusChange: (item: RepairServiceItem, newStatus: string) => void;
-}) {
-  const { t } = useI18n();
-  const status = row.status || "RECEIVED";
-  const normFilter = (effectiveFilter || "").toUpperCase();
-  const selectCls =
-    "px-3 py-1 text-[11px] font-semibold rounded-full border outline-none cursor-pointer text-center font-sans tracking-tight shadow-sm transition-[color,background-color,border-color,box-shadow,opacity,transform,filter]";
-  // The <option> palette is fixed regardless of which coloured <select> the
-  // option sits in, so it's hoisted rather than repeated on all ~15 of them.
-  const optionCls = "bg-surface text-ink ";
-
-  // 1. Received / Item Recieved tab / page
-  if (
-    normFilter.includes("RECEIVED") ||
-    normFilter.includes("RECIEVED") ||
-    status === "Item Recieved" ||
-    status === "Received"
-  ) {
-    return (
-      <select
-        value={status}
-        onClick={(e) => e.stopPropagation()}
-        onChange={(e) => onStatusChange(row, e.target.value)}
-        className={`${selectCls} bg-sunken text-ink border-prominent `}
-      >
-        <option value={status} hidden>
-          {t("transition.itemReceived")}
-        </option>
-        <option value="Inspecting" className={optionCls}>
-          {t("transition.sendToInspect")}
-        </option>
-      </select>
-    );
-  }
-
-  // 2. Inspecting tab / page
-  if (normFilter === "INSPECTING" || status === "Inspecting") {
-    return (
-      <select
-        value={status}
-        onClick={(e) => e.stopPropagation()}
-        onChange={(e) => onStatusChange(row, e.target.value)}
-        /* `accent-soft-fg`, not `accent-fg`. The two are not interchangeable:
-           `accent-fg` is the colour that sits on the SOLID accent (white in
-           light, near-black in dark), so pairing it with the soft tint gave
-           white-on-pale-green at 1.14:1 in light and 1.29:1 in dark — text
-           that was there and could not be read, in both themes. */
-        className={`${selectCls} bg-accent-soft text-accent-soft-fg border-accent `}
-      >
-        <option value="Inspecting" hidden>
-          {t("transition.inspecting")}
-        </option>
-        <option value="Inspection" className={optionCls}>
-          {t("transition.inspectionDone")}
-        </option>
-        <option value="Awaiting Sparepart" className={optionCls}>
-          {t("transition.sendToStock")}
-        </option>
-        <option value="Awaiting Customer Confirm" className={optionCls}>
-          {t("transition.sendToSales")}
-        </option>
-      </select>
-    );
-  }
-
-  // 3. Awaiting Sparepart tab / page
-  if (normFilter.includes("AWAITING SPAREPART") || status === "Awaiting Sparepart") {
-    return (
-      <select
-        value={status}
-        onClick={(e) => e.stopPropagation()}
-        onChange={(e) => onStatusChange(row, e.target.value)}
-        className={`${selectCls} bg-info-soft text-info-fg border-info `}
-      >
-        <option value="Awaiting Sparepart" hidden>
-          {t("transition.awaitingSparePart")}
-        </option>
-        <option value="Awaiting Customer Confirm" className={optionCls}>
-          {t("transition.sendToSales")}
-        </option>
-        <option value="Sent Spareparts" className={optionCls}>
-          {t("transition.sendSparesToTechFree")}
-        </option>
-      </select>
-    );
-  }
-
-  // 4. Awaiting Customer Confirm tab / page
-  if (normFilter.includes("AWAITING CUSTOMER CONFIRM") || status === "Awaiting Customer Confirm") {
-    return (
-      <select
-        value={status}
-        onClick={(e) => e.stopPropagation()}
-        onChange={(e) => onStatusChange(row, e.target.value)}
-        className={`${selectCls} bg-warning-soft text-warning-fg border-warning `}
-      >
-        <option value="Awaiting Customer Confirm" hidden>
-          {t("transition.awaitingCustomer")}
-        </option>
-        <option value="Sale Confirmed" className={optionCls}>
-          {t("transition.repairable")}
-        </option>
-        <option value="Customer Rejected" className={optionCls}>
-          {t("transition.customerRejected")}
-        </option>
-        <option value="Unrepairable" className={optionCls}>
-          {t("transition.unrepairable")}
-        </option>
-      </select>
-    );
-  }
-
-  // 5. Inspection tab / page
-  if (normFilter.includes("INSPECTION") || status === "Inspection") {
-    return (
-      <select
-        value={status}
-        onClick={(e) => e.stopPropagation()}
-        onChange={(e) => onStatusChange(row, e.target.value)}
-        className={`${selectCls} bg-info-soft text-info-fg border-info `}
-      >
-        <option value="Inspection" hidden>
-          {t("transition.inspectionDone")}
-        </option>
-        <option value="Inspecting" className={optionCls}>
-          {t("transition.reInspect")}
-        </option>
-        <option value="Awaiting Sparepart" className={optionCls}>
-          {t("transition.sendToStock")}
-        </option>
-        <option value="Awaiting Customer Confirm" className={optionCls}>
-          {t("transition.sendToSales")}
-        </option>
-      </select>
-    );
-  }
-
-  // 6. Sale Confirmed tab / page
-  if (normFilter.includes("SALE CONFIRMED") || status === "Sale Confirmed") {
-    return (
-      <select
-        value={status}
-        onClick={(e) => e.stopPropagation()}
-        onChange={(e) => onStatusChange(row, e.target.value)}
-        className={`${selectCls} bg-success-soft text-success-fg border-success `}
-      >
-        <option value="Sale Confirmed" hidden>
-          {t("transition.repairable")}
-        </option>
-        <option value="Sent Spareparts" className={optionCls}>
-          {t("transition.sendSparesToTech")}
-        </option>
-      </select>
-    );
-  }
-
-  // 7. Repairing / Sent Spareparts
-  if (
-    normFilter.includes("REPAIRING") ||
-    normFilter.includes("SENT SPAREPARTS") ||
-    status === "Sent Spareparts" ||
-    status === "Repairing"
-  ) {
-    return (
-      <select
-        value={status}
-        onClick={(e) => e.stopPropagation()}
-        onChange={(e) => onStatusChange(row, e.target.value)}
-        className={`${selectCls} bg-accent-soft text-accent border-accent `}
-      >
-        <option value="Sent Spareparts" hidden>
-          {t("transition.sparesSent")}
-        </option>
-        <option value="Inspection" className={optionCls}>
-          {t("transition.inspectionDone")}
-        </option>
-        <option value="Sale Confirmed" className={optionCls}>
-          {t("transition.repairable")}
-        </option>
-        <option value="Inspecting" className={optionCls}>
-          {t("transition.adjustSparesAgain")}
-        </option>
-        <option value="Finished" className={optionCls}>
-          {t("transition.repairDone")}
-        </option>
-        <option value="Unrepairable" className={optionCls}>
-          {t("transition.unrepairable")}
-        </option>
-        <option value="Repair by Third-Party" className={optionCls}>
-          {t("transition.sendToThirdParty")}
-        </option>
-      </select>
-    );
-  }
-
-  // Static badge for other statuses
-  return (
-    <span className={`inline-block px-3 py-1 rounded-full text-[10.5px] font-bold tracking-tight ${getStatusBadge(status)}`}>
-      {translateStatus(status, t)}
-    </span>
-  );
+  /** Disables the inline status dropdown, rendering a static status badge. */
+  disableStatusDropdown?: boolean;
+  /** Optional container class name for bounding height on dashboards */
+  containerClassName?: string;
+  /** Enables the dedicated widget header when placed on the Dashboard */
+  isDashboardWidget?: boolean;
+  /** Custom widget title override */
+  widgetTitle?: string;
+  /** Custom widget subtitle override */
+  widgetSubtitle?: string;
+  /** Optional extra filters such as date range fromDate/toDate */
+  searchExtras?: import("@/services/api").ServiceSearchExtras;
 }
 
 export default function ServiceTable({
   activeFilter,
+  searchExtras,
   tabs,
   onTabChange,
   activeTabKey,
   requireApproval,
+  disableStatusDropdown,
+  containerClassName,
+  isDashboardWidget,
+  widgetTitle,
+  widgetSubtitle,
 }: ServiceTableProps) {
-  const { t } = useI18n();
+  const { t, lang } = useI18n();
   const [searchTerm, setSearchTerm] = useState("");
   const [pageSize, setPageSize] = useState(25);
 
   const [selectedItem, setSelectedItem] = useState<RepairServiceItem | null>(null);
   const [printItem, setPrintItem] = useState<RepairServiceItem | null>(null);
   const [modalMode, setModalMode] = useState<"view" | "edit">("view");
+  const [stockShortageDetails, setStockShortageDetails] = useState<StockShortageDetails | null>(null);
+  const [stockShortageTargetItem, setStockShortageTargetItem] = useState<RepairServiceItem | null>(null);
   /**
    * Field values the detail form should open with, when the assistant was asked
    * to fill it in. Prefill only — the modal types them into its inputs and
@@ -300,7 +112,82 @@ export default function ServiceTable({
    */
   const [prefill, setPrefill] = useState<ActionValues | undefined>(undefined);
 
+  const { prefs, update: updateThemePrefs } = useTheme();
+  const crudStyle = prefs.crudStyle || "modern-inline";
+  const { hasPermission } = useUserPermissions();
+
+  // Selection state for Enterprise Ribbon mode
+  const [checkedRowId, setCheckedRowId] = useState<string | number | null>(null);
+
+  // Column Filters & Sort state
+  const [colFilters, setColFilters] = useState<Record<string, string>>({});
+  const [colSort, setColSort] = useState<{ field: string; direction: "asc" | "desc" | null }>({
+    field: "",
+    direction: null,
+  });
+
+  // Column Visibility definitions & persistence
+  const [columnsState, setColumnsState] = useState<ColumnDefinition[]>(() => {
+    const defaults: ColumnDefinition[] = [
+      { key: "refNo", label: t("field.refNo"), visible: true, permanent: true },
+      { key: "receiveDate", label: t("field.receiveDate"), visible: true },
+      { key: "companyName", label: t("field.companyName"), visible: true },
+      { key: "itemName", label: t("table.itemNameModel"), visible: true },
+      { key: "serialNumber", label: t("field.serialNumber"), visible: true },
+      { key: "priority", label: t("field.priority"), visible: true },
+      { key: "status", label: t("field.status"), visible: true },
+      { key: "receiver", label: t("field.receiver"), visible: true },
+      { key: "actions", label: t("field.actions"), visible: true, permanent: true },
+    ];
+    if (typeof window === "undefined") return defaults;
+    try {
+      const saved = localStorage.getItem("service_table_columns");
+      if (saved) {
+        const map = JSON.parse(saved) as Record<string, boolean>;
+        return defaults.map((c) => ({
+          ...c,
+          visible: c.permanent ? true : map[c.key] !== false,
+        }));
+      }
+    } catch {}
+    return defaults;
+  });
+
+  const handleToggleColumn = useCallback((key: string) => {
+    setColumnsState((prev) => {
+      const next = prev.map((c) => (c.key === key ? { ...c, visible: !c.visible } : c));
+      try {
+        const map: Record<string, boolean> = {};
+        next.forEach((c) => {
+          map[c.key] = c.visible;
+        });
+        localStorage.setItem("service_table_columns", JSON.stringify(map));
+      } catch {}
+      return next;
+    });
+  }, []);
+
+  const handleResetColumns = useCallback(() => {
+    try {
+      localStorage.removeItem("service_table_columns");
+    } catch {}
+    setColumnsState((prev) => prev.map((c) => ({ ...c, visible: true })));
+  }, []);
+
+  const visibleColumnsMap = React.useMemo(() => {
+    const map: Record<string, boolean> = {};
+    columnsState.forEach((c) => {
+      map[c.key] = c.visible;
+    });
+    return map;
+  }, [columnsState]);
+
   const effectiveFilter = activeTabKey || activeFilter;
+  const isReceivedStage =
+    (effectiveFilter || "").toLowerCase().includes("reciev") ||
+    (effectiveFilter || "").toLowerCase().includes("receiv") ||
+    (activeFilter || "").toLowerCase().includes("reciev") ||
+    (activeFilter || "").toLowerCase().includes("receiv");
 
   const debouncedSearch = useDebouncedValue(searchTerm, 300);
   const term = debouncedSearch.trim();
@@ -329,10 +216,10 @@ export default function ServiceTable({
     setTotalCount,
   } = useInfiniteList<RepairServiceItem, HTMLDivElement, HTMLTableRowElement>({
     fetchPage: (pageNumber, size) =>
-      fetchRepairServices(pageNumber, size, effectiveFilter, term),
+      fetchRepairServices(pageNumber, size, effectiveFilter, term, searchExtras),
     pageSize,
-    // Filter/tab and search both restart the list from page 1.
-    resetKey: `${effectiveFilter}|${term}`,
+    // Filter/tab, search, and date range both restart the list from page 1.
+    resetKey: `${effectiveFilter}|${term}|${searchExtras?.fromDate || ""}|${searchExtras?.toDate || ""}|${searchExtras?.dateFilter || ""}`,
     getId: (i) => i?.id,
   });
 
@@ -346,52 +233,185 @@ export default function ServiceTable({
   useRealtimeTickets(effectiveFilter, handleRealtimeUpdate);
 
   const handleSaveItem = (updated: RepairServiceItem) => {
-    setItems((prev) => prev.map((i) => (i.id === updated.id ? updated : i)));
+    invalidateCachePrefix("repairservices");
+    invalidateCachePrefix("dashboard");
+    clearListCache();
+    // If updating existing item in state, update it immediately
+    setItems((prev) => {
+      const exists = prev.some((i) => i.id === updated.id);
+      if (exists) {
+        return prev.map((i) => (i.id === updated.id ? updated : i));
+      }
+      return [updated, ...prev];
+    });
+    // Force refetch page 1 from backend so DB generated reportNo and IDs are loaded
+    void refreshLoaded();
   };
 
-  const handleInlineStatusChange = async (item: RepairServiceItem, newStatus: string) => {
-    // Business rule validation: if current status is 'Sale Confirmed' and ticket has spare parts attached, warn
-    const parts = item.sparePartItems || item.sparepartItems || [];
-    if (item.status === 'Sale Confirmed' && parts.length > 0) {
-      toast.error(t("msg.cannotChangeStatusSpareParts"), { position: 'bottom-right' });
+  /**
+   * Every handler passed to a row is a stable `useCallback` and takes the row
+   * as an ARGUMENT. `TicketRow` is memoised, and a fresh function identity per
+   * render defeats `React.memo` silently — the rows would still re-render on
+   * every keystroke and nothing would look broken. Same rule the spare-parts
+   * `PartRow` documents.
+   */
+  const handleInlineStatusChange = useCallback(async (item: RepairServiceItem, newStatus: string) => {
+    // Send update request to server (with pre-validation)
+    const result = await updateServiceStatus(item, newStatus);
+    if (!result.success) {
+      const err = result.error || "";
+      if (
+        result.shortages?.length ||
+        err.includes("ស្តុក") ||
+        err.toLowerCase().includes("stock") ||
+        err.includes("Available") ||
+        err.includes("Required")
+      ) {
+        setStockShortageTargetItem(item);
+        setStockShortageDetails(parseStockErrorMessage(err, result.shortages));
+      } else {
+        toast.error(err || "Failed to update status", { position: "top-right" });
+      }
+      // Revert / refresh loaded rows to ensure accurate state
+      void refreshLoaded();
       return;
     }
 
-    // Optimistic UI update
-    const updated = { ...item, status: newStatus };
-    setItems((prev) => prev.map((i) => (i.id === item.id ? updated : i)));
-
-    // Send update request to server
-    await updateServiceStatus(item, newStatus);
+    toast.success(
+      lang === "km" ? "បានកែប្រែស្ថានភាពជោគជ័យ" : "Status updated successfully",
+      { position: "bottom-right" }
+    );
     // Reload dataset to ensure fresh state
     void refreshLoaded();
-  };
+  }, [lang, refreshLoaded]);
+
+  /**
+   * Stable so `StatusTabMenu` (memoised) does not re-render on every keystroke
+   * here. It re-measures its sliding thumb in a dependency-less
+   * `useLayoutEffect`, so each re-render forced four synchronous offset reads —
+   * a layout flush before paint — for a tab strip that had not moved.
+   */
+  const handleTabChange = useCallback(
+    (k: string) => onTabChange?.(k),
+    [onTabChange]
+  );
+
+  const handleViewRow = useCallback((row: RepairServiceItem) => {
+    setModalMode("view");
+    setSelectedItem(row);
+  }, []);
+
+  const handleEditRow = useCallback((row: RepairServiceItem) => {
+    setModalMode("edit");
+    setSelectedItem(row);
+  }, []);
+
+  const checkedRow = useMemo(() => {
+    return items.find((it) => it.id === checkedRowId) || null;
+  }, [items, checkedRowId]);
+
+  const handleSelectRow = useCallback((row: RepairServiceItem) => {
+    setCheckedRowId((prev) => (prev === row.id ? null : (row.id ?? null)));
+  }, []);
+
+  // Filter items by column filters if any are active, and apply column sorting
+  const displayedItems = useMemo(() => {
+    let list = items;
+    const activeColKeys = Object.keys(colFilters).filter((k) => Boolean(colFilters[k]?.trim()));
+    if (activeColKeys.length > 0) {
+      list = list.filter((item) => {
+        return activeColKeys.every((k) => {
+          const q = colFilters[k].toLowerCase().trim();
+          let target = "";
+          if (k === "refNo") target = item.reportNo || "";
+          else if (k === "receiveDate") target = item.serviceDate || "";
+          else if (k === "companyName") target = item.companyName || "";
+          else if (k === "itemName") target = item.itemName || "";
+          else if (k === "serialNumber") target = item.serialNumber || "";
+          else if (k === "priority") target = item.servicePriority || "";
+          else if (k === "status") target = item.status || "";
+          else if (k === "receiver") target = getActionUserForStatus(item) || "";
+          return target.toLowerCase().includes(q);
+        });
+      });
+    }
+
+    if (colSort.direction && colSort.field) {
+      list = [...list].sort((a, b) => {
+        let valA = "";
+        let valB = "";
+        const f = colSort.field;
+        if (f === "refNo") { valA = a.reportNo || ""; valB = b.reportNo || ""; }
+        else if (f === "companyName") { valA = a.companyName || ""; valB = b.companyName || ""; }
+        else if (f === "itemName") { valA = a.itemName || ""; valB = b.itemName || ""; }
+        else if (f === "serialNumber") { valA = a.serialNumber || ""; valB = b.serialNumber || ""; }
+        else if (f === "status") { valA = a.status || ""; valB = b.status || ""; }
+        const cmp = valA.localeCompare(valB);
+        return colSort.direction === "asc" ? cmp : -cmp;
+      });
+    }
+
+    return list;
+  }, [items, colFilters, colSort]);
+
+  const handleColumnFilterChange = useCallback((field: string, value: string) => {
+    setColFilters((prev) => ({ ...prev, [field]: value }));
+  }, []);
+
+  const handleColumnSort = useCallback((field: string, direction: "asc" | "desc" | null) => {
+    setColSort({ field, direction });
+  }, []);
+
+  const handleStyleChange = useCallback((style: CrudStyleName) => {
+    updateThemePrefs({ crudStyle: style });
+  }, [updateThemePrefs]);
+
+  const activeColCount = useMemo(() => {
+    const visibleCount = columnsState.filter((c) => c.visible).length;
+    return (crudStyle === "enterprise-ribbon" ? 1 : 0) + visibleCount;
+  }, [columnsState, crudStyle]);
 
   const [deleteConfirmItem, setDeleteConfirmItem] = useState<RepairServiceItem | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
 
   const [approveItem, setApproveItem] = useState<RepairServiceItem | null>(null);
+  const [validationModal, setValidationModal] = useState<{
+    open: boolean;
+    ticket: RepairServiceItem | null;
+    ruleCode?: TransitionCode | null;
+    message?: string | null;
+  }>({
+    open: false,
+    ticket: null,
+    ruleCode: null,
+    message: null,
+  });
 
-  const handleApproveClick = (row: RepairServiceItem) => {
-    // Same gate as ApproveRepairDialog's own submit-time check — checked
-    // here too so a blocked ticket never even opens the dialog.
+  const handleApproveClick = useCallback((row: RepairServiceItem) => {
+    // Check authoritative 4 workflow rules via transitionGuard
     const parts = row.sparePartItems || row.sparepartItems || [];
-    if (row.status === "Sale Confirmed" && parts.length > 0) {
-      toast.error(
-        t("msg.cannotApproveSpareParts", { ref: row.reportNo ?? "" }),
-        { position: "bottom-right" }
-      );
-      return;
-    }
-    if (row.status === "Inspection" && row.serviceType === "Charge") {
-      toast.error(
-        t("msg.cannotApproveCharge", { ref: row.reportNo ?? "" }),
-        { position: "bottom-right" }
-      );
+    const refusal = transitionGuard(
+      {
+        status: row.status,
+        serviceType: row.serviceType,
+        serviceTypeId: row.serviceTypeId,
+        sparePartCount: parts.length,
+        reportNo: row.reportNo,
+      },
+      "Repairing"
+    );
+    if (refusal) {
+      // Popup center modal on screen as requested by user
+      setValidationModal({
+        open: true,
+        ticket: row,
+        ruleCode: refusal.code,
+        message: t(REFUSAL_KEYS[refusal.code], { ref: row.reportNo ?? "" }) || refusal.message,
+      });
       return;
     }
     setApproveItem(row);
-  };
+  }, [t]);
 
   // ── Actions requested from elsewhere (the AI assistant today) ────────────
   //
@@ -450,6 +470,10 @@ export default function ServiceTable({
     (ref) => {
       const row = findRow(ref);
       if (!row) return false;
+      if (row.statusId === 6 || row.status?.toLowerCase().includes("finish") || row.status?.includes("រួចរាល់")) {
+        toast.error(lang === "km" ? "មិនអាចលុបរបាយការណ៍ដែលជួសជុលរួចរាល់ (Finished) បានទេ" : "Cannot delete finished service report.");
+        return false;
+      }
       setDeleteConfirmItem(row);
       return true;
     },
@@ -471,32 +495,47 @@ export default function ServiceTable({
 
   const handleDeleteConfirm = async () => {
     if (!deleteConfirmItem?.id) return;
+    if (deleteConfirmItem.statusId === 6 || deleteConfirmItem.status?.toLowerCase().includes("finish") || deleteConfirmItem.status?.includes("រួចរាល់")) {
+      toast.error(lang === "km" ? "មិនអាចលុបរបាយការណ៍ដែលជួសជុលរួចរាល់ (Finished) បានទេ" : "Cannot delete finished service report.");
+      setDeleteConfirmItem(null);
+      return;
+    }
+    const targetId = deleteConfirmItem.id;
     setIsDeleting(true);
-    const success = await deleteTechnicalService(deleteConfirmItem.id);
+
+    // Optimistically remove from state immediately
+    setItems((prev) => prev.filter((i) => i.id !== targetId));
+    setTotalCount((prev) => Math.max(prev - 1, 0));
+
+    const success = await deleteTechnicalService(targetId);
     setIsDeleting(false);
     setDeleteConfirmItem(null);
+
+    invalidateCachePrefix("repairservices");
+    invalidateCachePrefix("dashboard");
+    clearListCache();
+
     if (success) {
-      invalidateCachePrefix("repairservices");
+      toast.success(lang === "km" ? "🗑️ បានលុបទិន្នន័យជោគជ័យ!" : "🗑️ Ticket deleted successfully!", { position: "bottom-right" });
       void refreshLoaded();
     } else {
-      // Optimistic fallback
-      setItems((prev) => prev.filter((i) => i.id !== deleteConfirmItem.id));
-      setTotalCount((prev) => Math.max(prev - 1, 0));
+      toast.error(lang === "km" ? "❌ មិនអាចលុបទិន្នន័យបានទេ" : "❌ Failed to delete ticket on server", { position: "bottom-right" });
+      void refreshLoaded();
     }
   };
 
   const handleCreateTicket = (values?: ActionValues) => {
     const newItem: RepairServiceItem = {
       id: "new-" + Date.now(),
-      reportNo: `SVC-${Math.floor(1000 + Math.random() * 9000)}`,
-      serviceDate: new Date().toISOString(),
+      reportNo: "",
+      serviceDate: toBackendLocalDateTime(),
       companyName: "",
       address: "",
       phoneNumber: "",
       itemId: "",
       itemName: "",
       serialNumber: "",
-      serviceLocation: "Workshop",
+      serviceLocation: "CompanyService",
       servicePriority: "NORMAL",
       status: "Item Recieved",
       statusId: 1,
@@ -614,81 +653,410 @@ export default function ServiceTable({
     // the `overflow-x-auto` on its inner scroller, and pushed the whole page
     // past the viewport — the document scrolled sideways instead of just the
     // table. `min-w-0` lets it shrink so the inner scroller can do its job.
-    <div className={`flex-1 flex flex-col min-h-0 min-w-0 rounded-2xl overflow-hidden ${tableContainerClass}`}>
+    <div
+      className={`flex-1 flex flex-col min-h-0 min-w-0 rounded-2xl overflow-hidden ${tableContainerClass} ${
+        containerClassName || (isDashboardWidget ? "h-[580px] lg:h-[620px]" : "")
+      }`}
+    >
+      {/* Optional Dashboard Widget Header */}
+      {isDashboardWidget && (
+        <div className="px-4 py-3 border-b border-subtle bg-surface flex items-center justify-between gap-3 shrink-0">
+          <div className="flex items-center gap-2.5">
+            <div className="p-2 rounded-xl bg-blue-500/10 text-blue-600 dark:text-blue-400">
+              <ClipboardList className="w-4 h-4" />
+            </div>
+            <div>
+              <div className="flex items-center gap-2">
+                <h3 className="text-sm font-bold text-ink">
+                  {widgetTitle ||
+                    (lang === "km"
+                      ? "បញ្ជីសំបុត្រជួសជុលទាំងអស់"
+                      : "Service Tickets Directory")}
+                </h3>
+                <span className="px-2 py-0.5 rounded-full text-[11px] font-semibold bg-cushion text-ink-secondary border border-subtle">
+                  {totalCount || items.length}{" "}
+                  {lang === "km" ? "សំបុត្រ" : "tickets"}
+                </span>
+                {effectiveFilter && (
+                  <span className="hidden sm:inline-block px-2 py-0.5 rounded-full text-[10px] font-medium bg-blue-500/10 text-blue-600 dark:text-blue-400">
+                    {effectiveFilter}
+                  </span>
+                )}
+                {searchExtras?.fromDate && (
+                  <span className="hidden sm:inline-block px-2 py-0.5 rounded-full text-[10px] font-medium bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20">
+                    📅 {searchExtras.fromDate} {searchExtras.toDate ? `→ ${searchExtras.toDate}` : ""}
+                  </span>
+                )}
+                {searchExtras?.dateFilter && !searchExtras?.fromDate && (
+                  <span className="hidden sm:inline-block px-2 py-0.5 rounded-full text-[10px] font-medium bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20">
+                    📅 {searchExtras.dateFilter}
+                  </span>
+                )}
+              </div>
+              <p className="text-[11px] text-ink-secondary">
+                {widgetSubtitle ||
+                  (lang === "km"
+                    ? "តាមដាន និងគ្រប់គ្រងសំបុត្រជួសជុលម៉ាស៊ីនក្នុងប្រព័ន្ធ"
+                    : "Live service queue and technical repair records")}
+              </p>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2">
+            <Link
+              href="/service-tickets"
+              className="inline-flex items-center gap-1 text-xs font-semibold text-blue-600 dark:text-blue-400 hover:text-blue-700 dark:hover:text-blue-300 hover:underline px-2.5 py-1 rounded-lg hover:bg-blue-50/50 dark:hover:bg-blue-950/30 transition-colors"
+            >
+              <span>{lang === "km" ? "មើលពេញអេក្រង់" : "Open Full Page"}</span>
+              <ArrowUpRight className="w-3.5 h-3.5" />
+            </Link>
+          </div>
+        </div>
+      )}
+
       {/* Sub-status Tab Menu Header */}
       {tabs && tabs.length > 0 && (
         <div className={"px-4 pt-3 pb-2 shrink-0 border-b border-subtle bg-cushion"}>
           <StatusTabMenu
             tabs={tabs}
             activeKey={activeTabKey || activeFilter}
-            onTabChange={(k: string) => onTabChange?.(k)}
+            onTabChange={handleTabChange}
             loading={isLoading}
           />
         </div>
       )}
 
       {/* Table Toolbar */}
-      <div className={`p-2.5 sm:p-3 lg:p-3 xl:p-4 shrink-0 flex flex-wrap items-center justify-between gap-3 lg:gap-3 xl:gap-4 ${toolbarClass}`}>
-        <div className="flex items-center gap-2.5">
-          <div className="relative">
-            <Search className={"w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-ink-muted"} />
-            <input
-              type="text"
-              placeholder={t("table.searchPlaceholder")}
-              value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
-              className={`pl-9 pr-4 py-1.5 lg:py-1.5 xl:py-2 text-xs border rounded-xl focus:outline-none focus:ring-2 w-52 sm:w-64 lg:w-64 xl:w-80 transition-[color,background-color,border-color,box-shadow,opacity,transform,filter] ${searchInputClass}`}
+      {crudStyle === "enterprise-ribbon" ? (
+        <EnterpriseRibbonToolbar
+          canCreate={isReceivedStage}
+          canEdit={isReceivedStage}
+          canDelete={isReceivedStage}
+          canPrint={true}
+          onCreate={isReceivedStage ? () => handleCreateTicket() : undefined}
+          onEdit={
+            isReceivedStage
+              ? () => {
+                  if (checkedRow) {
+                    handleEditRow(checkedRow);
+                  } else {
+                    toast(
+                      lang === "km"
+                        ? "សូមជ្រើសរើសទិន្នន័យ (Row) ក្នុងតារាងជាមុនសិន"
+                        : "Please select a record in the table first",
+                      { icon: "ℹ️" }
+                    );
+                  }
+                }
+              : undefined
+          }
+          onDelete={
+            isReceivedStage
+              ? () => {
+                  if (checkedRow) {
+                    setDeleteConfirmItem(checkedRow);
+                  } else {
+                    toast(
+                      lang === "km"
+                        ? "សូមជ្រើសរើសទិន្នន័យ (Row) ក្នុងតារាងដើម្បីលុប"
+                        : "Please select a record to delete",
+                      { icon: "ℹ️" }
+                    );
+                  }
+                }
+              : undefined
+          }
+          onPrint={() => {
+            if (checkedRow) {
+              setPrintItem(checkedRow);
+            } else {
+              toast(
+                lang === "km"
+                  ? "សូមជ្រើសរើសទិន្នន័យ (Row) ក្នុងតារាងដើម្បីបោះពុម្ព (Print)"
+                  : "Please select a record in the table to print",
+                { icon: "ℹ️" }
+              );
+            }
+          }}
+          onExportCsv={handleExportCSV}
+          onReload={() => {
+            invalidateCachePrefix("repairservices");
+            void refreshLoaded();
+          }}
+          searchTerm={searchTerm}
+          onSearchChange={setSearchTerm}
+          onSearchSubmit={() => {
+            invalidateCachePrefix("repairservices");
+            void refreshLoaded();
+          }}
+          onSearchClear={() => setSearchTerm("")}
+          selectedCount={checkedRow ? 1 : 0}
+          isLoading={isLoading}
+          currentStyle={crudStyle}
+          onStyleChange={handleStyleChange}
+          extraActions={
+            <ColumnVisibilityDropdown
+              columns={columnsState}
+              onToggleColumn={handleToggleColumn}
+              onResetColumns={handleResetColumns}
             />
+          }
+        />
+      ) : (
+        <div className={`p-2.5 sm:p-3 lg:p-3 xl:p-4 shrink-0 flex flex-wrap items-center justify-between gap-3 lg:gap-3 xl:gap-4 ${toolbarClass}`}>
+          <div className="flex items-center gap-2.5">
+            <div className="relative">
+              <Search className={"w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-ink-muted"} />
+              <input
+                type="text"
+                placeholder={t("table.searchPlaceholder")}
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
+                className={`pl-9 pr-4 py-1.5 lg:py-1.5 xl:py-2 text-xs border rounded-xl focus:outline-none focus:ring-2 w-52 sm:w-64 lg:w-64 xl:w-80 transition-[color,background-color,border-color,box-shadow,opacity,transform,filter] ${searchInputClass}`}
+              />
+            </div>
+
+            <button
+              onClick={() => {
+                invalidateCachePrefix("repairservices");
+                void refreshLoaded();
+              }}
+              className={"p-1.5 lg:p-1.5 xl:p-2 rounded-xl transition-colors text-ink-secondary hover:bg-cushion"}
+              title={t("action.reloadData")}
+            >
+              <RefreshCw className={`w-4 h-4 ${isLoading ? "animate-spin" : ""}`} />
+            </button>
           </div>
 
-          <button
-            onClick={() => {
-              invalidateCachePrefix("repairservices");
-              void refreshLoaded();
-            }}
-            className={"p-1.5 lg:p-1.5 xl:p-2 rounded-xl transition-colors text-ink-secondary hover:bg-cushion"}
-            title={t("action.reloadData")}
-          >
-            <RefreshCw className={`w-4 h-4 ${isLoading ? "animate-spin" : ""}`} />
-          </button>
-        </div>
+          <div className="flex items-center gap-2">
+            <ColumnVisibilityDropdown
+              columns={columnsState}
+              onToggleColumn={handleToggleColumn}
+              onResetColumns={handleResetColumns}
+            />
 
-        <div className="flex items-center gap-2">
-          <button
-            onClick={() => handleCreateTicket()}
-            className={`inline-flex items-center gap-1.5 px-3 py-1.5 lg:py-1.5 xl:py-2 text-xs font-semibold rounded-xl transition-[color,background-color,border-color,box-shadow,opacity,transform,filter] ${createBtnClass}`}
-          >
-            <Plus className="w-3.5 h-3.5" />
-            <span>{t("action.createTicket")}</span>
-          </button>
+            {/* Create Ticket */}
+            <button
+              type="button"
+              onClick={isReceivedStage ? () => handleCreateTicket() : undefined}
+              disabled={!isReceivedStage}
+              className={cn(
+                "inline-flex items-center gap-1.5 px-3 py-1.5 lg:py-1.5 xl:py-2 text-xs font-semibold rounded-xl transition-colors select-none",
+                isReceivedStage
+                  ? createBtnClass
+                  : "text-ink-muted/40 border border-subtle/50 opacity-40 cursor-not-allowed"
+              )}
+              title={isReceivedStage ? t("action.createTicket") : (lang === "km" ? "មុខងារ CRUD មានតែលើទំព័រ Receive Items ប៉ុណ្ណោះ" : "CRUD is only available on Receive Items")}
+            >
+              <Plus className="w-3.5 h-3.5" />
+              <span>{t("action.createTicket")}</span>
+            </button>
 
-          <button
-            onClick={handleExportCSV}
-            className={"inline-flex items-center gap-1.5 px-3 py-1.5 lg:py-1.5 xl:py-2 text-xs font-semibold rounded-xl transition-colors shadow-soft-sm text-ink bg-surface border border-subtle hover:bg-cushion"}
-          >
-            <Download className="w-3.5 h-3.5" />
-            <span>{t("action.exportCsv")}</span>
-          </button>
+            {/* Print Button */}
+            <button
+              type="button"
+              onClick={() => {
+                if (checkedRow) {
+                  setPrintItem(checkedRow);
+                } else {
+                  toast(
+                    lang === "km"
+                      ? "សូមជ្រើសរើសទិន្នន័យ (Row) ក្នុងតារាងដើម្បីបោះពុម្ព (Print)"
+                      : "Please select a record in the table to print",
+                    { icon: "ℹ️" }
+                  );
+                }
+              }}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 lg:py-1.5 xl:py-2 text-xs font-semibold rounded-xl transition-colors shadow-soft-sm text-ink bg-surface border border-subtle hover:bg-cushion cursor-pointer"
+              title={t("action.printTechnicalReport")}
+            >
+              <Printer className="w-3.5 h-3.5 text-accent" />
+              <span>{t("crud.print")}</span>
+            </button>
+
+            <button
+              onClick={handleExportCSV}
+              className={"inline-flex items-center gap-1.5 px-3 py-1.5 lg:py-1.5 xl:py-2 text-xs font-semibold rounded-xl transition-colors shadow-soft-sm text-ink bg-surface border border-subtle hover:bg-cushion"}
+            >
+              <Download className="w-3.5 h-3.5" />
+              <span>{t("action.exportCsv")}</span>
+            </button>
+          </div>
         </div>
-      </div>
+      )}
 
       {/* Table Content */}
       <div ref={scrollRootRef} className="flex-1 overflow-x-auto overflow-y-auto min-h-0">
         <table className="w-full text-left border-collapse min-w-full">
-          <thead>
+          <thead className="sticky top-0 z-20 shadow-xs">
             {/* Sticky header */}
             <tr
-              className={`sticky top-0 z-10 text-[10.5px] lg:text-[10.5px] xl:text-[11px] font-semibold uppercase tracking-wider shadow-soft-sm ${headerRowClass}`}
+              className={`text-[10.5px] lg:text-[10.5px] xl:text-[11px] font-semibold uppercase tracking-wider ${headerRowClass}`}
             >
-              <th className="py-2.5 lg:py-2.5 xl:py-3.5 px-2.5 sm:px-3 xl:px-3.5 whitespace-nowrap min-w-[110px]">{t("field.refNo")}</th>
-              <th className="py-2.5 lg:py-2.5 xl:py-3.5 px-2.5 sm:px-3 xl:px-3.5 whitespace-nowrap min-w-[130px]">{t("field.receiveDate")}</th>
-              <th className="py-2.5 lg:py-2.5 xl:py-3.5 px-2.5 sm:px-3 xl:px-3.5 whitespace-nowrap min-w-[160px]">{t("field.companyName")}</th>
-              <th className="py-2.5 lg:py-2.5 xl:py-3.5 px-2.5 sm:px-3 xl:px-3.5 whitespace-nowrap min-w-[160px]">{t("table.itemNameModel")}</th>
-              <th className="py-2.5 lg:py-2.5 xl:py-3.5 px-2.5 sm:px-3 xl:px-3.5 whitespace-nowrap min-w-[120px]">{t("field.serialNumber")}</th>
-              <th className="py-2.5 lg:py-2.5 xl:py-3.5 px-2.5 sm:px-3 xl:px-3.5 whitespace-nowrap min-w-[90px] text-center">{t("field.priority")}</th>
-              <th className="py-2.5 lg:py-2.5 xl:py-3.5 px-2.5 sm:px-3 xl:px-3.5 whitespace-nowrap min-w-[140px] text-center">{t("field.status")}</th>
-              <th className="py-2.5 lg:py-2.5 xl:py-3.5 px-2.5 sm:px-3 xl:px-3.5 whitespace-nowrap min-w-[110px]">{t("field.receiver")}</th>
-              <th className="py-2.5 lg:py-2.5 xl:py-3.5 px-2.5 sm:px-3 xl:px-3.5 whitespace-nowrap min-w-[100px] text-center">{t("field.actions")}</th>
+              {crudStyle === "enterprise-ribbon" && (
+                <th className="sticky top-0 z-20 bg-cushion py-2.5 px-2 text-center w-10 min-w-[40px]">
+                  <span className="sr-only">Select</span>
+                </th>
+              )}
+
+              {/* Ref No */}
+              {visibleColumnsMap.refNo !== false && (
+                <th className="sticky top-0 z-20 bg-cushion py-2.5 lg:py-2.5 xl:py-3 px-2.5 sm:px-2.5 lg:px-3 whitespace-nowrap min-w-[105px]">
+                  <div className="flex items-center justify-between gap-1">
+                    <span>{t("field.refNo")}</span>
+                    {crudStyle === "enterprise-ribbon" && (
+                      <ColumnHeaderFilter
+                        field="refNo"
+                        label={t("field.refNo")}
+                        filterValue={colFilters.refNo || ""}
+                        onFilterChange={(v) => handleColumnFilterChange("refNo", v)}
+                        onSortChange={(dir) => handleColumnSort("refNo", dir)}
+                        sortDirection={colSort.field === "refNo" ? colSort.direction : null}
+                      />
+                    )}
+                  </div>
+                </th>
+              )}
+
+              {/* Receive Date */}
+              {visibleColumnsMap.receiveDate !== false && (
+                <th className="sticky top-0 z-20 bg-cushion py-2.5 lg:py-2.5 xl:py-3 px-2.5 sm:px-2.5 lg:px-3 whitespace-nowrap min-w-[115px]">
+                  <div className="flex items-center justify-between gap-1">
+                    <span>{t("field.receiveDate")}</span>
+                    {crudStyle === "enterprise-ribbon" && (
+                      <ColumnHeaderFilter
+                        field="receiveDate"
+                        label={t("field.receiveDate")}
+                        filterValue={colFilters.receiveDate || ""}
+                        onFilterChange={(v) => handleColumnFilterChange("receiveDate", v)}
+                        onSortChange={(dir) => handleColumnSort("receiveDate", dir)}
+                        sortDirection={colSort.field === "receiveDate" ? colSort.direction : null}
+                      />
+                    )}
+                  </div>
+                </th>
+              )}
+
+              {/* Company Name */}
+              {visibleColumnsMap.companyName !== false && (
+                <th className="sticky top-0 z-20 bg-cushion py-2.5 lg:py-2.5 xl:py-3 px-2.5 sm:px-2.5 lg:px-3 whitespace-nowrap min-w-[150px]">
+                  <div className="flex items-center justify-between gap-1">
+                    <span>{t("field.companyName")}</span>
+                    {crudStyle === "enterprise-ribbon" && (
+                      <ColumnHeaderFilter
+                        field="companyName"
+                        label={t("field.companyName")}
+                        filterValue={colFilters.companyName || ""}
+                        onFilterChange={(v) => handleColumnFilterChange("companyName", v)}
+                        onSortChange={(dir) => handleColumnSort("companyName", dir)}
+                        sortDirection={colSort.field === "companyName" ? colSort.direction : null}
+                      />
+                    )}
+                  </div>
+                </th>
+              )}
+
+              {/* Item Name / Model */}
+              {visibleColumnsMap.itemName !== false && (
+                <th className="sticky top-0 z-20 bg-cushion py-2.5 lg:py-2.5 xl:py-3 px-2.5 sm:px-2.5 lg:px-3 whitespace-nowrap min-w-[150px]">
+                  <div className="flex items-center justify-between gap-1">
+                    <span>{t("table.itemNameModel")}</span>
+                    {crudStyle === "enterprise-ribbon" && (
+                      <ColumnHeaderFilter
+                        field="itemName"
+                        label={t("table.itemNameModel")}
+                        filterValue={colFilters.itemName || ""}
+                        onFilterChange={(v) => handleColumnFilterChange("itemName", v)}
+                        onSortChange={(dir) => handleColumnSort("itemName", dir)}
+                        sortDirection={colSort.field === "itemName" ? colSort.direction : null}
+                      />
+                    )}
+                  </div>
+                </th>
+              )}
+
+              {/* Serial Number */}
+              {visibleColumnsMap.serialNumber !== false && (
+                <th className="sticky top-0 z-20 bg-cushion py-2.5 lg:py-2.5 xl:py-3 px-2.5 sm:px-2.5 lg:px-3 whitespace-nowrap min-w-[100px]">
+                  <div className="flex items-center justify-between gap-1">
+                    <span>{t("field.serialNumber")}</span>
+                    {crudStyle === "enterprise-ribbon" && (
+                      <ColumnHeaderFilter
+                        field="serialNumber"
+                        label={t("field.serialNumber")}
+                        filterValue={colFilters.serialNumber || ""}
+                        onFilterChange={(v) => handleColumnFilterChange("serialNumber", v)}
+                        onSortChange={(dir) => handleColumnSort("serialNumber", dir)}
+                        sortDirection={colSort.field === "serialNumber" ? colSort.direction : null}
+                      />
+                    )}
+                  </div>
+                </th>
+              )}
+
+              {/* Priority */}
+              {visibleColumnsMap.priority !== false && (
+                <th className="sticky top-0 z-20 bg-cushion py-2.5 lg:py-2.5 xl:py-3 px-2.5 sm:px-2.5 lg:px-3 whitespace-nowrap min-w-[85px] text-center">
+                  <div className="flex items-center justify-center gap-1">
+                    <span>{t("field.priority")}</span>
+                    {crudStyle === "enterprise-ribbon" && (
+                      <ColumnHeaderFilter
+                        field="priority"
+                        label={t("field.priority")}
+                        filterValue={colFilters.priority || ""}
+                        onFilterChange={(v) => handleColumnFilterChange("priority", v)}
+                        onSortChange={(dir) => handleColumnSort("priority", dir)}
+                        sortDirection={colSort.field === "priority" ? colSort.direction : null}
+                      />
+                    )}
+                  </div>
+                </th>
+              )}
+
+              {/* Status */}
+              {visibleColumnsMap.status !== false && (
+                <th className="sticky top-0 z-20 bg-cushion py-2.5 lg:py-2.5 xl:py-3 px-2.5 sm:px-2.5 lg:px-3 whitespace-nowrap min-w-[130px] text-center">
+                  <div className="flex items-center justify-center gap-1">
+                    <span>{t("field.status")}</span>
+                    {crudStyle === "enterprise-ribbon" && (
+                      <ColumnHeaderFilter
+                        field="status"
+                        label={t("field.status")}
+                        filterValue={colFilters.status || ""}
+                        onFilterChange={(v) => handleColumnFilterChange("status", v)}
+                        onSortChange={(dir) => handleColumnSort("status", dir)}
+                        sortDirection={colSort.field === "status" ? colSort.direction : null}
+                      />
+                    )}
+                  </div>
+                </th>
+              )}
+
+              {/* Receiver */}
+              {visibleColumnsMap.receiver !== false && (
+                <th className="sticky top-0 z-20 bg-cushion py-2.5 lg:py-2.5 xl:py-3 px-2.5 sm:px-2.5 lg:px-3 whitespace-nowrap min-w-[105px]">
+                  <div className="flex items-center justify-between gap-1">
+                    <span>{t("field.receiver")}</span>
+                    {crudStyle === "enterprise-ribbon" && (
+                      <ColumnHeaderFilter
+                        field="receiver"
+                        label={t("field.receiver")}
+                        filterValue={colFilters.receiver || ""}
+                        onFilterChange={(v) => handleColumnFilterChange("receiver", v)}
+                        onSortChange={(dir) => handleColumnSort("receiver", dir)}
+                        sortDirection={colSort.field === "receiver" ? colSort.direction : null}
+                      />
+                    )}
+                  </div>
+                </th>
+              )}
+
+              {/* Actions Header */}
+              {visibleColumnsMap.actions !== false && (
+                <th className="sticky top-0 z-20 bg-cushion py-2.5 lg:py-2.5 xl:py-3 px-2.5 sm:px-2.5 lg:px-3 whitespace-nowrap min-w-[115px] text-center">
+                  <span>{t("field.actions")}</span>
+                </th>
+              )}
             </tr>
           </thead>
 
@@ -700,114 +1068,31 @@ export default function ServiceTable({
             className="av-rows-contained-sm divide-y divide-[var(--av-border-subtle)] text-xs text-ink"
           >
             {isLoading ? (
-              <SkeletonRows rows={8} columns={9} />
-            ) : items.length > 0 ? (
-              items.map((row, idx) => (
-                <tr
+              <SkeletonRows rows={8} columns={activeColCount} />
+            ) : displayedItems.length > 0 ? (
+              displayedItems.map((row, idx) => (
+                <TicketRow
                   key={row.id || idx}
-                  onClick={() => {
-                    setModalMode("view");
-                    setSelectedItem(row);
-                  }}
-                  className="cursor-pointer transition-colors duration-150 ease-out hover:bg-cushion"
-                >
-                  <td className="py-2.5 lg:py-2.5 xl:py-3.5 px-2.5 sm:px-3 xl:px-3.5 whitespace-nowrap font-mono font-semibold text-ink ">
-                    <HighlightText text={row.reportNo || "N/A"} query={searchTerm} />
-                  </td>
-                  <td className="py-2.5 lg:py-2.5 xl:py-3.5 px-2.5 sm:px-3 xl:px-3.5 whitespace-nowrap text-ink-secondary ">
-                    {row.serviceDate
-                      ? `${new Date(row.serviceDate).toLocaleDateString("en-GB")} ${new Date(row.serviceDate).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`
-                      : "N/A"}
-                  </td>
-                  <td
-                    className="py-2.5 lg:py-2.5 xl:py-3.5 px-2.5 sm:px-3 xl:px-3.5 font-medium text-ink max-w-[220px] truncate"
-                    title={row.companyName || "N/A"}
-                  >
-                    <HighlightText text={row.companyName || "N/A"} query={searchTerm} />
-                  </td>
-                  <td
-                    className="py-2.5 lg:py-2.5 xl:py-3.5 px-2.5 sm:px-3 xl:px-3.5 font-medium text-ink max-w-[240px] truncate"
-                    title={row.itemName || "N/A"}
-                  >
-                    <HighlightText text={row.itemName || "N/A"} query={searchTerm} />
-                  </td>
-                  <td className="py-2.5 lg:py-2.5 xl:py-3.5 px-2.5 sm:px-3 xl:px-3.5 whitespace-nowrap">
-                    <code className="px-2 py-0.5 rounded bg-sunken border border-subtle text-[11px] font-mono text-ink ">
-                      <HighlightText text={row.serialNumber || "N/A"} query={searchTerm} />
-                    </code>
-                  </td>
-                  <td className="py-2.5 lg:py-2.5 xl:py-3.5 px-2.5 sm:px-3 xl:px-3.5 whitespace-nowrap text-center">
-                    <span
-                      className={`inline-block px-2.5 py-0.5 rounded-full border text-[10px] font-bold ${getPriorityBadge(
-                        row.servicePriority || "NORMAL"
-                      )}`}
-                    >
-                      {translatePriority(row.servicePriority || "NORMAL", t)}
-                    </span>
-                  </td>
-                  <td className="py-2.5 lg:py-2.5 xl:py-3.5 px-2.5 sm:px-3 xl:px-3.5 whitespace-nowrap text-center">
-                    <RenderStatusSelect
-                      row={row}
-                      effectiveFilter={effectiveFilter}
-                      onStatusChange={handleInlineStatusChange}
-                    />
-                  </td>
-                  <td className="py-2.5 lg:py-2.5 xl:py-3.5 px-2.5 sm:px-3 xl:px-3.5 whitespace-nowrap text-ink-secondary ">
-                    <HighlightText text={getActionUserForStatus(row)} query={searchTerm} />
-                  </td>
-                  <td className="py-2.5 lg:py-2.5 xl:py-3.5 px-2.5 sm:px-3 xl:px-3.5 whitespace-nowrap text-center" onClick={(e) => e.stopPropagation()}>
-                    <div className="flex items-center justify-center gap-1">
-                      {requireApproval && (
-                        <button
-                          onClick={() => handleApproveClick(row)}
-                          className="inline-flex min-h-6 items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] font-semibold text-white bg-success hover:bg-success shadow-sm transition-colors"
-                          title={t("nav.approveRepairing")}
-                        >
-                          <ShieldCheck className="w-3.5 h-3.5" />
-                          {t("action.approve")}
-                        </button>
-                      )}
-                      <button
-                        onClick={() => {
-                          setModalMode("view");
-                          setSelectedItem(row);
-                        }}
-                        className="p-1.5 rounded-lg text-info hover:bg-accent-soft transition-colors "
-                        title={t("action.viewDetails")}
-                      >
-                        <Eye className="w-4 h-4" />
-                      </button>
-                      <button
-                        onClick={() => {
-                          setModalMode("edit");
-                          setSelectedItem(row);
-                        }}
-                        className="p-1.5 rounded-lg text-ink-secondary hover:bg-sunken transition-colors "
-                        title={t("action.editTicket")}
-                      >
-                        <Edit3 className="w-4 h-4" />
-                      </button>
-                      <button
-                        onClick={() => setPrintItem(row)}
-                        className="p-1.5 rounded-lg text-accent hover:bg-accent-soft transition-colors "
-                        title={t("action.printTechnicalReport")}
-                      >
-                        <Printer className="w-4 h-4" />
-                      </button>
-                      <button
-                        onClick={() => setDeleteConfirmItem(row)}
-                        className="p-1.5 rounded-lg text-ink-secondary hover:text-danger hover:bg-danger-soft transition-colors "
-                        title={t("action.deleteTicket")}
-                      >
-                        <Trash2 className="w-4 h-4" />
-                      </button>
-                    </div>
-                  </td>
-                </tr>
+                  row={row}
+                  query={term}
+                  effectiveFilter={effectiveFilter}
+                  requireApproval={requireApproval}
+                  disableStatusDropdown={disableStatusDropdown}
+                  onView={handleViewRow}
+                  onEdit={handleEditRow}
+                  onPrint={setPrintItem}
+                  onDelete={setDeleteConfirmItem}
+                  onApprove={handleApproveClick}
+                  onStatusChange={handleInlineStatusChange}
+                  isSelected={checkedRowId === row.id}
+                  onSelectRow={handleSelectRow}
+                  visibleColumns={visibleColumnsMap}
+                  isRibbonMode={crudStyle === "enterprise-ribbon"}
+                />
               ))
             ) : (
               <tr>
-                <td colSpan={9} className="p-0">
+                <td colSpan={activeColCount} className="p-0">
                   {/* An empty queue is usually the GOOD outcome here — every
                       ticket inspected, nothing awaiting parts — so this is
                       deliberately calm rather than warning-coloured. */}
@@ -832,18 +1117,18 @@ export default function ServiceTable({
 
             {/* Placeholder rows for the batch in flight, so the scroll has
                 somewhere to land instead of stopping dead at the sentinel. */}
-            {isLoadingMore && <SkeletonRows rows={3} columns={9} />}
+            {isLoadingMore && <SkeletonRows rows={3} columns={activeColCount} />}
 
             {/* Infinite-scroll sentinel — observing this row triggers the next
                 page fetch. Kept inside <tbody> so the markup stays valid. */}
-            {!isLoading && items.length > 0 && (
+            {!isLoading && displayedItems.length > 0 && (
               <tr ref={sentinelRef}>
-                <td colSpan={9} className="py-4 text-center">
+                <td colSpan={activeColCount} className="py-4 text-center">
                   <InfiniteScrollStatus
                     isLoadingMore={isLoadingMore}
                     reachedEnd={reachedEnd}
                     limitReached={limitReached}
-                    count={items.length}
+                    count={displayedItems.length}
                   />
                 </td>
               </tr>
@@ -952,6 +1237,29 @@ export default function ServiceTable({
           </div>
         </div>
       </ModalWrapper>
+
+      {/* Stock Shortage Alert Center Modal */}
+      <StockShortageAlertModal
+        open={Boolean(stockShortageDetails)}
+        onClose={() => {
+          setStockShortageDetails(null);
+          setStockShortageTargetItem(null);
+        }}
+        details={stockShortageDetails}
+        targetItem={stockShortageTargetItem}
+        onConfirmSentSpareparts={async (target) => {
+          await handleInlineStatusChange(target, "Sent Spareparts");
+        }}
+      />
+
+      {/* Centered Workflow Validation Popup Modal */}
+      <ApproveValidationModal
+        open={validationModal.open}
+        onClose={() => setValidationModal({ open: false, ticket: null })}
+        ticket={validationModal.ticket}
+        ruleCode={validationModal.ruleCode}
+        message={validationModal.message}
+      />
     </div>
   );
 }

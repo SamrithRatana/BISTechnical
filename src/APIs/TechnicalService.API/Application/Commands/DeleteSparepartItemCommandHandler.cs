@@ -1,5 +1,7 @@
-﻿using MediatR;
+using MediatR;
 using TechnicalService.Domain.AggregatesModel.TechnicalAggregate;
+using TechnicalService.Infrastructure;
+using Microsoft.EntityFrameworkCore;
 
 namespace TechnicalService.API.Application.Commands
 {
@@ -60,7 +62,6 @@ namespace TechnicalService.API.Application.Commands
             service.RemoveSparepartItem(command.SparepartItemId);
 
             // Save changes - this issues the actual database DELETE, which in
-            // turn fires the SQL trigger that restores stock.
             var result = await _technicalServiceRepository.UnitOfWork
                 .SaveEntitiesAsync(cancellationToken);
 
@@ -69,6 +70,14 @@ namespace TechnicalService.API.Application.Commands
                 _logger.LogInformation(
                     "Successfully deleted spare part item {SparepartItemId}. SQL trigger should have restored stock.",
                     command.SparepartItemId);
+
+                // 🗑️ Clean up audit logs and outbox rows for this removed sparepart
+                if (_technicalServiceRepository.UnitOfWork is TechnicalServiceContext dbContext)
+                {
+                    await dbContext.Database.ExecuteSqlInterpolatedAsync(
+                        $"DELETE FROM dbo.SparepartStockAuditLog WHERE ServiceId = {command.ServiceId} AND SparepartId = {itemToDelete.SparepartId}; DELETE FROM dbo.StockNotificationOutbox WHERE ServiceId = {command.ServiceId} AND SparepartId = {itemToDelete.SparepartId};",
+                        cancellationToken);
+                }
             }
             else
             {

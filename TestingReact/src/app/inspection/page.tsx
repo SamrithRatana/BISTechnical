@@ -16,6 +16,10 @@ const INSPECTION_TABS: TabItem[] = [
 export default function InspectionPage() {
   const [activeTabKey, setActiveTabKey] = useState("Inspection");
 
+  // Only the first tab ("Inspection" / វិនិច្ឆ័យរួចរាល់) allows the technician to select status to dispatch (to Stock or Sales).
+  // Other tabs ("Awaiting Sparepart", "Awaiting Customer Confirm", etc.) are read-only tracking tabs for other departments.
+  const isReadOnlyTab = activeTabKey !== "Inspection";
+
   return (
     <PageWrapper titleKey="nav.inspection" subtitleKey="sub.inspection">
       <ServiceTable
@@ -23,6 +27,7 @@ export default function InspectionPage() {
         activeTabKey={activeTabKey}
         tabs={INSPECTION_TABS}
         onTabChange={setActiveTabKey}
+        disableStatusDropdown={isReadOnlyTab}
       />
     </PageWrapper>
   );

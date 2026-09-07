@@ -136,7 +136,13 @@ export default function PerformanceProvider({ children }: { children: React.Reac
         // The component may have unmounted during the ~600ms benchmark.
         if (cancelled) return;
         setAssessment(result);
-        if (result.tier === "low" && !alreadyAsked && prefs.lite === "off") {
+        if (
+          result.tier === "low" &&
+          !alreadyAsked &&
+          prefs.lite === "off" &&
+          typeof window !== "undefined" &&
+          window.location.pathname !== "/login"
+        ) {
           setPromptOpen(true);
         }
       });

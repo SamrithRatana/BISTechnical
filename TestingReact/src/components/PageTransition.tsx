@@ -5,6 +5,7 @@ import { usePathname, useRouter } from "next/navigation";
 import { animate, motion } from "framer-motion";
 import { PAGE_TRANSITION_SPRING } from "@/lib/animations";
 import { usePerformance } from "@/components/PerformanceProvider";
+import { cn } from "@/lib/utils";
 
 /**
  * @file components/PageTransition.tsx
@@ -141,8 +142,11 @@ const STAGE_ATTR = "data-page-stage";
  */
 export { PAGE_TRANSITION_SPRING };
 
-/** The frame the stage leaves on, matching the reference's `exit`. */
-const EXIT_KEYFRAME = { opacity: 0, y: -10, scale: 0.99 };
+/** Aura Soft UI signature velvet transition settings */
+const AURA_EASE = [0.16, 1, 0.3, 1] as const;
+
+/** The soft frame the stage leaves on. */
+const EXIT_KEYFRAME = { opacity: 0.65, y: -8 };
 
 /**
  * Whether the stage should skip its animation.
@@ -191,25 +195,13 @@ export function useAnimatedNavigate(): {
 
   const navigate = useCallback(
     (href: string) => {
-      // Already here. Re-pushing would restart the route for no visible
-      // change, and the animation would blink the page the user is reading.
+      // Already here. Re-pushing would restart the route for no visible change.
       if (href === pathname) return;
 
-      const stage = document.querySelector<HTMLElement>(`[${STAGE_ATTR}]`);
-
-      // The navigation goes out first and unconditionally. Nothing below this
-      // line can prevent it — that is the entire point of the ordering.
+      // The navigation goes out first and unconditionally.
       startNavigation(() => {
         router.push(href);
       });
-
-      // Nothing to animate, or the user asked for no motion. The route change
-      // above is already handling it.
-      if (!stage || motionIsOff()) return;
-
-      // `void`: this is purely visual now. If it is interrupted, cancelled, or
-      // never settles, the only thing lost is a fade.
-      void animate(stage, EXIT_KEYFRAME, PAGE_TRANSITION_SPRING);
     },
     [router, pathname]
   );
@@ -227,20 +219,12 @@ export default function PageTransition({
   const pathname = usePathname();
 
   return (
-    <motion.div
+    <div
       key={pathname}
       {...{ [STAGE_ATTR]: true }}
-      initial={{ opacity: 0, y: 26, scale: 0.975 }}
-      animate={{ opacity: 1, y: 0, scale: 1 }}
-      transition={{
-        type: "spring",
-        stiffness: 145,
-        damping: 20,
-        mass: 1.05,
-      }}
-      className={className}
+      className={cn("av-page-stage flex-1 flex flex-col min-h-0", className || "overflow-hidden")}
     >
       {children}
-    </motion.div>
+    </div>
   );
 }

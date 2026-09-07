@@ -8,13 +8,16 @@
  */
 
 import React, { useState, useCallback } from "react";
+import dynamic from "next/dynamic";
 import PageWrapper from "@/components/PageWrapper";
 import HighlightText from "@/components/HighlightText";
-import InspectItemDialog, { type InspectPayload } from "@/components/InspectItemDialog";
-import ServiceDetailModal from "@/components/ServiceDetailModal";
-import PrintPreviewSidebar from "@/components/PrintPreviewSidebar";
+import type { InspectPayload } from "@/components/InspectItemDialog";
 import { getActionUserForStatus, formatTime24HourWithAmPm } from "@/services/types";
-import { getCurrentUserGuid } from "@/services/userService";
+
+const InspectItemDialog = dynamic(() => import("@/components/InspectItemDialog"), { ssr: false });
+const ServiceDetailModal = dynamic(() => import("@/components/ServiceDetailModal"), { ssr: false });
+const PrintPreviewSidebar = dynamic(() => import("@/components/PrintPreviewSidebar"), { ssr: false });
+import { getCurrentUserGuid, getCurrentUserFullName } from "@/services/userService";
 import { useRealtimeTickets } from "@/hooks/useRealtimeTickets";
 import { useDebouncedValue } from "@/hooks/useDebouncedValue";
 import { useSearchQueryParam } from "@/hooks/useSearchQueryParam";
@@ -24,9 +27,11 @@ import { useSearchAction } from "@/hooks/useSearchAction";
 import InfiniteScrollStatus from "@/components/InfiniteScrollStatus";
 import { useActionHandler, type ActionValues } from "@/components/ActionBus";
 import { useI18n } from "@/i18n/LanguageProvider";
+import { clearListCache } from "@/hooks/useInfiniteList";
 import {
   fetchRepairServices,
   invalidateCachePrefix,
+  dispatchTelegramNotificationSafe,
   type RepairServiceItem
 } from "@/services/api";
 import {
@@ -87,7 +92,7 @@ export default function InspectItemPage() {
   } = useInfiniteList<RepairServiceItem, HTMLDivElement, HTMLTableRowElement>({
     fetchPage: (pageNumber, size) => fetchRepairServices(pageNumber, size, "Inspecting", term),
     pageSize,
-    resetKey: term,
+    resetKey: `Inspecting|${term}`,
     getId: (i) => i?.id
   });
 
@@ -171,6 +176,18 @@ export default function InspectItemPage() {
     return true;
   });
 
+  const handleExportCSV = () => {
+    if (!items.length) return;
+    const headers = ["Ref No", "Received Date", "Company", "Item", "Serial", "Status"];
+    const rows = items.map((i) => [
+      `"${i.reportNo}"`, `"${i.serviceDate}"`, `"${i.companyName}"`,
+      `"${i.itemName}"`, `"${i.serialNumber}"`, `"${i.status}"`,
+    ]);
+    const csv = "data:text/csv;charset=utf-8," + [headers.join(","), ...rows.map((r) => r.join(","))].join("\n");
+    const link = Object.assign(document.createElement("a"), { href: encodeURI(csv), download: `inspect_items_${Date.now()}.csv` });
+    document.body.appendChild(link); link.click(); document.body.removeChild(link);
+  };
+
   useActionHandler("export.csv", () => {
     if (items.length === 0) return false;
     handleExportCSV();
@@ -209,6 +226,30 @@ export default function InspectItemPage() {
       if (res.ok) {
         showToast("Inspection saved successfully!");
         invalidateCachePrefix("repairservices");
+        invalidateCachePrefix("dashboard");
+        clearListCache();
+
+        // 📨 Dispatch Telegram Notification to Topic 4 (Inspection)
+        try {
+          await dispatchTelegramNotificationSafe(
+            {
+              ...inspectItem,
+              id: payload.serviceId,
+              inspection: payload.inspection,
+              solution: payload.solution,
+              serviceTypeId: payload.serviceTypeId,
+              status: "Inspection",
+              statusId: 2,
+              sparePartItems: payload.spareParts,
+              sparepartItems: payload.spareParts,
+            } as unknown as RepairServiceItem,
+            "Inspection",
+            getCurrentUserFullName()
+          );
+        } catch (tgErr) {
+          console.warn("Inspection telegram dispatch failed:", tgErr);
+        }
+
         void loadData();
         return true;
       }
@@ -221,18 +262,6 @@ export default function InspectItemPage() {
     } catch {
       return false;
     }
-  };
-
-  const handleExportCSV = () => {
-    if (!items.length) return;
-    const headers = ["Ref No", "Received Date", "Company", "Item", "Serial", "Status"];
-    const rows = items.map((i) => [
-      `"${i.reportNo}"`, `"${i.serviceDate}"`, `"${i.companyName}"`,
-      `"${i.itemName}"`, `"${i.serialNumber}"`, `"${i.status}"`,
-    ]);
-    const csv = "data:text/csv;charset=utf-8," + [headers.join(","), ...rows.map((r) => r.join(","))].join("\n");
-    const link = Object.assign(document.createElement("a"), { href: encodeURI(csv), download: `inspect_items_${Date.now()}.csv` });
-    document.body.appendChild(link); link.click(); document.body.removeChild(link);
   };
 
   return (

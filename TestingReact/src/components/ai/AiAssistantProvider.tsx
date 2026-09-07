@@ -127,6 +127,29 @@ export function AiAssistantProvider({ children }: { children: React.ReactNode })
   const [open, setOpen] = useState(false);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [loading, setLoading] = useState(false);
+
+  /**
+   * `ask` reads the transcript and the current route, but only at the moment it
+   * is called — never during render. Listing them as dependencies gave `ask` a
+   * new identity on every message AND every navigation, which changed the
+   * context value, which re-rendered every consumer: `GlobalSearch` (in the
+   * header of every page), `AiLauncher`, and the panel. A route change costing
+   * a re-render of the header's search box is a cost with nothing to show for
+   * it.
+   *
+   * Refs are written in an effect rather than during render: a render can be
+   * discarded and replayed, and this project already treats a render-time ref
+   * write as a bug (`react-hooks/refs`). `ask` only ever runs from a user
+   * event, long after effects have flushed, so it never sees a stale value.
+   */
+  const messagesRef = useRef<ChatMessage[]>(messages);
+  const pathnameRef = useRef(pathname);
+  useEffect(() => {
+    messagesRef.current = messages;
+  }, [messages]);
+  useEffect(() => {
+    pathnameRef.current = pathname;
+  }, [pathname]);
   const [models, setModels] = useState<ModelStatus[]>([]);
   const [selectedModel, setSelectedModelState] = useState<string>(() => {
     if (typeof window !== "undefined") {
@@ -201,7 +224,7 @@ export function AiAssistantProvider({ children }: { children: React.ReactNode })
         controller.abort();
       }, ASK_TIMEOUT_MS);
 
-      const history = messages.slice(-HISTORY_TURNS).map((m) => ({
+      const history = messagesRef.current.slice(-HISTORY_TURNS).map((m) => ({
         role: m.role,
         text: m.text,
       }));
@@ -291,7 +314,7 @@ export function AiAssistantProvider({ children }: { children: React.ReactNode })
           if (nav) {
             const term = filters.searchTerm?.trim() ?? "";
             const href = term ? `${nav.route}?q=${encodeURIComponent(term)}` : nav.route;
-            if (pathname !== nav.route) router.push(href);
+            if (pathnameRef.current !== nav.route) router.push(href);
           }
         } catch (err) {
           // A superseded question isn't a failure — its replacement owns the
@@ -316,7 +339,7 @@ export function AiAssistantProvider({ children }: { children: React.ReactNode })
         }
       })();
     },
-    [messages, selectedModel, selectedImageModel, refreshModels, actionBus, router, pathname]
+    [selectedModel, selectedImageModel, refreshModels, actionBus, router]
   );
 
   // The panel covers the page it just acted on, so "get out of the way" has to

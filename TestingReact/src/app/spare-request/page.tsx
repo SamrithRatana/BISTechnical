@@ -20,6 +20,7 @@ export default function SpareRequestPage() {
         activeTabKey={activeTabKey}
         tabs={SPARE_REQUEST_TABS}
         onTabChange={setActiveTabKey}
+        disableStatusDropdown={activeTabKey !== "Awaiting Sparepart"}
       />
     </PageWrapper>
   );

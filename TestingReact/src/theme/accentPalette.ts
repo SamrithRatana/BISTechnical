@@ -129,11 +129,18 @@ export function hexToRgba(hex: string, alpha: number): string {
   return `rgba(${r}, ${g}, ${b}, ${alpha})`;
 }
 
+const accentPaletteCache = new Map<string, AccentTokens>();
+const MAX_ACCENT_CACHE = 64;
+
 /**
  * Builds the 8-token accent set for one hex colour, intelligently harmonized
  * to guarantee optimal readability, crisp text contrast, and match Aura Velvet's default standards.
  */
 export function deriveAccentPalette(hex: string, isDark: boolean): AccentTokens {
+  const cacheKey = `${hex.toLowerCase()}_${isDark ? 1 : 0}`;
+  const cached = accentPaletteCache.get(cacheKey);
+  if (cached) return cached;
+
   const [r, g, b] = hexToRgb(hex);
   const hsl = rgbToHsl(r, g, b);
 
@@ -173,7 +180,15 @@ export function deriveAccentPalette(hex: string, isDark: boolean): AccentTokens 
   const glow = hexToRgba(base, isDark ? 0.28 : 0.22);
   const ring = hexToRgba(base, isDark ? 0.45 : 0.35);
 
-  return { base, bright, hover, fg, soft, softFg, glow, ring };
+  const result: AccentTokens = { base, bright, hover, fg, soft, softFg, glow, ring };
+
+  if (accentPaletteCache.size >= MAX_ACCENT_CACHE) {
+    const firstKey = accentPaletteCache.keys().next().value;
+    if (firstKey) accentPaletteCache.delete(firstKey);
+  }
+  accentPaletteCache.set(cacheKey, result);
+
+  return result;
 }
 
 /** Maps a derived palette onto the `--av-accent-*` custom property names. */

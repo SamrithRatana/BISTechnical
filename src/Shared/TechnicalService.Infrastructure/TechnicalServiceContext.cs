@@ -1,4 +1,4 @@
-﻿using TechnicalService.Domain;
+using TechnicalService.Domain;
 using TechnicalService.Infrastructure.EntityConfigurations;
 using Microsoft.EntityFrameworkCore;
 
@@ -18,6 +18,10 @@ public class TechnicalServiceContext : DbContext, IUnitOfWork
     public DbSet<RentalSparepart> RentalSpareparts { get; set; }
     public DbSet<SparepartManualStockOut> SparepartManualStockOuts { get; set; }
     public DbSet<SparepartStockAuditLog> SparepartStockAuditLogs { get; set; }
+    public DbSet<ServiceTelegramMessage> ServiceTelegramMessages { get; set; }
+    public DbSet<SparepartCategory> SparepartCategories { get; set; }
+    public DbSet<SparepartType> SparepartTypes { get; set; }
+    public DbSet<SparepartBrand> SparepartBrands { get; set; }
 
     private readonly IMediator _mediator;
 
@@ -42,6 +46,22 @@ public class TechnicalServiceContext : DbContext, IUnitOfWork
         modelBuilder.ApplyConfiguration(new RentalServiceEntityTypeConfiguration());
         modelBuilder.ApplyConfiguration(new RentalSparepartEntityTypeConfiguration());
         modelBuilder.ApplyConfiguration(new SparepartStockAuditLogEntityTypeConfiguration());
+        modelBuilder.ApplyConfiguration(new SparepartCategoryEntityTypeConfiguration());
+        modelBuilder.ApplyConfiguration(new SparepartTypeEntityTypeConfiguration());
+        modelBuilder.ApplyConfiguration(new SparepartBrandEntityTypeConfiguration());
+
+        modelBuilder.Entity<ServiceTelegramMessage>(builder =>
+        {
+            builder.ToTable("ServiceTelegramMessages");
+            builder.HasKey(x => x.Id);
+            builder.Property(x => x.TopicKey).HasMaxLength(50).IsRequired();
+            builder.HasIndex(x => new { x.ServiceId, x.TopicKey });
+            builder.HasIndex(x => x.MessageId);
+        });
+
+        // Spareparts' trigger is declared in SparepartEntityTypeConfiguration
+        // (one source of truth); the inline duplicate that used to sit here
+        // named a trigger that does not exist.
 
         modelBuilder.Entity<Service>()
             .ToTable("Services", t =>

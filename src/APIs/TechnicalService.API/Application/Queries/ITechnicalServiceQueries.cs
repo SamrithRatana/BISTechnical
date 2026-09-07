@@ -10,7 +10,6 @@ public interface ITechnicalServiceQueries
     Task<PagedResult<Item>> GetItemsAsync(int pageNumber, int pageSize);
     Task<PagedResult<string>> GetUniqueItemNamesAsync(int? pageNumber, int? pageSize, string searchTerm);
     Task<PagedResult<string>> GetUniqueItemTypesAsync(int? pageNumber, int? pageSize, string searchTerm); // ⭐ ADD THIS
-    Task<PagedResult<Sparepart>> GetSparepartsAsync(int pageNumber, int pageSize);
     Task<List<SparepartWithUsage>> GetSparePartsUsedInServicesAsync();
     Task<PagedResult<RentalItem>> GetRentalItemsAsync(int pageNumber, int pageSize);
     Task<PagedResult<RentalService>> GetRentalServicesAsync(int pageNumber, int pageSize);

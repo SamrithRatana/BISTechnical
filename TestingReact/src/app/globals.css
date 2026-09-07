@@ -470,12 +470,20 @@
    opacity animation. A page mid-transition does not need its colours easing
    underneath it as well. */
 .av-theme-transition,
-.av-theme-transition *,
-.av-theme-transition *::before,
-.av-theme-transition *::after {
-  transition-property: background-color, border-color, color, fill, stroke, box-shadow;
-  transition-duration: 200ms;
-  transition-timing-function: var(--av-ease);
+.av-theme-transition body,
+.av-theme-transition header,
+.av-theme-transition nav,
+.av-theme-transition aside,
+.av-theme-transition main,
+.av-theme-transition section,
+.av-theme-transition [role="dialog"],
+.av-theme-transition button,
+.av-theme-transition input,
+.av-theme-transition select,
+.av-theme-transition table {
+  transition-property: background-color, border-color, color;
+  transition-duration: 180ms;
+  transition-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
 }
 
 /* ── 1366x768 Display Optimizations ─────────────────────────────────── */
@@ -622,10 +630,29 @@ html[data-surface-style="flat"] {
 body {
   background: var(--av-bg-app);
   color: var(--av-text-primary);
-  font-family: var(--font-geist-sans), -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  font-family: var(--font-geist-sans), var(--font-battambang), var(--font-kantumruy), var(--font-noto-khmer), -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
-  letter-spacing: -0.011em;
+}
+
+/* ── Khmer Font & Ligature Perfection ──────────────────────────────────
+   Ensures zero broken coeng (ជើង), zero misplaced vowels, and crystal-clear
+   rendering across report preview, inputs, modals and canvas. */
+/* The printed report is deliberately NOT in this list any more. It used to be,
+   as `#printable-report-document`, but that element no longer exists — the
+   report is `.rpt-sheet` from `src/report-layout/`, and it sets its own font,
+   letter-spacing and Khmer shaping features there so the phone's WebView,
+   which never loads this stylesheet, shapes Khmer the same way. */
+:lang(km),
+[data-lang="km"],
+.font-khmer,
+input,
+textarea,
+select {
+  font-family: var(--font-battambang), var(--font-kantumruy), var(--font-noto-khmer), "Khmer OS Battambang", "Battambang", "Kantumruy Pro", "Noto Sans Khmer", "Khmer UI", "Leelawadee UI", sans-serif;
+  letter-spacing: normal !important;
+  font-feature-settings: "kern" 1, "liga" 1, "calt" 1, "clig" 1;
+  text-rendering: optimizeLegibility;
 }
 
 /* ══════════════════════════════════════════════════════════════════════
@@ -1022,10 +1049,11 @@ html[data-cmd-palette-style="tinted"].dark .cmd-palette-glass .bg-black\/\[0\.02
    next/font), so it renders identically on every machine — unlike the KhmerOS
    family, which only appears where someone installed it locally.
 
-   This is deliberately NOT the print report's font. The report keeps
-   "Khmer OS Battambang" (set inline on #printable-report-document) because it
-   is tuned for paper and matches the legacy Blazor document. Screen and paper
-   are different media with different requirements; they are allowed to differ.
+   This is deliberately NOT the print report's font. The report resolves its own
+   stack in `report-layout/format.ts` (Battambang first, "Khmer OS Battambang"
+   behind it) because it is tuned for paper and matches the legacy Blazor
+   document. Screen and paper are different media with different requirements;
+   they are allowed to differ.
 
    Latin digits and Ref-No codes inside Khmer screens still resolve through the
    Geist fallback after it.
@@ -1052,11 +1080,11 @@ html[data-lang="km"] .font-sans {
   font-family: var(--font-khmer-ui);
 }
 
-/* The printed report is deliberately untouched by everything above. It already
-   renders 'Khmer OS Battambang' via an inline style on
-   #printable-report-document, which outranks any stylesheet rule, and it uses
-   no `font-sans` classes — so the report keeps the exact typography it has
-   today regardless of what the UI does. */
+/* The printed report is deliberately untouched by everything above. Its
+   typography comes from `src/report-layout/css.ts`, which is scoped to
+   `.rpt-sheet`, uses no `font-sans` classes, and is the same stylesheet the
+   CamID phone app prints from — so the report keeps its typography regardless
+   of what the UI does, on both platforms. */
 
 /* Khmer stacks vowel/consonant marks above and below the baseline, so the
    tight leading the Latin UI is tuned for clips them in dense table rows. */
@@ -1532,17 +1560,17 @@ input:-webkit-autofill:active {
 }
 
 @keyframes enter-up {
-  from { opacity: 0; transform: translate3d(0, 14px, 0); }
+  from { opacity: 0; transform: translate3d(0, 18px, 0); }
   to   { opacity: 1; transform: translate3d(0, 0, 0); }
 }
 
 @keyframes enter-pop {
-  from { opacity: 0; transform: translate3d(0, 8px, 0) scale(0.97); }
+  from { opacity: 0; transform: translate3d(0, 12px, 0) scale(0.96); }
   to   { opacity: 1; transform: translate3d(0, 0, 0) scale(1); }
 }
 
 @keyframes enter-left {
-  from { opacity: 0; transform: translate3d(-16px, 0, 0); }
+  from { opacity: 0; transform: translate3d(-20px, 0, 0); }
   to   { opacity: 1; transform: translate3d(0, 0, 0); }
 }
 
@@ -1553,28 +1581,23 @@ input:-webkit-autofill:active {
 
 /* `--enter-i` is the stagger position, set inline by the component
    (`style={{ "--enter-i": index }}`). Absent, it resolves to 0 and the element
-   simply starts immediately — so these classes are always safe to use alone.
-
-   The caller is responsible for capping the index. A stagger is a flourish for
-   a handful of sibling elements; multiplied across a long list it turns into
-   dead waiting time, and the last row of a 50-row table arriving two seconds
-   after the first is not a nice effect, it is a slow page. */
+   simply starts immediately — so these classes are always safe to use alone. */
 .enter-fade,
 .enter-up,
 .enter-pop,
 .enter-left,
 .enter-right {
-  animation-duration: 0.32s;
-  animation-timing-function: cubic-bezier(0.22, 1, 0.36, 1); /* ease-out-quint */
+  animation-duration: 0.38s;
+  animation-timing-function: cubic-bezier(0.16, 1, 0.3, 1);
   animation-fill-mode: backwards;
-  animation-delay: calc(var(--enter-i, 0) * 55ms);
+  animation-delay: calc(var(--enter-i, 0) * 45ms);
 }
 
-.enter-fade  { animation-name: enter-fade; animation-duration: 0.22s; }
+.enter-fade  { animation-name: enter-fade; animation-duration: 0.26s; }
 .enter-up    { animation-name: enter-up; }
-.enter-pop   { animation-name: enter-pop; animation-duration: 0.26s; }
+.enter-pop   { animation-name: enter-pop; animation-duration: 0.32s; }
 .enter-left  { animation-name: enter-left; }
-.enter-right { animation-name: enter-right; animation-duration: 0.38s; }
+.enter-right { animation-name: enter-right; animation-duration: 0.42s; }
 
 /* ══════════════════════════════════════════════════════════════════════
    ROUTE TRANSITION
@@ -1877,33 +1900,23 @@ html[data-lite="on"] * {
   transform-style: flat !important;
 }
 
-/* Print Styles for Technical Service Report */
-@media print {
-  body * {
-    visibility: hidden !important;
-  }
-  #printable-report-document,
-  #printable-report-document * {
-    visibility: visible !important;
-  }
-  #printable-report-document {
-    position: absolute !important;
-    left: 0 !important;
-    top: 0 !important;
-    width: 100% !important;
-    max-width: 100% !important;
-    box-shadow: none !important;
-    border: none !important;
-    padding: 0 !important;
-    margin: 0 !important;
-    background: #ffffff !important;
-    color: #000000 !important;
-  }
-  @page {
-    size: A4 portrait;
-    margin: 10mm;
-  }
-}
+/* ── Printing ────────────────────────────────────────────────────────────
+   There is deliberately NO app-global print stylesheet here any more.
+
+   What used to live at this spot was a Technical Service Report rule that
+   hid `body *` with `visibility: hidden !important` and un-hid only
+   `#printable-report-document`. Two things were wrong with it. It was global
+   and unconditional, so every OTHER print path in the app — any page the
+   user hit Ctrl+P on — printed a blank sheet, because nothing else on the
+   site renders that id. And it fought a second, near-identical block that
+   `ReportDocument` injected inline, right down to a contradictory `@page`
+   margin (10mm here, 6mm/8mm there), with only stylesheet ordering deciding
+   the winner.
+
+   The report now carries its own print rules, scoped to it and mounted only
+   while it is on screen: see `src/report-layout/css.ts`
+   (`buildReportCss` / `buildWebPrintIsolationCss`). That file is shared with
+   the CamID phone app, so the desktop and the phone print one layout. */
 
 /* ── Scrollbars ─────────────────────────────────────────────────────
    One definition. The `.dark` and `[data-preset="aura"]` variants that
@@ -1926,5 +1939,182 @@ html[data-lite="on"] * {
 }
 *::-webkit-scrollbar-thumb:hover {
   background: var(--av-text-muted);
+}
+
+/* ══════════════════════════════════════════════════════════════════════
+   AURA SOFT UI — HARDWARE ACCELERATED COMPOSITOR PAGE STAGE ENTRANCE
+   ══════════════════════════════════════════════════════════════════════ */
+@keyframes avPageStageEnter {
+  0% {
+    opacity: 0;
+    transform: translate3d(0, 14px, 0) scale(0.994);
+  }
+  100% {
+    opacity: 1;
+    transform: translate3d(0, 0, 0) scale(1);
+  }
+}
+
+.av-page-stage {
+  animation: avPageStageEnter 0.38s cubic-bezier(0.16, 1, 0.3, 1) backwards;
+  will-change: transform, opacity;
+  transform: translateZ(0);
+  backface-visibility: hidden;
+}
+
+/* ══════════════════════════════════════════════════════════════════════
+   AURA SOFT UI — SILKY SMOOTH SIDEBAR ENTRANCE
+   ══════════════════════════════════════════════════════════════════════ */
+/*
+ * The sidebar's one-time entrance.
+ *
+ * ── Why this is opacity only, and must stay that way ───────────────────────
+ *
+ * It used to animate `transform: translate3d(-14px, 0, 0) -> 0`, a slide in
+ * from the left. Two things were wrong with that:
+ *
+ *  1. TRANSFORM IS NOT THIS ANIMATION'S TO USE. The aside's transform belongs
+ *     to Tailwind's drawer utilities — `-translate-x-full` when closed,
+ *     `translate-x-0` when open, with `lg:translate-x-0` pinning it open on
+ *     desktop. A keyframe that also writes `transform` outranks the utility for
+ *     the length of the animation, so on a phone the CLOSED drawer was dragged
+ *     fully into view for 0.36s before snapping back off-screen. Animating
+ *     opacity alone cannot collide with the drawer, at any breakpoint.
+ *  2. A HORIZONTAL SLIDE FIGHTS THE PAGE TRANSITION. `PageTransition` moves the
+ *     content stage at the same moment; two different things sliding on two
+ *     different curves reads as jitter rather than motion.
+ *
+ * ── And why there is no `will-change` ──────────────────────────────────────
+ *
+ * `will-change: transform, opacity` sat here unconditionally. The class is on
+ * the element for its whole life, not just while animating, so it held a
+ * compositor layer alive permanently for a 0.28s fade — which is the documented
+ * way to make `will-change` cost more than it saves. A short opacity animation
+ * needs no hint.
+ *
+ * Reduced motion is handled globally by the `html[data-motion="reduced"] *`
+ * rule further up; this inherits it and needs no separate override.
+ *
+ * The class is applied ONCE per page load — see `hasPlayedEntrance` in
+ * `components/Sidebar.tsx` for why that gating exists.
+ */
+@keyframes avSidebarEnter {
+  0% {
+    opacity: 0;
+  }
+  100% {
+    opacity: 1;
+  }
+}
+
+.av-sidebar-enter {
+  animation: avSidebarEnter 0.28s cubic-bezier(0.16, 1, 0.3, 1) backwards;
+}
+
+
+
+/* ── Always Visible Custom Scrollbar for Page & Docs Sidebar/Outline ──── */
+html {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(167, 139, 250, 0.65) rgba(15, 23, 42, 0.6);
+}
+
+html:not(.dark) {
+  scrollbar-color: rgba(139, 92, 246, 0.6) rgba(241, 245, 249, 0.9);
+}
+
+/* Chrome / Safari / Edge Custom Scrollbars */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+  display: block !important;
+}
+
+::-webkit-scrollbar-track {
+  background: rgba(15, 23, 42, 0.6);
+  border-radius: 9999px;
+}
+
+html:not(.dark) ::-webkit-scrollbar-track {
+  background: rgba(241, 245, 249, 0.9);
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgba(167, 139, 250, 0.65);
+  border-radius: 9999px;
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  min-height: 40px;
+}
+
+html:not(.dark) ::-webkit-scrollbar-thumb {
+  background: rgba(139, 92, 246, 0.55);
+  border: 1px solid rgba(0, 0, 0, 0.05);
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(167, 139, 250, 0.95);
+  box-shadow: 0 0 10px rgba(167, 139, 250, 0.6);
+}
+
+html:not(.dark) ::-webkit-scrollbar-thumb:hover {
+  background: rgba(139, 92, 246, 0.85);
+  box-shadow: 0 0 8px rgba(139, 92, 246, 0.4);
+}
+
+.docs-sidebar-scroll {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(167, 139, 250, 0.65) rgba(255, 255, 255, 0.06);
+}
+
+html:not(.dark) .docs-sidebar-scroll {
+  scrollbar-color: rgba(139, 92, 246, 0.6) rgba(0, 0, 0, 0.05);
+}
+
+.docs-sidebar-scroll::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+  display: block !important;
+}
+
+.docs-sidebar-scroll::-webkit-scrollbar-track {
+  background: rgba(255, 255, 255, 0.05);
+  border-radius: 9999px;
+  margin: 4px 0;
+}
+
+html:not(.dark) .docs-sidebar-scroll::-webkit-scrollbar-track {
+  background: rgba(0, 0, 0, 0.04);
+}
+
+.docs-sidebar-scroll::-webkit-scrollbar-thumb {
+  background: rgba(167, 139, 250, 0.6);
+  border-radius: 9999px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  min-height: 40px;
+}
+
+html:not(.dark) .docs-sidebar-scroll::-webkit-scrollbar-thumb {
+  background: rgba(139, 92, 246, 0.55);
+  border: 1px solid rgba(0, 0, 0, 0.05);
+}
+
+.docs-sidebar-scroll::-webkit-scrollbar-thumb:hover {
+  background: rgba(167, 139, 250, 0.9);
+  box-shadow: 0 0 8px rgba(167, 139, 250, 0.5);
+}
+
+html:not(.dark) .docs-sidebar-scroll::-webkit-scrollbar-thumb:hover {
+  background: rgba(139, 92, 246, 0.85);
+  box-shadow: 0 0 8px rgba(139, 92, 246, 0.35);
+}
+
+/* ══════════════════════════════════════════════════════════════════════
+   DASHBOARD PRIVACY MODE
+   ══════════════════════════════════════════════════════════════════════ */
+.data-privacy-active .privacy-sensitive,
+[data-privacy="true"] .privacy-sensitive {
+  filter: blur(4px);
+  user-select: none;
+  transition: filter 0.2s ease;
 }
 

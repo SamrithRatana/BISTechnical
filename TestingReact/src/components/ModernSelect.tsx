@@ -33,6 +33,17 @@ interface ModernSelectProps {
   className?: string;
   /** Compact sizing for tight spaces like a table cell */
   dense?: boolean;
+  /**
+   * A real disabled control: not tabbable, announced as disabled, does not
+   * open. A `pointer-events-none` wrapper only stops the mouse.
+   */
+  disabled?: boolean;
+  /**
+   * Forwarded to the trigger button. A `<button>` is a labelable element, so
+   * a `<label htmlFor={id}>` names this control the same way it names an
+   * `<input>`.
+   */
+  id?: string;
 }
 
 const ROW_HEIGHT = 34;
@@ -44,6 +55,8 @@ export default function ModernSelect({
   placeholder = "Select...",
   className = "",
   dense = false,
+  disabled = false,
+  id,
 }: ModernSelectProps) {
   const [open, setOpen] = useState(false);
   const current = options.find((o) => o.value === value);
@@ -64,20 +77,24 @@ export default function ModernSelect({
     <>
       <button
         ref={anchorRef}
+        id={id}
         type="button"
+        disabled={disabled}
+        aria-disabled={disabled || undefined}
         onClick={(e) => {
           e.stopPropagation();
+          if (disabled) return;
           setOpen((v) => !v);
         }}
         aria-haspopup="listbox"
         aria-expanded={open}
-        className={`w-full flex items-center justify-between gap-1.5 ${triggerCls} border rounded-xl bg-elevated   outline-none transition-[color,background-color,border-color,box-shadow,opacity,transform,filter] hover:border-prominent  ${
+        className={`w-full flex items-center justify-between gap-1.5 ${triggerCls} border rounded-xl bg-white dark:bg-slate-900 text-slate-900 dark:text-white outline-none transition-[color,background-color,border-color,box-shadow,opacity,transform,filter] hover:border-slate-400 dark:hover:border-slate-600 disabled:opacity-60 disabled:cursor-not-allowed ${
           open
             ? "ring-2 ring-accent/20 border-info"
             : "border-subtle "
         } ${className}`}
       >
-        <span className={`truncate text-left ${current ? "text-ink " : "text-ink-muted"}`}>
+        <span className={`truncate text-left font-medium ${current ? "text-slate-900 dark:text-white" : "text-slate-400"}`}>
           {current?.label ?? placeholder}
         </span>
         <ChevronDown
@@ -98,7 +115,7 @@ export default function ModernSelect({
               width: coords.width,
               transform: coords.placement === "top" ? "translateY(-100%)" : undefined,
             }}
-            className={`z-[100] av-glass-panel rounded-xl overflow-hidden py-1 max-h-60 overflow-y-auto ${
+            className={`z-[9999] bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-2xl rounded-xl overflow-hidden py-1 max-h-60 overflow-y-auto ${
               coords.placement === "top" ? "dropdown-panel-in-top" : "dropdown-panel-in"
             }`}
           >
@@ -116,8 +133,8 @@ export default function ModernSelect({
                   }}
                   className={`w-full flex items-center justify-between gap-2 px-3 py-2 text-xs text-left transition-colors ${
                     selected
-                      ? "bg-accent-soft text-accent-soft-fg font-semibold"
-                      : "text-ink hover:bg-cushion "
+                      ? "bg-emerald-50 dark:bg-emerald-950/40 text-emerald-600 dark:text-emerald-400 font-semibold"
+                      : "text-slate-900 dark:text-slate-100 hover:bg-slate-100 dark:hover:bg-slate-800"
                   }`}
                 >
                   <span className="truncate">{opt.label}</span>

@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useLayoutEffect, useRef, useState } from "react";
+import React, { useCallback, useLayoutEffect, useRef, useState } from "react";
 import { useI18n } from "@/i18n/LanguageProvider";
 import type { TranslationKey } from "@/i18n/translations";
 
@@ -58,7 +58,7 @@ const TAB_TONE: Record<string, { bg: string; fg: string }> = {
   slate: { bg: "bg-neutral", fg: "text-white" },
 };
 
-export default function StatusTabMenu({
+function StatusTabMenu({
   tabs,
   activeKey,
   onTabChange,
@@ -174,3 +174,18 @@ export default function StatusTabMenu({
     </div>
   );
 }
+
+/**
+ * Memoised because the thumb is measured, not computed.
+ *
+ * `measure()` runs in a dependency-less `useLayoutEffect` — deliberately, so a
+ * language toggle that resizes a label is caught even though `activeIndex` did
+ * not change — and it reads `offsetLeft/Top/Width/Height`. Those are four
+ * synchronous layout flushes before paint, and without `memo` they happened on
+ * every render of the parent table, including every keystroke in its search
+ * box, to re-measure a strip that had not moved.
+ *
+ * Callers must pass a stable `onTabChange`; an inline arrow re-renders this on
+ * every parent render and puts the reads straight back.
+ */
+export default React.memo(StatusTabMenu);

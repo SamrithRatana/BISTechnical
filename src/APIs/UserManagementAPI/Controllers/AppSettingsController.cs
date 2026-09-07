@@ -120,5 +120,146 @@ namespace UserManagementAPI.Controllers
 
             return Ok(new { logoUrl = setting.LogoUrl });
         }
+
+        // GET: api/AppSettings/user-theme
+        // Returns the authenticated user's personal theme preferences
+        [HttpGet("user-theme")]
+        [Authorize]
+        public async Task<IActionResult> GetUserTheme()
+        {
+            var userId = User.FindFirstValue(ClaimTypes.NameIdentifier);
+            if (string.IsNullOrEmpty(userId))
+            {
+                return Unauthorized();
+            }
+
+            try
+            {
+                var pref = await _context.UserPreferences.AsNoTracking().FirstOrDefaultAsync(p => p.UserId == userId);
+                return Ok(new
+                {
+                    userId = userId,
+                    themePreferencesJson = pref?.ThemePreferencesJson,
+                    updatedAt = pref?.UpdatedAt
+                });
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Failed to retrieve user theme preferences for {UserId}", userId);
+                return Ok(new { userId = userId, themePreferencesJson = (string?)null });
+            }
+        }
+
+        // PUT: api/AppSettings/user-theme
+        // Saves/updates the authenticated user's personal theme preferences
+        [HttpPut("user-theme")]
+        [Authorize]
+        public async Task<IActionResult> UpdateUserTheme([FromBody] UpdateUserThemeViewModel model)
+        {
+            var userId = User.FindFirstValue(ClaimTypes.NameIdentifier);
+            if (string.IsNullOrEmpty(userId))
+            {
+                return Unauthorized();
+            }
+
+            try
+            {
+                var pref = await _context.UserPreferences.FirstOrDefaultAsync(p => p.UserId == userId);
+                if (pref == null)
+                {
+                    pref = new UserPreference
+                    {
+                        UserId = userId,
+                        ThemePreferencesJson = model.ThemePreferencesJson,
+                        UpdatedAt = DateTime.UtcNow
+                    };
+                    _context.UserPreferences.Add(pref);
+                }
+                else
+                {
+                    pref.ThemePreferencesJson = model.ThemePreferencesJson;
+                    pref.UpdatedAt = DateTime.UtcNow;
+                }
+
+                await _context.SaveChangesAsync();
+                return Ok(new
+                {
+                    userId = userId,
+                    themePreferencesJson = pref.ThemePreferencesJson,
+                    updatedAt = pref.UpdatedAt
+                });
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to save user theme preferences for {UserId}", userId);
+                return StatusCode(500, new { error = "Failed to persist user theme" });
+            }
+        }
+
+        // GET: api/AppSettings/report-template
+        // The COMPANY-WIDE printed-report template. Every signed-in user reads
+        // the same row — publishing changes the report design for everyone.
+        [HttpGet("report-template")]
+        [Authorize]
+        public async Task<IActionResult> GetReportTemplate()
+        {
+            try
+            {
+                var settings = await _context.AppSettings.AsNoTracking().FirstOrDefaultAsync(s => s.Id == 1);
+                return Ok(new
+                {
+                    reportTemplateJson = settings?.ReportTemplateJson,
+                    updatedAt = settings?.UpdatedAt
+                });
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Failed to retrieve the report template");
+                return Ok(new { reportTemplateJson = (string?)null });
+            }
+        }
+
+        // PUT: api/AppSettings/report-template
+        // Admin-scoped like the logo: this changes what every user prints.
+        // Null clears back to the shipped default layout. Managers run the
+        // report workflow day to day, so they can publish too (unlike the
+        // logo, which stays Admin-only).
+        [HttpPut("report-template")]
+        [Authorize(Roles = "Admin,SuperAdmin,Manager")]
+        public async Task<IActionResult> UpdateReportTemplate([FromBody] UpdateReportTemplateViewModel model)
+        {
+            var userId = User.FindFirstValue(ClaimTypes.NameIdentifier);
+            try
+            {
+                var settings = await _context.AppSettings.FirstOrDefaultAsync(s => s.Id == 1);
+                if (settings == null)
+                {
+                    return NotFound(new { error = "AppSettings row missing" });
+                }
+
+                settings.ReportTemplateJson = model.ReportTemplateJson;
+                settings.UpdatedAt = DateTime.UtcNow;
+                settings.UpdatedByUserId = userId;
+                await _context.SaveChangesAsync();
+
+                _logger.LogInformation("Report template published for all users by {UserId}", userId);
+                return Ok(new { reportTemplateJson = settings.ReportTemplateJson, updatedAt = settings.UpdatedAt });
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to save the report template");
+                return StatusCode(500, new { error = "Failed to persist report template" });
+            }
+        }
+    }
+
+    public class UpdateReportTemplateViewModel
+    {
+        public string? ReportTemplateJson { get; set; }
+    }
+
+    public class UpdateUserThemeViewModel
+    {
+        public string? ThemePreferencesJson { get; set; }
     }
 }

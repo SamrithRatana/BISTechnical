@@ -1,12 +1,14 @@
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { getAllActiveSessions } from "@/lib/scannerBridge";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
-export async function GET() {
+export async function GET(req: NextRequest) {
   try {
-    const activeSessions = getAllActiveSessions();
+    const { searchParams } = new URL(req.url);
+    const sessionId = searchParams.get("sessionId") || undefined;
+    const activeSessions = getAllActiveSessions(sessionId);
     return NextResponse.json({
       success: true,
       timestamp: Date.now(),

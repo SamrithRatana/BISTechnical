@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { recordRequest } from "@/services/activityTracker";
 
-const JWT_API_BASE = process.env.NEXT_PUBLIC_JWT_API_URL || "http://localhost:8087";
+const JWT_API_BASE = process.env.NEXT_PUBLIC_JWT_API_URL || "https://user.camprotec.com.kh";
 
 export async function POST(req: NextRequest) {
   // Someone signing in is the clearest possible sign the system is about to be
@@ -42,10 +42,12 @@ export async function POST(req: NextRequest) {
     });
 
     const responseText = await apiRes.text();
-    let data: any = null;
+    let data: Record<string, unknown> | null = null;
     try {
-      data = JSON.parse(responseText);
-    } catch (e) {}
+      data = JSON.parse(responseText) as Record<string, unknown>;
+    } catch {
+      // Ignored non-json response
+    }
 
     // Strict validation: Only log in if the backend API returns success HTTP status AND valid token
     if (apiRes.ok && data && (data.token || data.Token || data.isSuccess || data.IsSuccess)) {
@@ -59,11 +61,11 @@ export async function POST(req: NextRequest) {
         });
         if (usersRes.ok) {
           const usersData = await usersRes.json();
-          const userList: any[] = usersData.Data || usersData.items || [];
+          const userList: Record<string, unknown>[] = (usersData.Data || usersData.items || []) as Record<string, unknown>[];
           const lowerName = userName.toLowerCase();
           const matched = userList.find(
-            (u) => (u.UserName || u.userName || "").toLowerCase() === lowerName ||
-                   (u.Email || u.email || "").toLowerCase() === lowerName
+            (u) => (String(u.UserName || u.userName || "")).toLowerCase() === lowerName ||
+                   (String(u.Email || u.email || "")).toLowerCase() === lowerName
           );
           if (matched) {
             userObj = {
@@ -106,7 +108,7 @@ export async function POST(req: NextRequest) {
       { isSuccess: false, message: errorMsg },
       { status: 401 }
     );
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error("Auth proxy error:", error);
     return NextResponse.json(
       { isSuccess: false, message: "Authentication service error. Please try again." },

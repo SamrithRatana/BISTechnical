@@ -7,15 +7,16 @@
  * toggle, JWT logged-in user profile, roles, avatar/initials, profile menu.
  */
 
+import BrandLogo from "@/components/BrandLogo";
 import React, { useState, useEffect, useRef, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
-import { Bell, Camera, Check, Globe, Loader2, Menu, RefreshCw, LogOut, Settings, User as UserIcon, ShieldCheck, ChevronDown, Sparkles, Leaf } from "lucide-react";
+import { Camera, Check, Globe, Loader2, Menu, RefreshCw, LogOut, Settings, User as UserIcon, ShieldCheck, ChevronDown, Sparkles, Leaf } from "lucide-react";
 import { fetchUserMap } from "@/services/userService";
 import { clearSession } from "@/services/authSession";
 import { useProfilePhotoUpload } from "@/hooks/useProfilePhotoUpload";
 import { useI18n } from "@/i18n/LanguageProvider";
-import { LANGUAGES, LANGUAGE_LABELS, LANGUAGE_SHORT } from "@/i18n/translations";
+import { LANGUAGES, LANGUAGE_LABELS, LANGUAGE_SHORT } from "@/i18n/languageConfig";
 import { useActionHandler } from "./ActionBus";
 import { useIsModalActive } from "@/hooks/useIsModalActive";
 import { cn } from "@/lib/utils";
@@ -53,21 +54,24 @@ function readStoredUser(): {
   try {
     const stored = localStorage.getItem("user_info");
     if (!stored) return empty;
-    const parsed = JSON.parse(stored) as {
-      userName?: string;
-      email?: string;
-      firstName?: string;
-      lastName?: string;
-      roles?: string[];
-      role?: string;
-      profilePictureUrl?: string;
-    };
-    const full = `${(parsed.firstName || "").trim()} ${(parsed.lastName || "").trim()}`.trim();
+    const parsed = JSON.parse(stored) as Record<string, unknown>;
+    const firstName = String(parsed.firstName || parsed.FirstName || "");
+    const lastName = String(parsed.lastName || parsed.LastName || "");
+    const userName = String(parsed.userName || parsed.UserName || "");
+    const email = String(parsed.email || parsed.Email || "");
+    const rawRoles = parsed.roles || parsed.Roles || (parsed.role ? [parsed.role] : []);
+    const roles = Array.isArray(rawRoles) ? rawRoles : [];
+    let picture = (parsed.profilePictureUrl || parsed.ProfilePictureUrl || null) as string | null;
+    if (picture && typeof picture === "string" && picture.startsWith("/uploads/")) {
+      const jwtApi = process.env.NEXT_PUBLIC_JWT_API_URL || "https://user.camprotec.com.kh";
+      picture = `${jwtApi}${picture}`;
+    }
+    const full = `${firstName.trim()} ${lastName.trim()}`.trim();
     return {
-      name: full || parsed.userName || "",
-      role: parsed.roles?.[0] || parsed.role || "",
-      email: parsed.email || "",
-      picture: parsed.profilePictureUrl || null
+      name: full || userName || "",
+      role: roles[0] || "",
+      email: email,
+      picture: picture,
     };
   } catch {
     // Malformed JSON in localStorage is not worth failing a page render over.
@@ -79,11 +83,22 @@ export default function Header({ sidebarOpen, setSidebarOpen }: HeaderProps) {
   const headerRef = useRef<HTMLElement>(null);
   const router = useRouter();
   const { disconnectPhone } = useCompanionScanner();
-  const [userName, setUserName] = useState(readStoredUser().name);
-  const [userRole, setUserRole] = useState(readStoredUser().role);
-  const [userEmail, setUserEmail] = useState(readStoredUser().email);
+  /**
+   * One read, at mount.
+   *
+   * These four were `useState(readStoredUser().x)`. A non-lazy `useState`
+   * argument is evaluated on EVERY render — the result is discarded after the
+   * first, but the work is not — so the header did four `localStorage` reads
+   * and four `JSON.parse`s per render, and it re-renders on every route change.
+   * Passing the function itself makes React call it once; the four states then
+   * seed from that single object.
+   */
+  const [storedUser] = useState(readStoredUser);
+  const [userName, setUserName] = useState(storedUser.name);
+  const [userRole, setUserRole] = useState(storedUser.role);
+  const [userEmail, setUserEmail] = useState(storedUser.email);
   const [profilePicture, setProfilePicture] = useState<string | null>(
-    readStoredUser().picture
+    storedUser.picture
   );
   const [showProfileMenu, setShowProfileMenu] = useState(false);
   const [showLangMenu, setShowLangMenu] = useState(false);
@@ -120,12 +135,7 @@ export default function Header({ sidebarOpen, setSidebarOpen }: HeaderProps) {
    * Only the *asynchronous* half is left here. The synchronous localStorage
    * read that used to open this effect now seeds `useState` directly, and the
    * dark-mode block that used to close it now lives in `ThemeScript`, which
-   * runs before the first paint instead of after it. What remains is a genuine
-   * side effect: a network call whose result legitimately arrives later.
-   *
-   * `fetchUserMap` caches at module scope and de-dupes in-flight calls, so
-   * mounting this header on every page navigation costs one request per
-   * session, not one per page.
+   * mounts ahead of any component.
    */
   useEffect(() => {
     if (typeof window !== "undefined") {
@@ -135,9 +145,9 @@ export default function Header({ sidebarOpen, setSidebarOpen }: HeaderProps) {
           if (stored) {
             try {
               const parsed = JSON.parse(stored);
-              const userId = parsed.id || parsed.userName;
+              const userId = (parsed.id || parsed.Id || parsed.userName || parsed.UserName || "").toLowerCase();
               if (userId) {
-                const u = userMap.get(userId.toLowerCase());
+                const u = userMap.get(userId);
                 if (u) {
                   const fn = (u.firstName || "").trim();
                   const ln = (u.lastName || "").trim();
@@ -145,7 +155,14 @@ export default function Header({ sidebarOpen, setSidebarOpen }: HeaderProps) {
                   if (full || u.userName) setUserName(full || u.userName);
                   if (u.email) setUserEmail(u.email);
                   if (u.roles && u.roles.length > 0) setUserRole(u.roles[0]);
-                  if (u.profilePictureUrl) setProfilePicture(u.profilePictureUrl);
+                  if (u.profilePictureUrl) {
+                    let pic = u.profilePictureUrl;
+                    if (pic.startsWith("/uploads/")) {
+                      const jwtApi = process.env.NEXT_PUBLIC_JWT_API_URL || "https://user.camprotec.com.kh";
+                      pic = `${jwtApi}${pic}`;
+                    }
+                    setProfilePicture(pic);
+                  }
                 }
               }
             } catch {}
@@ -188,16 +205,14 @@ export default function Header({ sidebarOpen, setSidebarOpen }: HeaderProps) {
   });
 
   const handleLogout = () => {
-    // Disconnect linked phone scanner companion session
-    disconnectPhone();
+    // 1. Non-blocking disconnect for linked phone scanner companion
+    void disconnectPhone();
 
-    // clearSession() also drops the `cache:` entries in sessionStorage. Those
-    // hold the previous user's ticket queues and customer rows, and on a shared
-    // workshop machine they would otherwise still be there for whoever logs in
-    // next — the tables paint from cache before the first fetch returns.
+    // 2. Instant synchronous session purge & subscriber event broadcast
     clearSession();
-    sessionStorage.removeItem("robot_greeted");
-    router.push("/login");
+
+    // 3. Instant redirect to login page
+    router.replace("/login");
   };
 
   const getInitials = (name: string) => {
@@ -223,14 +238,11 @@ export default function Header({ sidebarOpen, setSidebarOpen }: HeaderProps) {
           title={t("header.selectLanguage")}
           aria-haspopup="listbox"
           aria-expanded={showLangMenu}
-          className="flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium text-ink bg-sunken rounded-lg hover:bg-sunken transition-colors"
+          className="flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-semibold text-ink bg-sunken rounded-xl hover:bg-cushion transition-colors border border-subtle shadow-2xs"
         >
-          <Globe className="w-3.5 h-3.5 shrink-0" />
-          {/* Label and chevron drop below `xl`. The globe alone is an
-              understood affordance, and between 1024 and 1279 the rail plus
-              this cluster does not fit — see the header comment on the row. */}
-          <span className="hidden xl:inline">{LANGUAGE_SHORT[lang]}</span>
-          <ChevronDown className={`hidden xl:block w-3 h-3 text-ink-muted transition-transform duration-200 ${showLangMenu ? "rotate-180" : ""}`} />
+          <Globe className="w-3.5 h-3.5 shrink-0 text-accent" />
+          <span className="inline font-bold">{LANGUAGE_SHORT[lang]}</span>
+          <ChevronDown className={`w-3 h-3 text-ink-muted transition-transform duration-200 ${showLangMenu ? "rotate-180" : ""}`} />
         </button>
 
         <AnimatePresence>
@@ -270,24 +282,13 @@ export default function Header({ sidebarOpen, setSidebarOpen }: HeaderProps) {
         </AnimatePresence>
       </div>
 
-      {/* Connection + backend health. Hidden below `xl`: it is a diagnostic
-          latency badge, the widest single item in this cluster (~85px), and
-          the first thing that should go when the row is short of room. */}
-      <div className="hidden xl:flex items-center">
+      {/* Connection + backend health diagnostic latency badge */}
+      <div className="flex items-center">
         <SystemStatus />
       </div>
 
       {/* Light / dark / system */}
       <ThemeToggle />
-
-      {/* Notifications */}
-      <button
-        title={t("header.notifications")}
-        className="relative p-2 text-ink-secondary hover:bg-sunken rounded-lg transition-colors"
-      >
-        <Bell className="w-4 h-4" />
-        <span className="absolute top-1.5 right-1.5 w-2 h-2 rounded-full bg-accent ring-2 ring-surface" />
-      </button>
 
       <div className="h-4 w-px bg-sunken" />
 
@@ -298,12 +299,10 @@ export default function Header({ sidebarOpen, setSidebarOpen }: HeaderProps) {
           className="flex items-center gap-2.5 p-1 rounded-xl hover:bg-sunken transition-colors"
         >
           {profilePicture ? (
-            <img
+            <BrandLogo
               src={profilePicture}
               alt={userName}
-              width={32}
-              height={32}
-              decoding="async"
+              onError={() => setProfilePicture(null)}
               className="w-8 h-8 rounded-full object-cover ring-2 ring-accent/20"
             />
           ) : (
@@ -340,12 +339,10 @@ export default function Header({ sidebarOpen, setSidebarOpen }: HeaderProps) {
             >
               <div className="flex items-center gap-3 p-2 bg-cushion/70 rounded-xl">
                 {profilePicture ? (
-                  <img
+                  <BrandLogo
                     src={profilePicture}
                     alt=""
-                    width={40}
-                    height={40}
-                    decoding="async"
+                    onError={() => setProfilePicture(null)}
                     className="w-10 h-10 rounded-full object-cover shrink-0"
                   />
                 ) : (
@@ -369,36 +366,20 @@ export default function Header({ sidebarOpen, setSidebarOpen }: HeaderProps) {
               </div>
 
               <button
-                type="button"
-                disabled={isUploadingPhoto}
-                onClick={() => photoFileInputRef.current?.click()}
-                className="w-full flex items-center gap-2 px-3 py-2 text-xs font-semibold text-ink av-glass-row rounded-xl disabled:opacity-60"
+                onClick={() => {
+                  setShowProfileMenu(false);
+                  router.push("/profile");
+                }}
+                className="w-full flex items-center gap-2 px-3 py-2 text-xs font-semibold text-ink av-glass-row rounded-xl"
               >
-                {isUploadingPhoto ? (
-                  <Loader2 className="w-4 h-4 text-accent animate-spin" />
-                ) : (
-                  <Camera className="w-4 h-4 text-accent" />
-                )}
-                <span>
-                  {isUploadingPhoto
-                    ? photoProgress === null
-                      ? t("upload.uploading")
-                      : t("upload.uploadingPercent", { percent: String(photoProgress) })
-                    : t("header.changePhoto")}
-                </span>
+                <UserIcon className="w-4 h-4 text-accent" />
+                <span>{lang === "km" ? "គណនីផ្ទាល់ខ្លួន (My Profile)" : "My Profile"}</span>
               </button>
-              <input
-                ref={photoFileInputRef}
-                type="file"
-                accept="image/jpeg,image/png,image/webp,image/gif"
-                onChange={handlePhotoFileSelected}
-                className="hidden"
-              />
 
               <button
                 onClick={() => {
                   setShowProfileMenu(false);
-                  router.push("/settings");
+                  router.push("/profile?tab=settings");
                 }}
                 className="w-full flex items-center gap-2 px-3 py-2 text-xs font-semibold text-ink av-glass-row rounded-xl"
               >

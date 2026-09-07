@@ -44,9 +44,19 @@ export default function MonthlyReportPage() {
 
       const count = (status: string) => rows.filter((r) => r.status === status).length;
 
+      const shapedRows = rows.map((row) => ({
+        ...row,
+        engineer:
+          row.repairByName ||
+          row.verifiedByName ||
+          row.inspectByName ||
+          row.createdByName ||
+          "—",
+      }));
+
       return {
         groups: groupBy(
-          rows as unknown as Record<string, unknown>[],
+          shapedRows as unknown as Record<string, unknown>[],
           (row) => (row.companyName as string) ?? "",
           t("report.ungrouped")
         ),
@@ -63,6 +73,7 @@ export default function MonthlyReportPage() {
   const format = useCallback(
     (field: string, value: unknown) => {
       if (field === "serviceDate") return formatDay(value);
+      if (field === "engineer") return value ? String(value) : "—";
       // Translated at render only — the raw English status stays in state and
       // on the wire, per the app's rule for backend enum values.
       if (field === "status" && value) return translateStatus(String(value), t);

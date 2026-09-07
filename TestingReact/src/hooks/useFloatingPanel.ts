@@ -22,6 +22,7 @@ export interface FloatingCoords {
   left: number;
   width: number;
   placement: "top" | "bottom";
+  maxHeight?: number;
 }
 
 interface UseFloatingPanelOptions {
@@ -57,47 +58,94 @@ export function useFloatingPanel<
     let left = align === "start" ? rect.left : rect.left + rect.width / 2 - panelWidth / 2;
     left = Math.min(Math.max(left, VIEWPORT_MARGIN), viewportW - panelWidth - VIEWPORT_MARGIN);
 
-    const spaceBelow = viewportH - rect.bottom;
-    const placement: "top" | "bottom" =
-      spaceBelow < estimatedHeight + GAP && rect.top > estimatedHeight + GAP ? "top" : "bottom";
+    const spaceBelow = viewportH - rect.bottom - GAP - VIEWPORT_MARGIN;
+    const spaceAbove = rect.top - GAP - VIEWPORT_MARGIN;
+
+    // Intelligently choose placement:
+    // 1. If space below accommodates estimatedHeight, place bottom.
+    // 2. Else if space above accommodates estimatedHeight, flip to top.
+    // 3. If neither side fits estimatedHeight, pick whichever side has more room.
+    let placement: "top" | "bottom" = "bottom";
+    if (spaceBelow >= estimatedHeight) {
+      placement = "bottom";
+    } else if (spaceAbove >= estimatedHeight) {
+      placement = "top";
+    } else {
+      placement = spaceAbove > spaceBelow ? "top" : "bottom";
+    }
+
+    const availableHeight = placement === "bottom" ? spaceBelow : spaceAbove;
+    const maxHeight = Math.max(140, Math.floor(availableHeight));
+
     const top = placement === "bottom" ? rect.bottom + GAP : rect.top - GAP;
 
-    setCoords({ top, left, width: panelWidth, placement });
+    setCoords({ top, left, width: panelWidth, placement, maxHeight });
   };
 
   // Position must be measured before paint so the panel never flashes at 0,0.
   useLayoutEffect(() => {
-    if (open) computeCoords();
+    if (open) {
+      computeCoords();
+      if (panelRef.current && anchorRef.current) {
+        (panelRef.current as unknown as Record<string, unknown>).__anchorElement = anchorRef.current;
+      }
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
 
   useEffect(() => {
     if (!open) return;
 
+    if (panelRef.current && anchorRef.current) {
+      (panelRef.current as unknown as Record<string, unknown>).__anchorElement = anchorRef.current;
+    }
+
+    // Checks whether a target node is inside this panel, its anchor, or any
+    // child floating panel (portaled into document.body) whose anchor lives inside this panel.
+    function isInsideAnchorOrPanelOrChildPortal(node: Node | null): boolean {
+      if (!node) return false;
+      if (anchorRef.current && anchorRef.current.contains(node)) return true;
+      if (panelRef.current && panelRef.current.contains(node)) return true;
+
+      // Check if node is inside a child floating panel whose anchor lives in our panel
+      let curr: Node | null = node;
+      while (curr && curr !== document.body) {
+        if (curr instanceof HTMLElement && (curr as unknown as Record<string, unknown>).__anchorElement) {
+          const childAnchor = (curr as unknown as Record<string, unknown>).__anchorElement as Node;
+          if (panelRef.current && (panelRef.current.contains(childAnchor) || isInsideAnchorOrPanelOrChildPortal(childAnchor))) {
+            return true;
+          }
+        }
+        curr = curr.parentNode;
+      }
+      return false;
+    }
+
     function handleClickOutside(e: MouseEvent) {
       const target = e.target as Node;
-      if (
-        anchorRef.current && !anchorRef.current.contains(target) &&
-        panelRef.current && !panelRef.current.contains(target)
-      ) {
+      if (!isInsideAnchorOrPanelOrChildPortal(target)) {
         onClose();
       }
     }
+
     function handleEscape(e: KeyboardEvent) {
-      if (e.key === "Escape") onClose();
+      if (e.key === "Escape") {
+        // If a child panel is open, let the child panel close first
+        if (panelRef.current?.querySelector('[aria-expanded="true"]')) {
+          return;
+        }
+        onClose();
+      }
     }
+
     // A scrolling ancestor (the table body, a modal's body) doesn't bubble
     // scroll to window, but a capture-phase listener still fires for it.
     // Closing rather than repositioning is deliberate: the trigger moves out
     // from under the pointer the instant its container scrolls, so tracking
     // it would just relocate the panel to a spot the user didn't ask for.
-    // Scrolling inside the panel's own list is excluded: that's not the
-    // trigger moving, it's the user reading the list, and "scroll" also
-    // fires during capture for that element since it's inside window's
-    // capture path — without this check the panel closes the instant a
-    // scroll gesture starts on it.
+    // Scrolling inside the panel's own list or child panels is excluded.
     function handleScrollOrResize(e: Event) {
-      if (panelRef.current && e.target instanceof Node && panelRef.current.contains(e.target)) {
+      if (e.target instanceof Node && isInsideAnchorOrPanelOrChildPortal(e.target)) {
         return;
       }
       onClose();

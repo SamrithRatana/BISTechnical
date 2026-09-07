@@ -38,9 +38,14 @@ export default function CustomerReportPage() {
         serviceType: filters.serviceType,
         serviceLocation: filters.serviceLocation,
       });
+      const shapedRows = rows.map((row) => ({
+        ...row,
+        engineer: row.repairByName || row.inspectByName || row.createdByName || "—",
+      }));
+
       return {
         groups: groupBy(
-          rows as unknown as Record<string, unknown>[],
+          shapedRows as unknown as Record<string, unknown>[],
           (row) => (row.companyName as string) ?? "",
           t("report.ungrouped")
         ),
@@ -52,6 +57,7 @@ export default function CustomerReportPage() {
   const format = useCallback(
     (field: string, value: unknown) => {
       if (field === "serviceDate") return formatDay(value);
+      if (field === "engineer") return value ? String(value) : "—";
       if (field === "status" && value) return translateStatus(String(value), t);
       return value === null || value === undefined ? "" : String(value);
     },

@@ -23,7 +23,7 @@
  * write: this tab's (`writePrefs` emits) or another tab's (`storage`).
  */
 
-import React, { createContext, useCallback, useContext, useMemo } from "react";
+import React, { createContext, useCallback, useContext, useMemo, useRef } from "react";
 import { useSyncExternalStore } from "react";
 import {
   DEFAULT_PREFS,
@@ -34,7 +34,8 @@ import {
   type ThemePrefs,
 } from "./themeConfig";
 import { accentTokensToCssVars, deriveAccentPalette } from "./accentPalette";
-import { fetchGlobalBranding, updateGlobalBranding } from "@/services/appSettings";
+import { fetchGlobalBranding, updateGlobalBranding, fetchUserThemePreferences, updateUserThemePreferences } from "@/services/appSettings";
+import { subscribeToSession } from "@/services/authSession";
 
 interface ThemeContextValue {
   prefs: ThemePrefs;
@@ -203,7 +204,7 @@ function withThemeFade(apply: () => void) {
   window.clearTimeout(themeFadeTimer);
   themeFadeTimer = window.setTimeout(() => {
     root.classList.remove("av-theme-transition");
-  }, 250);
+  }, 190);
 }
 
 function subscribe(onStoreChange: () => void) {
@@ -221,15 +222,6 @@ function subscribe(onStoreChange: () => void) {
 
   /**
    * Follow the OS while `mode` is `system`.
-   *
-   * This listener is back after being removed with the old dark mode, but only
-   * half of what was there: the hour-aligned timer that flipped the theme at
-   * 18:00 is gone for good (see `ModeName` in `themeConfig.ts`). `matchMedia`
-   * is a real external signal about what the user wants; a clock is a guess.
-   *
-   * It re-reads from storage rather than closing over prefs so that it cannot
-   * act on a stale `mode` — and `resolveIsDark` ignores the system value
-   * entirely unless the mode is `system`, so no guard is needed here.
    */
   const media = window.matchMedia(DARK_QUERY);
   const onSystemChange = () => {
@@ -247,10 +239,6 @@ function subscribe(onStoreChange: () => void) {
 
 /**
  * Returns the raw JSON string, not the parsed object.
- *
- * `useSyncExternalStore` compares snapshots with `Object.is` and re-renders
- * whenever they differ. A fresh object every call never equals the last one, so
- * returning parsed prefs here would loop forever. A string settles.
  */
 function getPrefsSnapshot(): string | null {
   return readRaw();
@@ -262,13 +250,6 @@ function getPrefsServerSnapshot(): string | null {
 
 /**
  * A second store, for the OS colour-scheme setting.
- *
- * Separate from the preferences store because it is a separate source of
- * truth, and because the preferences snapshot cannot represent it: that
- * snapshot is the localStorage string, which does not change when the OS flips
- * from light to dark. Subscribing to `matchMedia` inside `subscribe` above is
- * enough to keep the DOM correct, but React would never re-render, so anything
- * rendering *from* the resolved value — the toggle's icon — would go stale.
  */
 function subscribeSystemDark(onChange: () => void) {
   const media = window.matchMedia(DARK_QUERY);
@@ -281,14 +262,41 @@ function getSystemDarkSnapshot(): boolean {
 }
 
 function getSystemDarkServerSnapshot(): boolean {
-  return false; // No `matchMedia` on the server; assume light and re-resolve on the client.
+  return false;
+}
+
+/**
+ * Whether two preference sets are the same.
+ *
+ * Compared field by field rather than by `JSON.stringify`, so the answer does
+ * not depend on key order — `update()` builds its object by spreading a patch
+ * over the current prefs, which is not necessarily the order `normalisePrefs`
+ * produces.
+ */
+function prefsEqual(a: ThemePrefs, b: ThemePrefs): boolean {
+  const keys = Object.keys({ ...a, ...b }) as (keyof ThemePrefs)[];
+  return keys.every((k) => a[k] === b[k]);
 }
 
 function writePrefs(next: ThemePrefs) {
-  // Read before writing: this is the only place both the old and the new
-  // preferences are in hand, and the typography tween is worth running for
-  // exactly the two that change type metrics.
   const prev = parsePrefs(readRaw());
+
+  /**
+   * A write that changes nothing costs as much as one that changes everything,
+   * so it has to be skipped rather than merely tolerated. `applyToDocument`
+   * invalidates styles on `<html>`, and `withThemeFade` puts
+   * `.av-theme-transition` on the root — which this project has measured at
+   * ~630ms of style recalculation on `/spareparts`, because the cross-fade
+   * selector reaches every element on the page.
+   *
+   * The caller that made this matter is the theme sync in `ThemeProvider`: it
+   * runs on every full page load and re-applies whatever the server has
+   * stored, which is almost always exactly what is already on screen. That was
+   * a document-wide recalc plus a global 180ms transition on every load, for a
+   * no-op.
+   */
+  if (prefsEqual(prev, next)) return;
+
   const typographyChanged =
     prev.fontScale !== next.fontScale || prev.density !== next.density;
 
@@ -309,25 +317,27 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
 
   const prefs = useMemo(() => parsePrefs(raw), [raw]);
 
+  const syncTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
   const update = useCallback((patch: Partial<ThemePrefs>) => {
-    writePrefs({ ...parsePrefs(readRaw()), ...patch });
-    // Sync branding properties to SQL Server database for global user propagation
-    if (patch.accentColor !== undefined || patch.logoScale !== undefined || patch.surfaceStyle !== undefined) {
-      updateGlobalBranding({
-        accentColor: patch.accentColor,
-        logoScale: patch.logoScale,
-        surfaceStyle: patch.surfaceStyle,
-      }).catch(() => {});
-    }
+    const current = parsePrefs(readRaw());
+    const next = { ...current, ...patch };
+    writePrefs(next);
+
+    // Sync individual user's theme preferences to SQL Server with 300ms debounce
+    if (syncTimerRef.current) clearTimeout(syncTimerRef.current);
+    syncTimerRef.current = setTimeout(() => {
+      updateUserThemePreferences(JSON.stringify(next)).catch(() => {});
+      if (patch.logoScale !== undefined) {
+        updateGlobalBranding({ logoScale: patch.logoScale }).catch(() => {});
+      }
+    }, 300);
   }, []);
 
   const reset = useCallback(() => {
+    if (syncTimerRef.current) clearTimeout(syncTimerRef.current);
     writePrefs(DEFAULT_PREFS);
-    updateGlobalBranding({
-      accentColor: null,
-      logoScale: 130,
-      surfaceStyle: "cushion",
-    }).catch(() => {});
+    updateUserThemePreferences(JSON.stringify(DEFAULT_PREFS)).catch(() => {});
   }, []);
 
   const sysDark = useSyncExternalStore(
@@ -347,30 +357,53 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
     applyToDocument(prefs);
   }, [prefs]);
 
-  // Sync with global server-wide branding on initial mount
+  // Cleanup pending sync timer on unmount
   React.useEffect(() => {
+    return () => {
+      if (syncTimerRef.current) clearTimeout(syncTimerRef.current);
+    };
+  }, []);
+
+  // Sync with authenticated user's personal theme and global company branding.
+  // Runs on mount AND whenever the session changes: this provider sits in the
+  // root layout above AuthGuard, so it mounts once per full page load — before
+  // the fix, a user signing in via the soft `router.push("/")` never got their
+  // saved theme until a manual reload, because the mount-time fetch had already
+  // run (and been skipped) while signed out.
+  React.useEffect(() => {
+    let inFlight = false;
+    let lastFetched = 0;
+
+    const syncUserTheme = () => {
+      const now = Date.now();
+      if (inFlight || now - lastFetched < 2000) return;
+      inFlight = true;
+      lastFetched = now;
+
+      fetchUserThemePreferences()
+        .then((userThemeJson) => {
+          if (userThemeJson) {
+            try {
+              const userSavedPrefs = parsePrefs(userThemeJson);
+              writePrefs(userSavedPrefs);
+            } catch {}
+          }
+        })
+        .catch(() => {})
+        .finally(() => {
+          inFlight = false;
+        });
+    };
+
+    syncUserTheme();
+    // Signed-out mounts no-op above (the service guards on the token), then
+    // this re-runs the moment login stores one. Logout also fires it; the
+    // guard turns that into a no-op rather than a 401.
+    const unsubscribe = subscribeToSession(syncUserTheme);
+
+    // Fetch global company logo branding
     fetchGlobalBranding().then((globalBranding) => {
       if (!globalBranding) return;
-      const current = parsePrefs(readRaw());
-      let changed = false;
-      const next = { ...current };
-
-      if (globalBranding.accentColor !== undefined && globalBranding.accentColor !== current.accentColor) {
-        next.accentColor = globalBranding.accentColor;
-        changed = true;
-      }
-      if (globalBranding.logoScale && globalBranding.logoScale !== current.logoScale) {
-        next.logoScale = globalBranding.logoScale;
-        changed = true;
-      }
-      if (globalBranding.surfaceStyle && globalBranding.surfaceStyle !== current.surfaceStyle) {
-        next.surfaceStyle = globalBranding.surfaceStyle as any;
-        changed = true;
-      }
-      if (changed) {
-        writePrefs(next);
-      }
-
       if (globalBranding.logoUrl) {
         const storedLogo = localStorage.getItem("system_brand_logo");
         if (storedLogo !== globalBranding.logoUrl) {
@@ -379,6 +412,8 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
         }
       }
     }).catch(() => {});
+
+    return unsubscribe;
   }, []);
 
   return <ThemeContext.Provider value={value}>{children}</ThemeContext.Provider>;

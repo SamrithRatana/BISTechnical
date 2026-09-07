@@ -1,4 +1,4 @@
-﻿#nullable enable
+#nullable enable
 namespace TechnicalService.API.Apis;
 
 // Pagination models
@@ -16,6 +16,10 @@ public record PagedResult<T>
     public int TotalHoldJobs { get; set; }   // ← ADD
     public int TotalServiceUsedQuantity { get; set; }  // ← ADD
     public int TotalManualUsedQuantity { get; set; }   // ← ADD
+    public int GoodCount { get; set; }
+    public int CriticalCount { get; set; }
+    public int OutOfStockCount { get; set; }
+    public int TotalAll { get; set; }
     public bool HasPreviousPage => PageNumber > 1;
     public bool HasNextPage => PageNumber < TotalPages;
     public PagedResult(IEnumerable<T> items, int count, int pageNumber, int pageSize)
@@ -43,13 +47,22 @@ public record ItemSearchQuery(
     string? SortBy = "ItemName", // ItemName, SerialNumber, ItemType
     bool SortDescending = false);
 
+/// <summary>
+/// Spare-part list / search parameters. <c>CategoryId</c> / <c>TypeId</c> /
+/// <c>BrandId</c> narrow to one classification each and are also part of the
+/// output-cache key (see <c>Extensions.SparepartsCachePolicy</c>).
+/// </summary>
 public record SparepartSearchQuery(
     int PageNumber = 1,
     int PageSize = 10,
     string? SearchTerm = null,
     Guid? LinkItemId = null,
     string? SortBy = "ItemName",
-    bool SortDescending = false);
+    bool SortDescending = false,
+    string? StockBand = null,
+    Guid? CategoryId = null,
+    Guid? TypeId = null,
+    Guid? BrandId = null);
 public record CompanyStatusSummary
 {
     public string CompanyName { get; init; } = "";
@@ -83,19 +96,24 @@ public record DashboardStats
 }
 
 /// <summary>
-/// The four columns a chart needs off a ticket.
+/// Lightweight ticket projection for dashboard widgets (charts, kanban pipeline, urgent queue).
+/// Includes identity, dates, status, customer and machine summary while omitting heavy SparepartItems.
 /// </summary>
-/// <remarks>
-/// A distinct type rather than a sparsely-filled <c>Service</c>, because a DTO
-/// carries its key names onto the wire whether or not the values are set:
-/// returning a Service with 37 of its 40 properties null still measured 379 KB
-/// for 400 rows, against 757 KB for the full row. The names were the payload.
-/// </remarks>
 public record ServiceSummary(
     Guid Id,
     DateTime ServiceDate,
     DateTime? FinishedDate,
-    string Status
+    string Status,
+    string? ReportNo = null,
+    string? CompanyName = null,
+    string? ItemName = null,
+    string? SerialNumber = null,
+    string? ServicePriority = null,
+    string? ServiceType = null,
+    Guid? CreateBy = null,
+    Guid? InspectBy = null,
+    Guid? RepairBy = null,
+    Guid? VerifiedBy = null
 );
 
 public record ServiceSearchQuery(

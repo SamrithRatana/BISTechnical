@@ -17,11 +17,11 @@ import { broadcast, type RealtimeResource } from "@/services/eventBus";
 import { beginWrite, recordRequest } from "@/services/activityTracker";
 
 const TECHNICAL_API_BASE =
-  process.env.NEXT_PUBLIC_TECHNICAL_API_URL || "http://localhost:8000";
+  process.env.NEXT_PUBLIC_TECHNICAL_API_URL || "https://technicalservicesapi.camprotec.com.kh";
 const CUSTOMER_API_BASE =
   process.env.NEXT_PUBLIC_CUSTOMER_API_URL || "https://customerapi.camprotec.com.kh";
 const JWT_API_BASE =
-  process.env.NEXT_PUBLIC_JWT_API_URL || "http://localhost:8087";
+  process.env.NEXT_PUBLIC_JWT_API_URL || "https://user.camprotec.com.kh";
 const API_VERSION = process.env.NEXT_PUBLIC_API_VERSION || "1.0";
 
 /**
@@ -87,18 +87,18 @@ function getTargetUrl(req: NextRequest, pathString: string): string {
  */
 function inferStatusFromPath(pathString: string): string | undefined {
   const p = pathString.toLowerCase();
-  if (p.includes("inspecting"))           return "Inspecting";
-  if (p.includes("inspectitem"))          return "Inspection";
-  if (p.includes("repairitem") || p.includes("repairservice")) return "Repairing";
-  if (p.includes("finishedrepair"))       return "Finished";
-  if (p.includes("awaitingcustomer"))     return "Awaiting Customer Confirm";
-  if (p.includes("customerrejected"))     return "Customer Rejected";
-  if (p.includes("awaitingsparepart"))    return "Awaiting Sparepart";
-  if (p.includes("saleconfirmed"))        return "Sale Confirmed";
-  if (p.includes("sentspareparts"))       return "Sent Spareparts";
-  if (p.includes("unrepairable"))         return "Unrepairable";
-  if (p.includes("thirdpartyrepair"))     return "Repair by Third-Party";
-  if (p.includes("receiveitem"))          return "Received";
+  if (p.includes("inspecting") || p.includes("setinspecting")) return "Inspecting";
+  if (p.includes("inspectitem"))                              return "Inspection";
+  if (p.includes("repairitem") || p.includes("repairservice") || p.includes("setrepair") || p.includes("repairing")) return "Repairing";
+  if (p.includes("finishedrepair") || p.includes("setfinished")) return "Finished";
+  if (p.includes("awaitingcustomer") || p.includes("setawaitingcustomer")) return "Awaiting Customer Confirm";
+  if (p.includes("customerrejected") || p.includes("setcustomerrejected")) return "Customer Rejected";
+  if (p.includes("awaitingsparepart") || p.includes("setawaitingsparepart")) return "Awaiting Sparepart";
+  if (p.includes("saleconfirmed") || p.includes("setsaleconfirmed")) return "Sale Confirmed";
+  if (p.includes("sentspareparts") || p.includes("setsentspareparts")) return "Sent Spareparts";
+  if (p.includes("unrepairable") || p.includes("setunrepairable")) return "Unrepairable";
+  if (p.includes("thirdpartyrepair") || p.includes("setthirdpartyrepair")) return "Repair by Third-Party";
+  if (p.includes("receiveitem"))                              return "Received";
   return undefined;
 }
 
@@ -112,9 +112,19 @@ function inferStatusFromPath(pathString: string): string | undefined {
  * successful status match wins before any path-prefix check runs.
  */
 function inferResourceFromPath(pathString: string): RealtimeResource {
-  if (inferStatusFromPath(pathString)) return "ticket";
-
   const p = pathString.toLowerCase();
+  // Interconnected mutations that affect both tickets and spare parts
+  if (
+    p.includes("sentspareparts") ||
+    p.includes("inspectitem") ||
+    p.includes("awaitingsparepart") ||
+    p.includes("spareparts/manual-stockout") ||
+    p.includes("spareparts/items")
+  ) {
+    return "all";
+  }
+
+  if (inferStatusFromPath(pathString)) return "ticket";
   if (p.startsWith("spareparts")) return "sparepart";
   if (p.startsWith("items"))      return "item";
   if (p.startsWith("customer"))   return "customer";
@@ -257,7 +267,7 @@ export async function POST(
       });
     }
 
-    return NextResponse.json(data, { status: res.status });
+    return relay(res, data);
   } catch (error: unknown) {
     const msg = error instanceof Error ? error.message : "Unknown error";
     console.error("❌ Proxy POST Error:", msg);
@@ -265,6 +275,23 @@ export async function POST(
   } finally {
     endWrite?.();
   }
+}
+
+/**
+ * Relays an upstream mutation response to the browser.
+ *
+ * `NextResponse.json(data, { status })` is `Response.json`, and the Fetch spec
+ * forbids a body on 204 / 205 — the constructor throws
+ * `Invalid response status code 204`, which landed in each handler's `catch`
+ * and came back as a **500** for a write the backend had already committed
+ * and broadcast. Nothing hit this until 2026-09-05: the spare-part taxonomy
+ * endpoints are the API's first `NoContent` responses.
+ */
+function relay(res: Response, data: unknown): NextResponse {
+  if (res.status === 204 || res.status === 205) {
+    return new NextResponse(null, { status: res.status });
+  }
+  return NextResponse.json(data, { status: res.status });
 }
 
 // ---------------------------------------------------------------------------
@@ -315,7 +342,7 @@ export async function PUT(
       });
     }
 
-    return NextResponse.json(data, { status: res.status });
+    return relay(res, data);
   } catch (error: unknown) {
     const msg = error instanceof Error ? error.message : "Unknown error";
     console.error("❌ Proxy PUT Error:", msg);
@@ -369,7 +396,7 @@ export async function DELETE(
       });
     }
 
-    return NextResponse.json(data, { status: res.status });
+    return relay(res, data);
   } catch (error: unknown) {
     const msg = error instanceof Error ? error.message : "Unknown error";
     console.error("❌ Proxy DELETE Error:", msg);

@@ -16,7 +16,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { Workbook } from "exceljs";
 import toast from "react-hot-toast";
-import * as Sentry from "@sentry/nextjs";
 import { Download, Printer, Loader2 } from "lucide-react";
 import ExcelViewer from "@/components/ExcelViewer";
 import { ErrorState } from "@/components/av";
@@ -26,6 +25,7 @@ import ReportFilterBar, {
   type ReportFilterValues,
 } from "@/components/ReportFilterBar";
 import { useDebouncedValue } from "@/hooks/useDebouncedValue";
+import { useRealtimeTickets } from "@/hooks/useRealtimeTickets";
 import { useI18n } from "@/i18n/LanguageProvider";
 import { fillTemplate, downloadWorkbook, type TemplateGroup } from "@/services/excelTemplate";
 
@@ -49,6 +49,8 @@ export interface ReportData {
   groups: TemplateGroup[];
   /** Optional breakdown line under the grand total. */
   summary?: string;
+  /** Optional custom totals or column sums */
+  columnTotals?: Record<string, number | string>;
 }
 
 interface TemplateReportViewProps {
@@ -123,6 +125,12 @@ export default function TemplateReportView({
    */
   const [retryToken, setRetryToken] = useState(0);
 
+  const handleRealtimeUpdate = useCallback(() => {
+    setRetryToken((prev) => prev + 1);
+  }, []);
+
+  useRealtimeTickets("All", handleRealtimeUpdate);
+
   /**
    * Which request the displayed workbook belongs to.
    *
@@ -147,7 +155,7 @@ export default function TemplateReportView({
       setLoading(true);
       setFailed(false);
       try {
-        const { groups, summary } = await load(from, to, active);
+        const { groups, summary, columnTotals } = await load(from, to, active);
         const filled = await fillTemplate({
           templateUrl: `/templates/${template}.xlsx`,
           title,
@@ -156,6 +164,7 @@ export default function TemplateReportView({
           labels: { subtotal: t("report.total"), grandTotal: t("report.grandTotal") },
           summary,
           format,
+          columnTotals,
         });
         // Superseded while we were building: drop it silently. The newer
         // request owns the screen, including its own loading state.
@@ -165,18 +174,18 @@ export default function TemplateReportView({
         if (requestId !== latestRequest.current) return;
         setWorkbook(null);
         setFailed(true);
-        // Through the existing Sentry setup rather than a console line: this
-        // is the one place a report failure is observable, and until now it
-        // was swallowed into a toast that nobody sees after five seconds.
-        // Tagged with the template so a single broken report is separable
-        // from the backend being down for all eight.
-        Sentry.captureException(err, {
-          tags: { area: "report", template },
-          extra: {
-            from: from.toISOString(),
-            to: to.toISOString(),
-            statuses: active.statuses,
-          },
+        // Logged with the template and the window that failed, because a toast
+        // nobody sees after five seconds is the only other trace this leaves.
+        // Keeping the template distinguishes one broken report from the backend
+        // being down for all eight. (This used to go to Sentry; the SDK was
+        // removed — see the note in `app/global-error.tsx`.)
+        console.error("Report load failed", {
+          area: "report",
+          template,
+          from: from.toISOString(),
+          to: to.toISOString(),
+          statuses: active.statuses,
+          error: err,
         });
         toast.error(t("report.loadFailed"));
       } finally {

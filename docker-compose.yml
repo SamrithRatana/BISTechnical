@@ -1,123 +1,201 @@
 version: '3.8'
 
+# ==============================================================================
+# CAMPROTEC SERVICE MAINTENANCE SYSTEM - PRODUCTION DOCKER COMPOSE
+# Optimized for DigitalOcean Droplets / App Platform / VPS
+# ==============================================================================
+
 services:
 
-  # ════════════════════════════════════════════════════════
-  # INFRASTRUCTURE — RabbitMQ runs as a MANAGED service on
-  # CloudAMQP (armadillo.rmq.cloudamqp.com). Redis runs as a
-  # MANAGED Upstash instance (not in-container) — both survive
-  # restarts/redeploys independently.
-  # ════════════════════════════════════════════════════════
+  # ────────────────────────────────────────────────────────────
+  # 1. FRONTEND: Next.js 16 Production Web Application (UI)
+  # ────────────────────────────────────────────────────────────
+  web-frontend:
+    build:
+      context: ./TestingReact
+      dockerfile: Dockerfile
+    container_name: servicemaintenance-web
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      - NODE_ENV=production
+      - NEXT_TELEMETRY_DISABLED=1
+      - PORT=3000
+      - HOSTNAME=0.0.0.0
+      - NEXT_PUBLIC_TECHNICAL_API_URL=http://technical-api:8000
+      - NEXT_PUBLIC_JWT_API_URL=http://user-auth-api:8087
+      - NEXT_PUBLIC_CUSTOMER_API_URL=http://employee-api:8081
+    depends_on:
+      - technical-api
+      - user-auth-api
+    networks:
+      - app-network
+    develop:
+      watch:
+        - action: rebuild
+          path: ./TestingReact
+          ignore:
+            - node_modules/
+            - .next/
+            - .git/
 
-  # ════════════════════════════════════════════════════════
-  # APPLICATION
-  # ════════════════════════════════════════════════════════
-
-  servicemaintenance:
+  # ────────────────────────────────────────────────────────────
+  # 2. BACKEND: TechnicalService.API (Core Repairs & Maintenance)
+  # ────────────────────────────────────────────────────────────
+  technical-api:
     build:
       context: .
       dockerfile: Dockerfile
-    container_name: servicemaintenance-app
+      target: technicalserviceapi
+    container_name: technicalservice-api
+    restart: unless-stopped
     ports:
-      - "8085:8085"   # ServiceMaintenance (Blazor)
-      - "8087:8087"   # UserManagementAPI
-      - "8081:8081"   # EmployeeManagement.Api
-      - "5000:5000"   # TechnicalService.API
+      - "8000:8000"
     environment:
-      - ASPNETCORE_ENVIRONMENT=Development
+      - ASPNETCORE_ENVIRONMENT=Production
+      - ASPNETCORE_HTTP_PORTS=8000
       - DOTNET_SYSTEM_GLOBALIZATION_INVARIANT=false
       - TZ=Asia/Phnom_Penh
+      - ConnectionStrings__TechnicalServiceConnectionString=Server=${DB_SERVER};Database=${DB_TECHNICAL_NAME:-TechnicalServiceDB};User Id=${DB_USER};Password=${DB_PASSWORD};TrustServerCertificate=True;MultipleActiveResultSets=true;Max Pool Size=100;Min Pool Size=10;
+      - Jwt__Enabled=false
+    volumes:
+      - technical-logs:/app/logs
+      - spareparts:/app/wwwroot/images/spareparts
+    networks:
+      - app-network
+    healthcheck:
+      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:8000/health/live || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+    develop:
+      watch:
+        - action: rebuild
+          path: ./src/APIs/TechnicalService.API
+          ignore:
+            - bin/
+            - obj/
+        - action: rebuild
+          path: ./src/Core/TechnicalService.Domain
+          ignore:
+            - bin/
+            - obj/
+        - action: rebuild
+          path: ./src/Shared/TechnicalService.Infrastructure
+          ignore:
+            - bin/
+            - obj/
+        - action: rebuild
+          path: ./src/Shared/ServiceMaintenance.Infrastructure.Shared
+          ignore:
+            - bin/
+            - obj/
 
-      # ── JWT ──────────────────────────────────────────────
-      - JWT__Secret=${JWT_KEY}
-      - JWT__ValidIssuer=https://user.koompi.cloud
-      - JWT__ValidAudience=https://technicalsystemservices.koompi.cloud
+  # ────────────────────────────────────────────────────────────
+  # 3. BACKEND: UserManagementAPI (Auth, Passkeys, Face 2FA, SignalR)
+  # ────────────────────────────────────────────────────────────
+  user-auth-api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: usermanagementapi
+    container_name: usermanagement-api
+    restart: unless-stopped
+    ports:
+      - "8087:8087"
+    environment:
+      - ASPNETCORE_ENVIRONMENT=Production
+      - ASPNETCORE_HTTP_PORTS=8087
+      - DOTNET_SYSTEM_GLOBALIZATION_INVARIANT=false
+      - TZ=Asia/Phnom_Penh
+      - JWT__Secret=${JWT_SECRET:-${JWT_KEY}}
+      - JWT__ValidIssuer=${JWT_ISSUER:-https://user.camprotec.com.kh}
+      - JWT__ValidAudience=${JWT_AUDIENCE:-https://technicalsystem.camprotec.com.kh}
       - JWT__TokenValidityInHours=8
       - JWT__RefreshTokenValidityInDays=30
-
-      # ── JWT API helper (kept for backward-compat) ────────
-      - Jwt__Key=${JWT_KEY}
-      - Jwt__Issuer=ServiceMaintenance
-      - Jwt__Audience=ServiceMaintenance
-      - JwtApi__BaseUrl=https://user.koompi.cloud
-
-      # ── Database ─────────────────────────────────────────
-      - ConnectionStrings__UserManagementConnection=Server=${DB_SERVER};Database=EngineerUserDB;User Id=${DB_USER};Password=${DB_PASSWORD};TrustServerCertificate=True;MultipleActiveResultSets=true;Max Pool Size=100;Min Pool Size=10;
-      - ConnectionStrings__DBConnection=Server=${DB_SERVER};Database=EmployeeDB;User Id=${DB_USER};Password=${DB_PASSWORD};TrustServerCertificate=True;MultipleActiveResultSets=true;Max Pool Size=50;Min Pool Size=5;
-
-      # ── Redis (managed Upstash instance) ─────────────────
-      - Redis__ConnectionString=${UPSTASH_REDIS_ENDPOINT}:6379,password=${UPSTASH_REDIS_PASSWORD},ssl=True,abortConnect=False
-
-      # ── RabbitMQ (managed broker on CloudAMQP) ───────────
-      - RabbitMQ__Host=${RABBITMQ_HOST}
-      - RabbitMQ__Port=${RABBITMQ_PORT}
-      - RabbitMQ__Username=${RABBITMQ_USERNAME}
-      - RabbitMQ__Password=${RABBITMQ_PASSWORD}
-      - RabbitMQ__VirtualHost=${RABBITMQ_VHOST}
-      - RabbitMQ__UseSsl=true
-
-      # ── Email ─────────────────────────────────────────────
+      - ConnectionStrings__UserManagementConnection=Server=${DB_SERVER};Database=${DB_USER_NAME:-EngineerUserDB};User Id=${DB_USER};Password=${DB_PASSWORD};TrustServerCertificate=True;MultipleActiveResultSets=true;Max Pool Size=100;Min Pool Size=10;
       - AuthMessageSenderOptions__SmtpServer=smtp.gmail.com
       - AuthMessageSenderOptions__SmtpUsername=${SMTP_USERNAME}
       - AuthMessageSenderOptions__SmtpPassword=${SMTP_PASSWORD}
       - AuthMessageSenderOptions__SmtpFromEmail=${SMTP_USERNAME}
-
-      # ── Kestrel ───────────────────────────────────────────
-      - Kestrel__Limits__MaxRequestBodySize=5368709120
-
+      - WebAuthn__ServerDomain=${WEBAUTHN_DOMAIN:-camprotec.com.kh}
+      - WebAuthn__ServerName=Camprotec Service Maintenance
     volumes:
-      - dataprotection-keys:/app/servicemaintenance/dataprotection-keys
-      - api-dataprotection-keys:/app/usermanagementapi/dataprotection-keys
-      - uploads:/app/servicemaintenance/wwwroot/uploads
-      - spareparts:/app/servicemaintenance/wwwroot/images/spareparts
-      - api-uploads:/app/usermanagementapi/wwwroot/uploads
-      - logs:/app/servicemaintenance/logs
-      - api-logs:/app/usermanagementapi/logs
-      - employee-logs:/app/employeemanagementapi/logs
-      - technical-logs:/app/technicalserviceapi/logs
-
+      - user-dataprotection-keys:/app/dataprotection-keys
+      - user-uploads:/app/wwwroot/uploads
+      - user-logs:/app/logs
     networks:
-      - servicemaintenance-network
-
-    # RabbitMQ and Redis are both external/managed now —
-    # nothing local to wait on before starting the app.
-    restart: unless-stopped
-
+      - app-network
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8085/health", "||", "curl", "-f", "http://localhost:8085"]
+      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:8087/health/live || exit 1"]
       interval: 30s
-      timeout: 10s
+      timeout: 5s
       retries: 3
-      start_period: 90s   # Blazor apps take longer to start
+      start_period: 20s
+    develop:
+      watch:
+        - action: rebuild
+          path: ./src/APIs/UserManagementAPI
+          ignore:
+            - bin/
+            - obj/
+        - action: rebuild
+          path: ./src/Shared/ServiceMaintenance.Infrastructure.Shared
+          ignore:
+            - bin/
+            - obj/
 
-# ════════════════════════════════════════════════════════
-# VOLUMES (Redis volume removed — Upstash is managed externally)
-# ════════════════════════════════════════════════════════
+  # ────────────────────────────────────────────────────────────
+  # 4. BACKEND: EmployeeManagement.Api (Staff & Customer Registry)
+  # ────────────────────────────────────────────────────────────
+  employee-api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: employeemanagementapi
+    container_name: employeemanagement-api
+    restart: unless-stopped
+    ports:
+      - "8081:8081"
+    environment:
+      - ASPNETCORE_ENVIRONMENT=Production
+      - ASPNETCORE_HTTP_PORTS=8081
+      - DOTNET_SYSTEM_GLOBALIZATION_INVARIANT=false
+      - TZ=Asia/Phnom_Penh
+      - ConnectionStrings__DBConnection=Server=${DB_SERVER};Database=${DB_EMPLOYEE_NAME:-EmployeeDB};User Id=${DB_USER};Password=${DB_PASSWORD};TrustServerCertificate=True;MultipleActiveResultSets=true;Max Pool Size=50;Min Pool Size=5;
+    volumes:
+      - employee-logs:/app/logs
+    networks:
+      - app-network
+    healthcheck:
+      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:8081/health || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
 
+# ==============================================================================
+# PERSISTENT VOLUMES
+# ==============================================================================
 volumes:
-  dataprotection-keys:
+  user-dataprotection-keys:
     driver: local
-  api-dataprotection-keys:
-    driver: local
-  uploads:
+  user-uploads:
     driver: local
   spareparts:
     driver: local
-  api-uploads:
+  technical-logs:
     driver: local
-  logs:
-    driver: local
-  api-logs:
+  user-logs:
     driver: local
   employee-logs:
     driver: local
-  technical-logs:
-    driver: local
 
-# ════════════════════════════════════════════════════════
-# NETWORKS
-# ════════════════════════════════════════════════════════
-
+# ==============================================================================
+# INTERNAL NETWORKS
+# ==============================================================================
 networks:
-  servicemaintenance-network:
+  app-network:
     driver: bridge

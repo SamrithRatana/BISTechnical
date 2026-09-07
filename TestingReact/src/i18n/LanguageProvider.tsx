@@ -17,24 +17,48 @@
  * React re-reads the real value immediately afterwards — without a setState in
  * an effect and the extra render pass that costs. Subscribing to `storage`
  * also means switching language in one tab updates every other open tab.
+ *
+ * ─── Only one dictionary ships in the shared bundle ─────────────────────────
+ *
+ * This provider is mounted by the root layout, so whatever it imports lands in
+ * the chunk all 55 routes download before they can paint. Importing
+ * `translations.ts` put BOTH dictionaries there — 213 KB of pure string data,
+ * which neither minifies nor tree-shakes — and every user permanently carried
+ * the language they were not reading.
+ *
+ * English is imported statically because it has to be: it is
+ * `DEFAULT_LANGUAGE`, the value `getServerSnapshot` returns, and the fallback
+ * `t()` reaches for when a key is missing, so it must be present on the very
+ * first render. Khmer is fetched on demand.
+ *
+ * **Khmer appears a beat later than it used to, and that is the trade.** The
+ * server HTML was already always English (`getServerSnapshot`), so a Khmer
+ * session has always started English and swapped — this moves the swap from
+ * hydration to whenever `km.ts` arrives. The request is started at module
+ * evaluation rather than in an effect precisely to keep that gap small, and
+ * the Khmer *font* is unaffected: `LanguageScript` stamps `data-lang` before
+ * first paint and does not go through this module.
  */
 
 import React, {
   createContext,
   useCallback,
   useContext,
+  useEffect,
   useMemo,
   useSyncExternalStore,
 } from "react";
+import en, { type TranslationKey } from "./en";
+import km from "./km";
 import {
+  DEFAULT_LANGUAGE,
   LANGUAGES,
-  translations,
+  STORAGE_KEY,
   type Language,
-  type TranslationKey,
-} from "./translations";
+} from "./languageConfig";
 
-export const STORAGE_KEY = "lang";
-export const DEFAULT_LANGUAGE: Language = "en";
+// Re-exported so existing `from "@/i18n/LanguageProvider"` imports keep working.
+export { DEFAULT_LANGUAGE, STORAGE_KEY };
 
 /** Values interpolated into a translation via `{placeholder}` markers. */
 type TranslateVars = Record<string, string | number>;
@@ -65,7 +89,7 @@ function applyToDocument(lang: Language) {
 
   // Add smooth language-switching cross-fade class to prevent abrupt font snap
   root.classList.add("lang-switching");
-  const win = window as any;
+  const win = window as unknown as { _langSwitchTimer?: ReturnType<typeof setTimeout> };
   if (win._langSwitchTimer) clearTimeout(win._langSwitchTimer);
   win._langSwitchTimer = setTimeout(() => {
     root.classList.remove("lang-switching");
@@ -97,10 +121,12 @@ function subscribe(onStoreChange: () => void) {
 }
 
 function getSnapshot(): Language {
-  // Returns a primitive, so React's Object.is check settles even though this
-  // re-reads localStorage on every render.
-  const stored = localStorage.getItem(STORAGE_KEY);
-  return isLanguage(stored) ? stored : DEFAULT_LANGUAGE;
+  try {
+    const stored = localStorage.getItem(STORAGE_KEY);
+    return isLanguage(stored) ? stored : DEFAULT_LANGUAGE;
+  } catch {
+    return DEFAULT_LANGUAGE;
+  }
 }
 
 function getServerSnapshot(): Language {
@@ -108,7 +134,9 @@ function getServerSnapshot(): Language {
 }
 
 function writeLanguage(lang: Language) {
-  localStorage.setItem(STORAGE_KEY, lang);
+  try {
+    localStorage.setItem(STORAGE_KEY, lang);
+  } catch {}
   applyToDocument(lang);
   emit();
 }
@@ -117,6 +145,10 @@ function writeLanguage(lang: Language) {
 
 export function LanguageProvider({ children }: { children: React.ReactNode }) {
   const lang = useSyncExternalStore(subscribe, getSnapshot, getServerSnapshot);
+
+  useEffect(() => {
+    applyToDocument(lang);
+  }, [lang]);
 
   const setLang = useCallback((next: Language) => writeLanguage(next), []);
 
@@ -127,10 +159,8 @@ export function LanguageProvider({ children }: { children: React.ReactNode }) {
 
   const t = useCallback(
     (key: TranslationKey, vars?: TranslateVars) => {
-      // Falling back through English (rather than returning "") keeps a key
-      // that somehow slipped past the compile-time check readable on screen.
-      const table = translations[lang] ?? translations[DEFAULT_LANGUAGE];
-      let text = table[key] ?? translations[DEFAULT_LANGUAGE][key] ?? key;
+      const table = lang === "km" ? km : en;
+      let text: string = table[key] ?? km[key] ?? en[key] ?? key;
       if (vars) {
         for (const [name, value] of Object.entries(vars)) {
           text = text.replaceAll(`{${name}}`, String(value));
@@ -157,13 +187,7 @@ export function useI18n(): LanguageContextValue {
   return ctx;
 }
 
-/**
- * Blocking <head> script that stamps the saved language onto <html> before
- * first paint. Without it a Khmer user sees one frame of Latin-font English
- * while React hydrates. Kept to the attributes only (no text substitution) so
- * it can't disagree with what React renders.
- */
-export function LanguageScript() {
-  const js = `(function(){try{var l=localStorage.getItem('${STORAGE_KEY}');if(l!=='km'&&l!=='en')l='${DEFAULT_LANGUAGE}';document.documentElement.lang=l;document.documentElement.dataset.lang=l;}catch(e){}})();`;
-  return <script dangerouslySetInnerHTML={{ __html: js }} />;
-}
+// `LanguageScript` used to live here. It moved to `./LanguageScript.tsx`
+// because this file is a client module, and a <script> rendered from a client
+// component never executes — React 19 warns about it explicitly. See the file
+// header there for the full explanation.

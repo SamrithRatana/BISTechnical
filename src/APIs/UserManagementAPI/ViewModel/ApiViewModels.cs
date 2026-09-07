@@ -43,6 +43,10 @@ namespace UserManagementAPI.ViewModel
         public string PhoneNumber { get; set; }
         [MaxLength(500)]
         public string ProfilePictureUrl { get; set; }
+
+        /// <summary>Optional: null leaves the stored cover unchanged, "" clears it.</summary>
+        [MaxLength(500)]
+        public string CoverUrl { get; set; }
     }
 
 

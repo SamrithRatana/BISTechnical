@@ -23,6 +23,21 @@ internal static class Extensions
     /// <summary>Output-cache policy for the dashboard stat tiles.</summary>
     public const string DashboardCachePolicy = "dashboard";
 
+    /// <summary>Output-cache policy for spareparts listing and search.</summary>
+    public const string SparepartsCachePolicy = "spareparts";
+
+    /// <summary>Output-cache policy for the spare-part Category / Type / Brand lists.</summary>
+    public const string SparepartTaxonomyCachePolicy = "sparepart-taxonomy";
+
+    /// <summary>
+    /// Eviction tags. Kept distinct from the policy names above even though
+    /// the strings coincide: a policy is what a GET is cached under, a tag is
+    /// what a write evicts, and only the tag is what <c>EvictByTagAsync</c>
+    /// understands.
+    /// </summary>
+    public const string SparepartsCacheTag = "spareparts";
+    public const string SparepartTaxonomyCacheTag = "sparepart-taxonomy";
+
     public static void AddApplicationServices(this IHostApplicationBuilder builder)
     {
         var services = builder.Services;
@@ -55,6 +70,8 @@ internal static class Extensions
         services.AddScoped<ITechnicalServiceQueries, TechnicalServiceQueries>();
         services.AddScoped<ITechnicalServiceRepository, TechnicalServiceRepository>();
         services.AddScoped<IRentalServiceRepository, RentalServiceRepository>();
+        services.AddScoped<ISparepartTaxonomyRepository, SparepartTaxonomyRepository>();
+        services.AddScoped<ISparepartTaxonomyQueries, SparepartTaxonomyQueries>();
 
         services.AddApiSecurity(builder.Configuration);
         services.AddApiPerformance();
@@ -178,6 +195,23 @@ internal static class Extensions
             options.AddPolicy(DashboardCachePolicy, policy => policy
                 .Expire(TimeSpan.FromSeconds(60))
                 .SetVaryByQuery("api-version"));
+
+            // categoryId / typeId / brandId are part of the key from the start:
+            // a filter parameter the cache does not vary on would serve one
+            // category's page to a request for another.
+            options.AddPolicy(SparepartsCachePolicy, policy => policy
+                .Expire(TimeSpan.FromSeconds(60))
+                .SetVaryByQuery("pageNumber", "pageSize", "searchTerm", "stockBand", "linkItemId",
+                                "categoryId", "typeId", "brandId", "sortBy", "sortDescending", "api-version")
+                .Tag(SparepartsCacheTag));
+
+            // Category / Type / Brand lists: small, read on every spare-part
+            // screen, changed rarely — and evicted by tag on every write, so
+            // the expiry is only a backstop.
+            options.AddPolicy(SparepartTaxonomyCachePolicy, policy => policy
+                .Expire(TimeSpan.FromMinutes(5))
+                .SetVaryByQuery("categoryId", "api-version")
+                .Tag(SparepartTaxonomyCacheTag));
         });
     }
 }

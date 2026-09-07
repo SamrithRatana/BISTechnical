@@ -7,9 +7,6 @@ import { TabItem } from "@/components/StatusTabMenu";
 
 const APPROVE_REPAIR_TABS: TabItem[] = [
   { key: "Repairing", labelKey: "tab.allRepairing", color: "cyan" },
-  { key: "Sent Spareparts", labelKey: "transition.sparesSent", color: "purple" },
-  { key: "Inspection", labelKey: "transition.inspectionDone", color: "blue" },
-  { key: "Sale Confirmed", labelKey: "transition.repairable", color: "emerald" },
 ];
 
 export default function ApproveRepairPage() {
@@ -23,6 +20,7 @@ export default function ApproveRepairPage() {
         tabs={APPROVE_REPAIR_TABS}
         onTabChange={setActiveTabKey}
         requireApproval
+        disableStatusDropdown={true}
       />
     </PageWrapper>
   );

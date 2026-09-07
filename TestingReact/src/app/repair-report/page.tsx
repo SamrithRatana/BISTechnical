@@ -71,16 +71,30 @@ export default function RepairSummaryReportPage() {
           return record;
         });
 
+      const monthTotals = new Array<number>(12).fill(0);
+      for (const months of byEngineer.values()) {
+        months.forEach((count, index) => {
+          monthTotals[index] += count;
+        });
+      }
+      const grandTotalJobs = monthTotals.reduce((sum, n) => sum + n, 0);
+
+      const columnTotals: Record<string, number | string> = {};
+      monthTotals.forEach((count, index) => {
+        columnTotals[`total_m${index + 1}`] = count || "";
+      });
+      columnTotals["total"] = grandTotalJobs;
+
       return {
         groups: flat(matrix),
-        summary: t("report.engineerCount", { count: String(matrix.length) }),
+        columnTotals,
       };
     },
     [t]
   );
 
   const subtitle = useCallback(
-    (from: Date) => t("report.yearOf", { year: String(from.getFullYear()) }),
+    (from: Date) => t("report.janThroughDec", { year: String(from.getFullYear()) }),
     [t]
   );
 

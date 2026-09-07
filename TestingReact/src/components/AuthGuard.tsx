@@ -12,7 +12,6 @@ import {
   readToken,
   subscribeToSession,
 } from "@/services/authSession";
-import SessionHandshakePipeline from "./SessionHandshakePipeline";
 import { subscribeSharedStream } from "@/hooks/useRealtimeTickets";
 
 /** The server has no localStorage; it renders the checking state. */
@@ -20,73 +19,17 @@ function readTokenOnServer(): string | null {
   return null;
 }
 
-/** How long a completed verification keeps the workspace "warm". */
-const MAX_DATA_FRESHNESS_MS = 5 * 60 * 1000; // 5 minutes
-
-/**
- * Can this tab render the workspace straight away, or does it need the
- * pre-warm handshake first?
- *
- * Warm means BOTH of:
- *   1. a verification pipeline has already run in THIS tab
- *      (`workspace_pipeline_synced`, sessionStorage). The login screen's own
- *      5-node check stamps it, so a fresh sign-in is warm on arrival and must
- *      never be shown a second handshake;
- *   2. that run was recent (`last_workspace_sync_time` inside the freshness
- *      window). A tab left open for hours holds cold data and is worth
- *      re-warming before it renders.
- *
- * Either signal alone is not enough. The timestamp lives in localStorage, so by
- * itself a brand-new tab looks warm while its sessionStorage cache is empty;
- * the flag by itself never expires, so a long-idle tab would never re-warm.
- *
- * Pure read: this runs during render and must not write.
- */
-function isWorkspaceWarm(): boolean {
-  if (typeof window === "undefined") return true;
-  try {
-    const token = localStorage.getItem("jwt_token");
-    if (!token || isTokenExpired(token)) return false;
-
-    const isSyncedInTab = sessionStorage.getItem("workspace_pipeline_synced") === "true";
-    const lastSync = Number(localStorage.getItem("last_workspace_sync_time"));
-
-    if (isSyncedInTab && Number.isFinite(lastSync) && lastSync > 0) {
-      return Date.now() - lastSync < MAX_DATA_FRESHNESS_MS;
-    }
-    return false;
-  } catch {
-    return false;
-  }
-}
-
 export default function AuthGuard({ children }: { children: React.ReactNode }) {
   const router = useRouter();
   const pathname = usePathname();
   const { t } = useI18n();
 
-  /**
-   * Latch for "the handshake already ran during this mount".
-   *
-   * Warmth itself is recomputed on every render rather than latched at mount:
-   * AuthGuard lives in the root layout, so it stays mounted across the
-   * /login -> / navigation. Reading warmth once at mount froze the "cold"
-   * answer taken while the user was still on the login screen, which is what
-   * put a redundant handshake in front of every fresh sign-in.
-   */
-  const [handshakeRan, setHandshakeRan] = useState(false);
-  const isWarm = isWorkspaceWarm();
+  const [mounted, setMounted] = useState(false);
 
-  /**
-   * The token is read during render rather than in an on-mount effect.
-   * `useSyncExternalStore` resolves it before paint so an authenticated user goes straight to the page.
-   */
+  // Sync token with external storage updates (cross-tab and in-tab)
   const token = useSyncExternalStore(subscribeToSession, readToken, readTokenOnServer);
 
-  // /face-link is the phone half of face pairing. It must be public for the
-  // login flow to work at all: the whole point is that nobody is signed in on
-  // that browser yet. It carries no data of its own - everything it can do is
-  // gated by a pairing session id that expires in five minutes.
+  // Public pages that never require authentication
   const isPublicPage =
     pathname === "/login" ||
     pathname?.startsWith("/scanner") ||
@@ -94,13 +37,17 @@ export default function AuthGuard({ children }: { children: React.ReactNode }) {
     pathname?.startsWith("/download") ||
     pathname?.startsWith("/docs") ||
     pathname?.startsWith("/open-app");
-  const isExpired = token !== null && isTokenExpired(token);
 
+  // Synchronously resolve live token on client to prevent SSR null latch
+  const activeToken = typeof window !== "undefined" ? (token ?? readToken()) : token;
+  const isExpired = activeToken !== null && isTokenExpired(activeToken);
+
+  // Once mounted on client: boolean. During SSR: undefined (or true for public)
   const isAuthenticated = isPublicPage
     ? true
-    : token === null
+    : !mounted
       ? undefined
-      : !isExpired;
+      : activeToken !== null && !isExpired;
 
   /** Wipes the stored session and notifies this tab's subscribers. */
   const endSession = useCallback(() => {
@@ -112,34 +59,33 @@ export default function AuthGuard({ children }: { children: React.ReactNode }) {
     window.dispatchEvent(new Event(SESSION_CHANGED_EVENT));
   }, []);
 
-  /**
-   * Stable identity on purpose: SessionHandshakePipeline lists `onComplete` in
-   * its effect deps, so an inline arrow would restart the whole pipeline (and
-   * arm a second fallback timer) on any re-render while it is on screen.
-   */
-  const handleHandshakeComplete = useCallback(() => {
-    setHandshakeRan(true);
-    if (typeof window !== "undefined") {
-      sessionStorage.setItem("workspace_pipeline_synced", "true");
-      localStorage.setItem("last_workspace_sync_time", Date.now().toString());
-    }
+  // Mount effect to transition from SSR to client immediately
+  useEffect(() => {
+    setMounted(true);
   }, []);
 
-  // Navigation is a real side effect and belongs in an effect
+  // Navigation effect: unauthenticated users redirect to /login immediately
   useEffect(() => {
-    if (isPublicPage) return;
+    if (isPublicPage || !mounted) return;
     if (typeof window === "undefined") return;
 
     const current = readToken();
-    if (current === null) {
+    if (!current || isTokenExpired(current)) {
+      if (current && isTokenExpired(current)) {
+        endSession();
+      }
       router.replace("/login");
-      return;
+
+      // Hard redirect fallback: guarantee navigation within 120ms if router stalls
+      const fallbackTimer = setTimeout(() => {
+        if (window.location.pathname !== "/login" && !window.location.pathname.startsWith("/login")) {
+          window.location.replace("/login");
+        }
+      }, 120);
+
+      return () => clearTimeout(fallbackTimer);
     }
-    if (isTokenExpired(current)) {
-      endSession();
-      router.replace("/login");
-    }
-  }, [isPublicPage, pathname, router, token, endSession]);
+  }, [isPublicPage, mounted, pathname, router, token, endSession]);
 
   useEffect(() => {
     if (isPublicPage || !token || isExpired) return;
@@ -314,15 +260,9 @@ export default function AuthGuard({ children }: { children: React.ReactNode }) {
     );
   }
 
-  // Unauthenticated
+  // Unauthenticated: null while navigation effect redirects to /login
   if (!isAuthenticated) return null;
 
-  // If authenticated but workspace is cold (tab reopened, idle for > 5 min, or cold cache):
-  // Run the 5-node verification and pre-warm pipeline so the dashboard loads with 100% prepared data!
-  if (!isWarm && !handshakeRan) {
-    return <SessionHandshakePipeline onComplete={handleHandshakeComplete} />;
-  }
-
-  // Authenticated & warm: render workspace seamlessly!
+  // Authenticated: render workspace immediately with zero lag
   return <>{children}</>;
 }

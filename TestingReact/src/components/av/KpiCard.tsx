@@ -24,7 +24,7 @@ import { Sparkline } from "./Sparkline";
  */
 
 export interface KpiCardProps {
-  label: string;
+  label: ReactNode;
   value: ReactNode;
   icon?: ReactNode;
   /** Percentage change over the compared window. Sign chooses the arrow. */
@@ -46,6 +46,7 @@ export interface KpiCardProps {
    */
   selected?: boolean;
   className?: string;
+  headerAction?: ReactNode;
 }
 
 export const KpiCard = memo(function KpiCard({
@@ -59,6 +60,7 @@ export const KpiCard = memo(function KpiCard({
   onClick,
   selected = false,
   className,
+  headerAction,
 }: KpiCardProps) {
   const hasTrend = typeof trend === "number" && Number.isFinite(trend);
   const rising = hasTrend && trend! > 0;
@@ -82,10 +84,13 @@ export const KpiCard = memo(function KpiCard({
       )}
     >
       <div className="flex items-start justify-between gap-2.5">
-        <div className="min-w-0">
-          <span className="block text-[10px] lg:text-[10px] xl:text-[11px] font-medium uppercase tracking-wider text-ink-muted truncate">
-            {label}
-          </span>
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center gap-1.5 min-w-0">
+            <span className="block text-[10px] lg:text-[10px] xl:text-[11px] font-medium uppercase tracking-wider text-ink-muted truncate">
+              {label}
+            </span>
+            {headerAction}
+          </div>
           <span className="mt-0.5 lg:mt-0.5 xl:mt-1 block text-xl sm:text-2xl lg:text-xl xl:text-[26px] font-bold tracking-tight text-ink tabular-nums">
             {value}
           </span>

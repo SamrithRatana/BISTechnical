@@ -79,15 +79,19 @@ public class TechnicalServiceQueries(TechnicalServiceContext context)
                 Address = s.Address,
                 ContactName = s.ContactName,
                 PhoneNumber = s.PhoneNumber,
-                ItemName = s.Item.ItemName,
-                SerialNumber = s.Item.SerialNumber,
+                ItemId = s.ItemId,
+                ItemName = s.Item != null ? s.Item.ItemName : null,
+                SerialNumber = s.Item != null ? s.Item.SerialNumber : null,
                 CustomerRequest = s.CustomerRequest,
                 Inspection = s.Inspection,
                 Solution = s.Solution,
                 ServiceLocation = s.ServiceLocation.ToString(),
                 ServiceType = s.ServiceType.Name,
+                ServiceTypeId = s.ServiceType.Id,
                 ServicePriority = s.ServicePriority.ToString(),
+                ServicePriorityId = s.ServicePriority.Id,
                 Status = s.Status.ToString(),
+                StatusId = s.Status.Id,
                 HasContract = s.HasContract,
                 CreateBy = s.CreateBy,
                 InspectDate = s.InspectDate,
@@ -111,6 +115,8 @@ public class TechnicalServiceQueries(TechnicalServiceContext context)
                 VerifiedBy = s.VerifiedBy,
                 SaleConfirmedDate = s.SaleConfirmedDate,
                 SetSaleConfirmedBy = s.SetSaleConfirmedBy,
+                SentSparepartsDate = s.SentSparepartsDate,
+                SetSentSparepartsBy = s.SetSentSparepartsBy,
                 SparepartItems = s.SparepartItems.Select(si => new SparepartItem
                 {
                     Id = si.Id,
@@ -118,6 +124,7 @@ public class TechnicalServiceQueries(TechnicalServiceContext context)
                     Description = si.Description,
                     Quantity = si.Quantity,
                     Condition = si.Condition.ToString(),
+                    IsHoldStatus = si.IsHoldStatus,
                     Remarks = si.Remarks,
                     RemarksUpdatedAt = si.RemarksUpdatedAt
                 }).ToList()
@@ -724,15 +731,16 @@ public class TechnicalServiceQueries(TechnicalServiceContext context)
         }
 
         // ── STEP 6: Sort ──────────────────────────────────────────────────
+        bool isDesc = query.SortDescending.GetValueOrDefault(true);
         results = query.SortBy?.ToLower() switch
         {
-            "itemname" => query.SortDescending
+            "itemname" => isDesc
                             ? results.OrderByDescending(r => r.ItemName)
                             : results.OrderBy(r => r.ItemName),
-            "holdcount" => query.SortDescending
+            "holdcount" => isDesc
                             ? results.OrderByDescending(r => r.HoldCount)
                             : results.OrderBy(r => r.HoldCount),
-            _ => query.SortDescending
+            _ => isDesc
                             ? results.OrderByDescending(r => r.TotalHoldQty)
                             : results.OrderBy(r => r.TotalHoldQty)
         };
@@ -741,14 +749,18 @@ public class TechnicalServiceQueries(TechnicalServiceContext context)
         var totalCount = results.Count();
         var totalHoldQty = results.Sum(r => r.TotalHoldQty);
         var totalHoldJobs = results.Sum(r => r.HoldCount);
+        int pageNum = query.PageNumber.GetValueOrDefault(1);
+        int pageSize = query.PageSize.GetValueOrDefault(15);
+        if (pageNum < 1) pageNum = 1;
+        if (pageSize < 1) pageSize = 15;
 
         var paged = results
-            .Skip((query.PageNumber - 1) * query.PageSize)
-            .Take(query.PageSize)
+            .Skip((pageNum - 1) * pageSize)
+            .Take(pageSize)
             .ToList();
 
         var pageResult = new PagedResult<SparepartHoldSummary>(
-            paged, totalCount, query.PageNumber, query.PageSize);
+            paged, totalCount, pageNum, pageSize);
 
         pageResult.TotalHoldQty = totalHoldQty;
         pageResult.TotalHoldJobs = totalHoldJobs;
@@ -789,21 +801,26 @@ public class TechnicalServiceQueries(TechnicalServiceContext context)
         return new Service
         {
             Id = repairService.Id,
+            CustomerId = repairService.CustomerId,
             ReportNo = repairService.ReportNo,
             ServiceDate = repairService.ServiceDate,
             CompanyName = repairService.CompanyName,
             Address = repairService.Address,
             ContactName = repairService.ContactName,
             PhoneNumber = repairService.PhoneNumber,
-            ItemName = repairService.Item.ItemName,
-            SerialNumber = repairService.Item.SerialNumber,
+            ItemId = repairService.ItemId,
+            ItemName = repairService.Item?.ItemName,
+            SerialNumber = repairService.Item?.SerialNumber,
             CustomerRequest = repairService.CustomerRequest,
             Inspection = repairService.Inspection,
             Solution = repairService.Solution,
             ServiceLocation = repairService.ServiceLocation.ToString(),
-            ServiceType = repairService.ServiceType.Name,
-            ServicePriority = repairService.ServicePriority.Name,
-            Status = repairService.Status.Name,
+            ServiceType = repairService.ServiceType?.Name,
+            ServiceTypeId = repairService.ServiceType?.Id,
+            ServicePriority = repairService.ServicePriority?.Name,
+            ServicePriorityId = repairService.ServicePriority?.Id,
+            Status = repairService.Status?.Name,
+            StatusId = repairService.Status?.Id,
             HasContract = repairService.HasContract,
             CreateBy = repairService.CreateBy,
             InspectDate = repairService.InspectDate,
@@ -827,6 +844,8 @@ public class TechnicalServiceQueries(TechnicalServiceContext context)
             VerifiedBy = repairService.VerifiedBy,
             SaleConfirmedDate = repairService.SaleConfirmedDate,
             SetSaleConfirmedBy = repairService.SetSaleConfirmedBy,
+            SentSparepartsDate = repairService.SentSparepartsDate,
+            SetSentSparepartsBy = repairService.SetSentSparepartsBy,
             SparepartItems = repairService.SparepartItems.Select(si => new SparepartItem
             {
                 Id = si.Id,
@@ -834,8 +853,10 @@ public class TechnicalServiceQueries(TechnicalServiceContext context)
                 Description = si.Description,
                 Quantity = si.Quantity,
                 Condition = si.Condition.ToString(),
+                IsHoldStatus = si.IsHoldStatus,
                 Remarks = si.Remarks,
-                 RemarksUpdatedAt = si.RemarksUpdatedAt            }).ToList()
+                RemarksUpdatedAt = si.RemarksUpdatedAt
+            }).ToList()
         };
     }
     // UPDATED: Now returns PagedResult<Item>
@@ -874,30 +895,6 @@ public class TechnicalServiceQueries(TechnicalServiceContext context)
             SerialNumber = item.SerialNumber,
             ItemType = item.ItemType.Type
         };
-    }
-
-    public async Task<PagedResult<Sparepart>> GetSparepartsAsync(int pageNumber, int pageSize)
-    {
-        var query = context.Spareparts.AsNoTracking();
-        var totalCount = await query.CountAsync();
-
-        var items = await query
-            .OrderBy(s => s.ItemName)
-            .Skip((pageNumber - 1) * pageSize)
-            .Take(pageSize)
-            .Select(p => new Sparepart
-            {
-                Id = p.Id,
-                ItemName = p.ItemName,
-                SerialNumber = p.SerialNumber,
-                Description = p.Description,
-                UseFor = p.UserFor,
-                PictureUrl = p.PictureUrl,
-                LinkItemId = p.LinkItemId,
-                Quantity = p.Quantity,                    DefaultPrice = p.DefaultPrice
-            }).ToListAsync();
-
-        return new PagedResult<Sparepart>(items, totalCount, pageNumber, pageSize);
     }
 
     public async Task<IEnumerable<ReceiveItem>> GetReceiveItemsAsync()
@@ -1257,25 +1254,85 @@ public class TechnicalServiceQueries(TechnicalServiceContext context)
     // OPTIMIZED: Search Spareparts with filtering
     public async Task<PagedResult<Sparepart>> SearchSparepartsAsync(SparepartSearchQuery query)
     {
-        var spareparts = context.Spareparts.AsNoTracking().AsQueryable();
+        var baseQuery = context.Spareparts.AsNoTracking().AsQueryable();
 
         // Apply search filter — see SearchServicesAsync for why the column is
         // compared directly instead of via ToLower().
         if (!string.IsNullOrWhiteSpace(query.SearchTerm))
         {
             var search = query.SearchTerm.Trim();
-            spareparts = spareparts.Where(s =>
+            // The classification names are searchable too, so typing "HP"
+            // finds every HP part whether or not the brand appears in the
+            // item name. The navigations are optional, so EF emits LEFT
+            // JOINs; a null name simply does not match.
+            baseQuery = baseQuery.Where(s =>
                 s.ItemName.Contains(search) ||
                 s.SerialNumber.Contains(search) ||
                 s.Description.Contains(search) ||
-                s.UserFor.Contains(search));
+                s.UserFor.Contains(search) ||
+                s.Brand.Name.Contains(search) ||
+                s.Type.Name.Contains(search) ||
+                s.Category.Name.Contains(search));
         }
 
         // Apply LinkItemId filter
         if (query.LinkItemId.HasValue)
         {
-            spareparts = spareparts.Where(s => s.LinkItemId == query.LinkItemId.Value);
+            baseQuery = baseQuery.Where(s => s.LinkItemId == query.LinkItemId.Value);
         }
+
+        // Classification filters. Guid.Empty is what an unset <select> sends
+        // and means "no filter", the same convention as SetClassification.
+        if (query.CategoryId is { } categoryId && categoryId != Guid.Empty)
+        {
+            baseQuery = baseQuery.Where(s => s.CategoryId == categoryId);
+        }
+        if (query.TypeId is { } typeId && typeId != Guid.Empty)
+        {
+            baseQuery = baseQuery.Where(s => s.TypeId == typeId);
+        }
+        if (query.BrandId is { } brandId && brandId != Guid.Empty)
+        {
+            baseQuery = baseQuery.Where(s => s.BrandId == brandId);
+        }
+
+        // Single aggregation query for catalogue/search breakdown counts (zero extra roundtrips)
+        var counts = await baseQuery
+            .GroupBy(_ => 1)
+            .Select(g => new
+            {
+                Total = g.Count(),
+                Good = g.Count(s => s.Quantity > 2),
+                Critical = g.Count(s => s.Quantity > 0 && s.Quantity <= 2),
+                Out = g.Count(s => s.Quantity <= 0)
+            })
+            .FirstOrDefaultAsync();
+
+        var totalAll = counts?.Total ?? 0;
+        var goodCount = counts?.Good ?? 0;
+        var criticalCount = counts?.Critical ?? 0;
+        var outCount = counts?.Out ?? 0;
+
+        // Apply StockBand filter if specified
+        var spareparts = baseQuery;
+        if (!string.IsNullOrWhiteSpace(query.StockBand) && !string.Equals(query.StockBand, "all", StringComparison.OrdinalIgnoreCase))
+        {
+            spareparts = query.StockBand.ToLower() switch
+            {
+                "good" => spareparts.Where(s => s.Quantity > 2),
+                "critical" => spareparts.Where(s => s.Quantity > 0 && s.Quantity <= 2),
+                "out" => spareparts.Where(s => s.Quantity <= 0),
+                _ => spareparts
+            };
+        }
+
+        var totalCount = query.StockBand?.ToLower() switch
+        {
+            "good" => goodCount,
+            "critical" => criticalCount,
+            "out" => outCount,
+            _ => totalAll
+        };
 
         // Apply sorting
         spareparts = query.SortBy?.ToLower() switch
@@ -1289,12 +1346,16 @@ public class TechnicalServiceQueries(TechnicalServiceContext context)
             "quantity" => query.SortDescending
                 ? spareparts.OrderByDescending(s => s.Quantity)
                 : spareparts.OrderBy(s => s.Quantity),
+            // Unbranded parts go last in both directions — SQL Server would
+            // otherwise sort NULL brands first ascending, which reads as a
+            // page of blanks before the first real brand.
+            "brand" => query.SortDescending
+                ? spareparts.OrderBy(s => s.BrandId == null).ThenByDescending(s => s.Brand.Name).ThenByDescending(s => s.ItemName)
+                : spareparts.OrderBy(s => s.BrandId == null).ThenBy(s => s.Brand.Name).ThenBy(s => s.ItemName),
             _ => query.SortDescending
                 ? spareparts.OrderByDescending(s => s.ItemName)
                 : spareparts.OrderBy(s => s.ItemName)
         };
-
-        var totalCount = await spareparts.CountAsync();
 
         var results = await spareparts
             .Skip((query.PageNumber - 1) * query.PageSize)
@@ -1309,11 +1370,24 @@ public class TechnicalServiceQueries(TechnicalServiceContext context)
                 PictureUrl = p.PictureUrl,
                 LinkItemId = p.LinkItemId,
                 Quantity = p.Quantity,
-                DefaultPrice = p.DefaultPrice
+                DefaultPrice = p.DefaultPrice,
+                CategoryId = p.CategoryId,
+                CategoryName = p.Category != null ? p.Category.Name : null,
+                TypeId = p.TypeId,
+                TypeName = p.Type != null ? p.Type.Name : null,
+                BrandId = p.BrandId,
+                BrandName = p.Brand != null ? p.Brand.Name : null,
+                BrandLogoUrl = p.Brand != null ? p.Brand.LogoUrl : null,
             })
             .ToListAsync();
 
-        return new PagedResult<Sparepart>(results, totalCount, query.PageNumber, query.PageSize);
+        return new PagedResult<Sparepart>(results, totalCount, query.PageNumber, query.PageSize)
+        {
+            TotalAll = totalAll,
+            GoodCount = goodCount,
+            CriticalCount = criticalCount,
+            OutOfStockCount = outCount
+        };
     }
 
     /// <summary>
@@ -1655,7 +1729,17 @@ public class TechnicalServiceQueries(TechnicalServiceContext context)
                 s.Id,
                 s.ServiceDate,
                 s.FinishedDate,
-                s.Status.ToString()))
+                s.Status.ToString(),
+                s.ReportNo,
+                s.CompanyName,
+                s.Item != null ? s.Item.ItemName : null,
+                s.Item != null ? s.Item.SerialNumber : null,
+                s.ServicePriority != null ? s.ServicePriority.ToString() : null,
+                s.ServiceType != null ? s.ServiceType.Name : null,
+                s.CreateBy,
+                s.InspectBy,
+                s.RepairBy,
+                s.VerifiedBy))
             .ToListAsync();
 
         return new PagedResult<ServiceSummary>(items, totalCount, query.PageNumber, query.PageSize);
@@ -1723,6 +1807,8 @@ public class TechnicalServiceQueries(TechnicalServiceContext context)
                 VerifiedBy = s.VerifiedBy,
                 SaleConfirmedDate = s.SaleConfirmedDate,
                 SetSaleConfirmedBy = s.SetSaleConfirmedBy,
+                SentSparepartsDate = s.SentSparepartsDate,
+                SetSentSparepartsBy = s.SetSentSparepartsBy,
                 SparepartItems = s.SparepartItems.Select(si => new SparepartItem
                 {
                     Id = si.Id,
@@ -1730,6 +1816,7 @@ public class TechnicalServiceQueries(TechnicalServiceContext context)
                     Description = si.Description,
                     Quantity = si.Quantity,
                     Condition = si.Condition.ToString(),
+                    IsHoldStatus = si.IsHoldStatus,
                     Remarks = si.Remarks,
                     RemarksUpdatedAt = si.RemarksUpdatedAt
                 }).ToList()
@@ -1992,6 +2079,10 @@ public class TechnicalServiceQueries(TechnicalServiceContext context)
                 IsThirdPartyRepair = s.ThirdPartyRepairDate != null || s.ThirdPartyRepairBy != null,
                 FinishedDate = s.FinishedDate,
                 VerifiedBy = s.VerifiedBy,
+                SaleConfirmedDate = s.SaleConfirmedDate,
+                SetSaleConfirmedBy = s.SetSaleConfirmedBy,
+                SentSparepartsDate = s.SentSparepartsDate,
+                SetSentSparepartsBy = s.SetSentSparepartsBy,
                 SparepartItems = s.SparepartItems.Select(si => new SparepartItem
                 {   
                     Id = si.Id,
@@ -2168,24 +2259,32 @@ public class TechnicalServiceQueries(TechnicalServiceContext context)
     }
     public async Task<Sparepart> GetSparepartAsync(Guid id)
     {
+        // Projected rather than materialised so the classification names
+        // come back in the same statement (LEFT JOINs), not as lazy nulls.
         var sparepart = await context.Spareparts.AsNoTracking()
-            .FirstOrDefaultAsync(s => s.Id == id);
+            .Where(s => s.Id == id)
+            .Select(p => new Sparepart
+            {
+                Id = p.Id,
+                ItemName = p.ItemName,
+                SerialNumber = p.SerialNumber,
+                Description = p.Description,
+                UseFor = p.UserFor,
+                PictureUrl = p.PictureUrl,
+                LinkItemId = p.LinkItemId,
+                Quantity = p.Quantity,
+                DefaultPrice = p.DefaultPrice,
+                CategoryId = p.CategoryId,
+                CategoryName = p.Category != null ? p.Category.Name : null,
+                TypeId = p.TypeId,
+                TypeName = p.Type != null ? p.Type.Name : null,
+                BrandId = p.BrandId,
+                BrandName = p.Brand != null ? p.Brand.Name : null,
+                BrandLogoUrl = p.Brand != null ? p.Brand.LogoUrl : null,
+            })
+            .FirstOrDefaultAsync();
 
-        if (sparepart is null)
-            throw new KeyNotFoundException();
-
-        return new Sparepart
-        {
-            Id = sparepart.Id,
-            ItemName = sparepart.ItemName,
-            SerialNumber = sparepart.SerialNumber,
-            Description = sparepart.Description,
-            UseFor = sparepart.UserFor,
-            PictureUrl = sparepart.PictureUrl,
-            LinkItemId = sparepart.LinkItemId,
-            Quantity = sparepart.Quantity,                DefaultPrice = sparepart.DefaultPrice
-
-        };
+        return sparepart ?? throw new KeyNotFoundException();
     }
 
     // ═══════════════════════════════════════════════════════════════════════
@@ -2281,6 +2380,7 @@ public class TechnicalServiceQueries(TechnicalServiceContext context)
                 l.SparepartId,
                 ItemName = sp != null ? sp.ItemName : "(deleted part)",
                 SerialNumber = sp != null ? sp.SerialNumber : "",
+                PictureUrl = sp != null ? sp.PictureUrl : null,
                 l.OperationType,
                 l.QuantityChange,
                 l.OldQuantity,
@@ -2369,10 +2469,11 @@ public class TechnicalServiceQueries(TechnicalServiceContext context)
             Id = r.Id,
             ReversedLater = HasOpposite(r.ServiceId, r.SparepartId, r.QuantityChange, r.Timestamp, later: true),
             IsReversal = HasOpposite(r.ServiceId, r.SparepartId, r.QuantityChange, r.Timestamp, later: false),
-            Timestamp = r.Timestamp,
+            Timestamp = DateTime.SpecifyKind(r.Timestamp, DateTimeKind.Utc),
             SparepartId = r.SparepartId,
             ItemName = r.ItemName,
             SerialNumber = r.SerialNumber,
+            PictureUrl = r.PictureUrl,
             OperationType = r.OperationType,
             QuantityChange = r.QuantityChange,
             Quantity = Math.Abs(r.QuantityChange),

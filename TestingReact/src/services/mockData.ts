@@ -169,9 +169,9 @@ export const MOCK_SPARE_PARTS: SparePartItem[] = [
 // Customers
 // ---------------------------------------------------------------------------
 export const MOCK_CUSTOMERS: CustomerItem[] = [
-  { id: "1", companyName: "សាលារៀន វត្ត ប៊ រ នា ធ ម", contactName: "Chhunlay Y.", phoneNumber: "012 345 678", address: "Phnom Penh, Cambodia", customerType: "Corporate", isActive: true },
-  { id: "2", companyName: "ហាងឆា ម៉ីហ្វូហ៊្វូដ ភ្នំពេញ", contactName: "Sokha K.", phoneNumber: "098 765 432", address: "Toul Kork, Phnom Penh", customerType: "Corporate", isActive: true },
-  { id: "3", companyName: "រដ្ឋាករទឹកស្យយ័តក្រុងភ្នំពេញ", contactName: "Bora M.", phoneNumber: "023 888 999", address: "Daun Penh, Phnom Penh", customerType: "Corporate", isActive: true },
-  { id: "4", companyName: "ធនាគារ អេ អឹម ខេ", contactName: "Nara T.", phoneNumber: "015 112 233", address: "Sen Sok, Phnom Penh", customerType: "Corporate", isActive: true },
-  { id: "5", companyName: "Vattanac Bank", contactName: "Kosal V.", phoneNumber: "042 999 888", address: "Kampong Cham Province", customerType: "Corporate", isActive: true },
+  { id: "1", companyName: "សាលារៀន វត្ត ប៊ រ នា ធ ម", contactName: "Chhunlay Y.", phoneNumber: "012 345 678", address: "Phnom Penh, Cambodia", customerType: "School", isActive: true },
+  { id: "2", companyName: "ហាងឆា ម៉ីហ្វូហ៊្វូដ ភ្នំពេញ", contactName: "Sokha K.", phoneNumber: "098 765 432", address: "Toul Kork, Phnom Penh", customerType: "Restaurant", isActive: true },
+  { id: "3", companyName: "រដ្ឋាករទឹកស្យយ័តក្រុងភ្នំពេញ", contactName: "Bora M.", phoneNumber: "023 888 999", address: "Daun Penh, Phnom Penh", customerType: "Ministry", isActive: true },
+  { id: "4", companyName: "ធនាគារ អេ អឹម ខេ", contactName: "Nara T.", phoneNumber: "015 112 233", address: "Sen Sok, Phnom Penh", customerType: "Bank", isActive: true },
+  { id: "5", companyName: "Vattanac Bank", contactName: "Kosal V.", phoneNumber: "042 999 888", address: "Kampong Cham Province", customerType: "Bank", isActive: true },
 ];

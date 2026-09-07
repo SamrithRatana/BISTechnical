@@ -1,5 +1,6 @@
 using Microsoft.AspNetCore.Diagnostics;
 using Microsoft.AspNetCore.Mvc;
+using TechnicalService.Domain.Exceptions;
 
 namespace TechnicalService.API.Extensions;
 
@@ -10,12 +11,16 @@ namespace TechnicalService.API.Extensions;
 /// Counterpart to <c>NotFoundExceptionHandler</c>. The command handlers parse
 /// enums out of the request body (<c>Condition</c>, <c>ServiceLocation</c>,
 /// rental <c>Action</c>); before this, an unrecognised value threw out of the
-/// handler and the caller got a server error for what is a client mistake -
-/// and Sentry got an issue for it.
+/// handler and the caller got a server error for what is a client mistake.
 ///
-/// The message is safe to return: it is produced by
-/// <see cref="EnumParsing"/> from the field name and the enum's own member
-/// names, never from an exception the framework or the database raised.
+/// <see cref="TechnicalServiceDomainException"/> is mapped the same way: it is
+/// what an aggregate throws when a value breaks one of its own rules (an empty
+/// name, a negative quantity, a type without a category) — a client mistake
+/// by definition, and its message is composed by our domain code.
+///
+/// Both messages are safe to return: they are produced from field names and
+/// our own rule text, never from an exception the framework or the database
+/// raised.
 /// </remarks>
 internal sealed class ValidationExceptionHandler(IProblemDetailsService problemDetailsService)
     : IExceptionHandler
@@ -25,7 +30,7 @@ internal sealed class ValidationExceptionHandler(IProblemDetailsService problemD
         Exception exception,
         CancellationToken cancellationToken)
     {
-        if (exception is not RequestValidationException validationException)
+        if (exception is not (RequestValidationException or TechnicalServiceDomainException))
         {
             return false;
         }
@@ -39,7 +44,7 @@ internal sealed class ValidationExceptionHandler(IProblemDetailsService problemD
             {
                 Status = StatusCodes.Status400BadRequest,
                 Title = "Bad Request",
-                Detail = validationException.Message,
+                Detail = exception.Message,
             },
         });
     }

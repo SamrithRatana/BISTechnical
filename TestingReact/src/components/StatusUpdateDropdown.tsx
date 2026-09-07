@@ -125,7 +125,7 @@ export default function StatusUpdateDropdown({
               width: coords.width,
               transform: coords.placement === "top" ? "translateY(-100%)" : undefined,
             }}
-            className={`z-[100] av-glass-panel rounded-xl overflow-hidden py-1 ${
+            className={`z-[9999] av-glass-panel rounded-xl overflow-hidden py-1 ${
               coords.placement === "top" ? "dropdown-panel-in-top" : "dropdown-panel-in"
             }`}
           >

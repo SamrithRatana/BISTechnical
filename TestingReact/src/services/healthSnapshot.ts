@@ -30,7 +30,8 @@
  *  field is added to it. */
 export interface HealthSnapshot {
   status?: string;
-  components?: Record<string, { status?: string } | undefined>;
+  latencyMs?: number | null;
+  components?: Record<string, { status?: string; latencyMs?: number | null } | undefined>;
   memory?: {
     frontendMb?: number;
     technicalApiMb?: number;

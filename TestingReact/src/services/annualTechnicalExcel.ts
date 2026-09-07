@@ -5,7 +5,7 @@
  * and signature boxes.
  */
 
-import ExcelJS from "exceljs";
+import type ExcelJS from "exceljs";
 
 export interface MonthlyMatrixData {
   year: number;
@@ -34,6 +34,8 @@ export interface MonthlyMatrixData {
 }
 
 export async function exportAnnualTechnicalExcel(data: MonthlyMatrixData): Promise<void> {
+  const ExcelJSModule = await import("exceljs");
+  const ExcelJS = (ExcelJSModule.default || ExcelJSModule) as typeof import("exceljs");
   const workbook = new ExcelJS.Workbook();
   workbook.creator = "ServiceMaintenanceSystem";
   workbook.created = new Date();

@@ -12,8 +12,9 @@
 
 import React from "react";
 import { motion } from "framer-motion";
+import { useDocsTheme } from "./DocsThemeContext";
 import { DOCS_ICONS } from "./docsIcons";
-import { ACCENT } from "./docsAccent";
+import { accentSkin } from "./docsAccent";
 import { LIFECYCLE_STAGES } from "./content/lifecycle";
 import { DOCS_REPORT_COUNT } from "./content/reportCount";
 import { DUR, LOAD, PLANE_GAP_PX, SETTLE_EASE, STATIC_PLANE_SPREAD } from "./motion";
@@ -82,7 +83,8 @@ export const CHIPS: readonly ChipSpec[] = [
 
 /** One plane of the stack. Solid fill, one hairline, two skeleton copy bars. */
 export function AtlasPlane({ spec, full }: { spec: PlaneSpec; full: boolean }) {
-  const skin = ACCENT[spec.accent];
+  const { isDark } = useDocsTheme();
+  const skin = accentSkin(spec.accent, isDark);
   const Icon = DOCS_ICONS[spec.icon];
   const z = (spec.depth - 2) * PLANE_GAP_PX;
 
@@ -113,7 +115,7 @@ export function AtlasPlane({ spec, full }: { spec: PlaneSpec; full: boolean }) {
       }
     >
       <div
-        className={`relative rounded-2xl border ${skin.border} bg-[#0a0c18] p-3.5 shadow-[0_24px_60px_-24px_rgb(0_0_0/0.9)]`}
+        className={`relative rounded-2xl border ${skin.border} p-3.5 transition-colors ${isDark ? "bg-[#0a0c18] shadow-[0_24px_60px_-24px_rgb(0_0_0/0.9)]" : "bg-white/95 shadow-xl"}`}
       >
         <div className="absolute inset-x-0 top-0 h-[2px] rounded-t-2xl" style={{ background: skin.hairline }} />
         <div className="flex items-center gap-3">
@@ -121,11 +123,11 @@ export function AtlasPlane({ spec, full }: { spec: PlaneSpec; full: boolean }) {
             <Icon className="h-[18px] w-[18px]" />
           </span>
           <span className="min-w-0 flex-1">
-            <span className="block font-mono text-[10px] font-bold tracking-[0.18em] text-slate-400">
+            <span className={`block font-mono text-[10px] font-bold tracking-[0.18em] ${isDark ? "text-slate-400" : "text-slate-700"}`}>
               {spec.label}
             </span>
-            <span className="mt-1.5 block h-1.5 w-full rounded-full bg-white/10" />
-            <span className="mt-1 block h-1.5 w-2/3 rounded-full bg-white/[0.06]" />
+            <span className={`mt-1.5 block h-1.5 w-full rounded-full ${isDark ? "bg-white/10" : "bg-slate-300"}`} />
+            <span className={`mt-1 block h-1.5 w-2/3 rounded-full ${isDark ? "bg-white/[0.06]" : "bg-slate-200"}`} />
           </span>
         </div>
       </div>

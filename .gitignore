@@ -34,4 +34,6 @@ DevExpress_License.txt
 *.jsonl
 ImageBug/
 TestingReact/test-flux.jpg
+*.apk
+TestingReact/public/*.apk
 

@@ -1,4 +1,5 @@
 using EmployeeManagement.Api.Models;
+using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Diagnostics;
 using Microsoft.AspNetCore.Hosting;
@@ -8,7 +9,9 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
+using Microsoft.IdentityModel.Tokens;
 using System;
+using System.Text;
 using System.Threading.Tasks;
 
 namespace EmployeeManagement.Api
@@ -47,9 +50,42 @@ namespace EmployeeManagement.Api
             services.AddScoped<ICustomerRepository, CustomerRepository>();
             services.AddScoped<IUserRepository, UserRepository>();
 
-            // AddControllersWithViews() and AddRazorPages() were registered here
-            // but this project has no Views and no Pages; they only added MVC
-            // services and startup cost.
+            // JWT authentication configuration
+            var jwtKey = Configuration["Jwt:Key"] ?? Configuration["JWT:Secret"];
+            var jwtIssuer = Configuration["Jwt:Issuer"] ?? Configuration["JWT:ValidIssuer"];
+            var jwtAudience = Configuration["Jwt:Audience"] ?? Configuration["JWT:ValidAudience"];
+
+            if (!string.IsNullOrWhiteSpace(jwtKey) && !string.IsNullOrWhiteSpace(jwtIssuer))
+            {
+                services.AddAuthentication(options =>
+                {
+                    options.DefaultAuthenticateScheme = JwtBearerDefaults.AuthenticationScheme;
+                    options.DefaultChallengeScheme = JwtBearerDefaults.AuthenticationScheme;
+                })
+                .AddJwtBearer(options =>
+                {
+                    options.RequireHttpsMetadata = false;
+                    options.SaveToken = true;
+                    options.TokenValidationParameters = new TokenValidationParameters
+                    {
+                        ValidateIssuer = true,
+                        ValidateAudience = !string.IsNullOrWhiteSpace(jwtAudience),
+                        ValidateLifetime = true,
+                        ValidateIssuerSigningKey = true,
+                        ValidIssuer = jwtIssuer,
+                        ValidAudience = jwtAudience,
+                        IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwtKey)),
+                        ClockSkew = TimeSpan.FromMinutes(5)
+                    };
+                });
+            }
+            else
+            {
+                services.AddAuthentication();
+            }
+
+            services.AddAuthorization();
+            services.AddHealthChecks();
 
             services.AddSwaggerGen(c =>
             {
@@ -102,11 +138,25 @@ namespace EmployeeManagement.Api
             }
 
             app.UseRouting();
+            app.UseAuthentication();
             app.UseAuthorization();
 
             app.UseEndpoints(endpoints =>
             {
                 endpoints.MapControllers();
+                endpoints.MapHealthChecks("/health");
+                endpoints.MapGet("/health/metrics", async context =>
+                {
+                    var proc = System.Diagnostics.Process.GetCurrentProcess();
+                    context.Response.ContentType = "application/json";
+                    await context.Response.WriteAsJsonAsync(new
+                    {
+                        service = "EmployeeManagement.Api",
+                        workingSetMb = Math.Round(proc.WorkingSet64 / (1024.0 * 1024.0), 1),
+                        gcHeapMb = Math.Round(GC.GetTotalMemory(false) / (1024.0 * 1024.0), 1),
+                        threads = proc.Threads.Count
+                    });
+                });
             });
         }
     }

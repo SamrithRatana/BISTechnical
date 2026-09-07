@@ -223,3 +223,10 @@ export async function pingInternet(signal?: AbortSignal): Promise<InternetPing> 
   // probe can make: report it rather than shrug.
   return UNREACHABLE;
 }
+
+// Warm up the internet connection eagerly in browser background
+if (typeof window !== "undefined") {
+  setTimeout(() => {
+    void pingInternet();
+  }, 800);
+}

@@ -6,11 +6,16 @@
  * the one case React can't recover from with a normal `error.tsx`, because the
  * layout itself (and therefore <html>/<body>) failed to render.
  *
- * Two jobs: report the crash to Sentry, and show the user something other than
- * a blank white page.
+ * Two jobs: record the crash, and show the user something other than a blank
+ * white page.
+ *
+ * The crash goes to `console.error` because there is no error-reporting service
+ * in this project — Sentry was removed deliberately, not lost. Its SDK was
+ * 611 KB of the 928 KB every route shipped, for a product nobody was reading.
+ * If a reporting service is ever adopted, this effect and the one in
+ * `components/TemplateReportView.tsx` are the two places that report.
  */
 
-import * as Sentry from "@sentry/nextjs";
 import { useEffect } from "react";
 
 export default function GlobalError({
@@ -21,7 +26,7 @@ export default function GlobalError({
   reset: () => void;
 }) {
   useEffect(() => {
-    Sentry.captureException(error);
+    console.error("Root layout crashed:", error);
   }, [error]);
 
   return (
@@ -46,8 +51,8 @@ export default function GlobalError({
             Something went wrong
           </h1>
           <p style={{ color: "#6B7280", marginBottom: "1.5rem", lineHeight: 1.6 }}>
-            The page failed to load. The problem has been reported. Try again, and
-            if it keeps happening, tell IT the reference below.
+            The page failed to load. Try again, and if it keeps happening, tell
+            IT the reference below.
           </p>
           {error.digest && (
             <p

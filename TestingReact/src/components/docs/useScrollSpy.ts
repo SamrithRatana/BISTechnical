@@ -2,24 +2,45 @@
 
 /**
  * @file components/docs/useScrollSpy.ts
- * @description Which chapter is the reader currently in?
+ * @description Which section of the article is the reader currently in?
  *
- * An `IntersectionObserver` rather than a scroll listener: the browser does
- * the hit-testing off the main thread and only calls back when a section
- * actually crosses the band, where a scroll handler would run
- * `getBoundingClientRect()` for every chapter on every frame.
+ * ─── Why this is not an IntersectionObserver ────────────────────────────────
  *
- * The band is the top third of the viewport (`-12% 0px -70% 0px`), so the
- * highlighted entry is the section you are *reading*, not the one merely
- * touching the bottom edge.
+ * It was, and the observer version got two cases wrong — both measured, both
+ * structural rather than tuning:
  *
- * The observer is disconnected on unmount and re-created when the id list
- * changes (§14: every subscription returns its cleanup). `ids` is joined into
- * a string for the dependency so a caller passing a fresh array literal every
- * render does not tear the observer down and build it again each time.
+ *  1. **Adjacent sections tie.** The band was the top 18% of the viewport and
+ *     the winner was "first in document order among those intersecting". A
+ *     section whose bottom edge sits four pixels inside the band still counts
+ *     as intersecting, and being earlier in the document it won — so scrolling
+ *     from Overview to the flowchart left the rail pointing at Overview.
+ *  2. **The last section can never win.** Once the page is at maximum scroll
+ *     it stops moving, so a short final section that never reaches the band is
+ *     unreachable. "Notes & warnings" was permanently unhighlightable.
+ *
+ * Both come from asking "what is inside a band" when the question is "what
+ * have I scrolled past". So this reads positions directly and takes the LAST
+ * section whose top has crossed the activation line — unambiguous when two
+ * sections touch, and it can be overridden at the bottom of the page.
+ *
+ * The cost objection to a scroll handler was `getBoundingClientRect()` per
+ * element per frame. That holds for a long chapter list; here the callers pass
+ * at most five ids, the work is throttled to one measurement per animation
+ * frame, and the listener is passive — so it never blocks the scroll itself.
  */
 
 import { useEffect, useState } from "react";
+
+/**
+ * Distance from the top of the viewport at which a section becomes "current".
+ * Matches the `scroll-mt-28` (112px) the sections carry, plus a little, so a
+ * heading the reader has just clicked to registers immediately rather than one
+ * pixel later.
+ */
+const ACTIVATION_LINE_PX = 128;
+
+/** How close to the bottom counts as "the end of the page". */
+const BOTTOM_EPSILON_PX = 4;
 
 export function useScrollSpy(ids: readonly string[]): string | null {
   const [activeId, setActiveId] = useState<string | null>(ids[0] ?? null);
@@ -27,33 +48,56 @@ export function useScrollSpy(ids: readonly string[]): string | null {
 
   useEffect(() => {
     const sectionIds = key ? key.split("|") : [];
-    if (sectionIds.length === 0) return;
+    if (sectionIds.length === 0) {
+      setActiveId(null);
+      return;
+    }
 
-    const elements = sectionIds
-      .map((id) => document.getElementById(id))
-      .filter((el): el is HTMLElement => el !== null);
-    if (elements.length === 0) return;
+    // Reset when the article changes: the previous article's section could
+    // otherwise stay highlighted until the reader happens to scroll.
+    setActiveId(sectionIds[0]);
 
-    // Kept outside the callback: an entry that leaves the band does not report
-    // the one that replaced it, so the visible set has to be remembered.
-    const visible = new Set<string>();
+    let frame = 0;
 
-    const observer = new IntersectionObserver(
-      (entries) => {
-        for (const entry of entries) {
-          if (entry.isIntersecting) visible.add(entry.target.id);
-          else visible.delete(entry.target.id);
-        }
-        // Document order wins when two sections share the band, so scrolling
-        // down never briefly highlights the section you just left.
-        const firstVisible = sectionIds.find((id) => visible.has(id));
-        if (firstVisible) setActiveId(firstVisible);
-      },
-      { rootMargin: "-12% 0px -70% 0px", threshold: 0 }
-    );
+    const measure = () => {
+      frame = 0;
 
-    for (const el of elements) observer.observe(el);
-    return () => observer.disconnect();
+      // At the bottom there is no scrolling left to do, so whatever the line
+      // says, the reader is looking at the final section.
+      const atBottom =
+        window.innerHeight + window.scrollY >=
+        document.documentElement.scrollHeight - BOTTOM_EPSILON_PX;
+      if (atBottom) {
+        setActiveId(sectionIds[sectionIds.length - 1]);
+        return;
+      }
+
+      // Last one whose top has crossed the line. Falls back to the first
+      // section while the reader is still above all of them.
+      let current = sectionIds[0];
+      for (const id of sectionIds) {
+        const element = document.getElementById(id);
+        if (!element) continue;
+        if (element.getBoundingClientRect().top <= ACTIVATION_LINE_PX) current = id;
+        else break;
+      }
+      setActiveId(current);
+    };
+
+    const onScroll = () => {
+      if (frame) return;
+      frame = window.requestAnimationFrame(measure);
+    };
+
+    measure();
+    window.addEventListener("scroll", onScroll, { passive: true });
+    window.addEventListener("resize", onScroll, { passive: true });
+
+    return () => {
+      if (frame) window.cancelAnimationFrame(frame);
+      window.removeEventListener("scroll", onScroll);
+      window.removeEventListener("resize", onScroll);
+    };
   }, [key]);
 
   return activeId;

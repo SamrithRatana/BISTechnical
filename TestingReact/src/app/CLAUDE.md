@@ -148,6 +148,26 @@ Next.js App Router tree for a repair/service-item workflow tracker (item intake,
   - `handleStockInSubmit()` — increments quantity via `updateSparePart()`.
   - `handleStockOutSubmit()` — `insertManualStockOut(id, qty, reason)`.
   - `getImageUrl(url)` — normalizes relative/absolute picture URLs.
+- **Classification (2026-09-05).** `SparePartFilterBar` (Category → Type → Brand, server-side
+  filters sent as `categoryId/typeId/brandId`, mirrored into the URL by
+  `useSparePartFilterParams` so a filtered view can be shared; the stock-band chip counts are
+  for the filtered set) sits above the chips. The form carries
+  `SparePartClassificationFields` (all optional, "None" clears; type only inside its category)
+  and `handleCreateOrUpdate` always sends a `classification` object — Stock In / Set Stock go
+  through `updateSparePart` **without** one and leave the filing alone. New "Classification"
+  column in `PartRow`: brand chip (16px logo) over "Category › Type", both single-line
+  `truncate` so the 96px virtualization row height holds. Lookup options come from
+  `useSparePartTaxonomyOptions` (three `useTaxonomyList`s). All in `components/spareparts/`.
+- `Export` button has no handler — pre-existing dead control, not wired by the classification work.
+
+## `/spareparts/categories`, `/spareparts/types`, `/spareparts/brands` — Spare-part taxonomy (full CRUD, added 2026-09-05)
+
+- Files: `spareparts/categories/page.tsx`, `spareparts/types/page.tsx`, `spareparts/brands/page.tsx` — each a thin page (fields + columns only).
+- Client components. Sidebar: the Inventory group's `nav.subgroupSpareParts` sub-group, alongside `/spareparts`.
+- Everything shared lives in `components/sparepart-taxonomy/`: `TaxonomyPage` (toolbar, table with loading / error / empty states, footer), `TaxonomyFormModal` + `TaxonomyField`, `BrandLogoField` (R2 upload via `services/upload.ts`, or a pasted URL), `useTaxonomyList` (whole-list load with a generation guard, refreshed by the `sparepart` SSE resource), `useTaxonomyCrud` (add / edit / delete state + result → toast), `taxonomyFeedback.ts` (message keyed off the API's `code`).
+- Data: `services/sparepartTaxonomyApi.ts`; rules: `validation/taxonomy.ts` (`validateTaxonomyName`, `validateTaxonomyType`, `validateBrand`).
+- Search filters the loaded list client-side (the lists are small and returned whole). The types page also filters by category (`ModernSelect`).
+- A lookup still referenced by parts (or a category still holding types) cannot be deleted: the API answers 409 `inUse` with a `count`, the confirm dialog stays open and the toast reads `spTax.inUse`. Brand names upper-case as typed.
 
 ## `/received-inventory` — Item Models Inventory (full CRUD)
 
@@ -190,39 +210,78 @@ Next.js App Router tree for a repair/service-item workflow tracker (item intake,
 - Motion collapses to a static premium layout under reduced-motion / Lite Mode via
   `useDownloadMotionMode()`; 3D-transform safety rules live in `PhoneRig.tsx`'s header comment.
 
-## `/docs` — public documentation hub ("Codex Atlas")
+## `/docs` — public documentation hub
 
 - Files: `docs/page.tsx` (thin orchestrator), `docs/layout.tsx` (metadata only).
 - Public (AuthGuard, AppShell and AiLauncher all allowlist `/docs`), standalone dark look —
   deliberately NOT on the `--av-*` token system, same zone as `/login` and `/download`.
-- Every section, hook and string lives in `src/components/docs/` (20 components/hooks + 21
-  content modules, each < 300 lines). The page holds only the search term, the scroll-spy
-  wiring and section order.
-- Layout: 3D "Atlas" hero (an exploded stack of five chapter planes on Z, pointer tilt, orbit
-  chips) → the repair **lifecycle rail** (all 11 statuses end to end, horizontally scrollable,
-  each stop clickable through to its topic) → five chapters of expandable topic cards beside a
-  sticky scroll-spy chapter nav → footer.
+- Restructured 2026-09-01 onto the **standard three-column documentation layout**
+  (Tailwind Plus's documentation blocks as the model), replacing the chapter-card grid:
+
+  ```
+  sidebar (3/12)  │  article (9/12, 7/12 at xl)  │  "on this page" (2/12)
+  ```
+
+  Above it: the 3D "Atlas" hero → the **lifecycle rail** (all 11 statuses end to end,
+  horizontally scrollable, every stop clickable through to its page) → the **reading path**
+  (`DocsPathway`, five chapters as one numbered run, "Start here" on chapter 01).
+- **The reading order is the array order.** `content/docsData.ts` assembles five chapter files
+  (`articlesGettingStarted`, `articlesWorkflow` — itself split into `…Intake` / `…Fulfilment`
+  for §1's line limit — `articlesInventory`, `articlesReports`, `articlesAdmin`) in chapter
+  order; the workflow chapter is ordered as a real ticket travels. The sidebar numbering, the
+  "Step N of M" counter, the chapter progress bar and prev/next all read their position out of
+  that array — **nothing states a position or a total it does not derive**. Titles carrying
+  hand-typed stage numbers ("Stage 4: …") were stripped for this reason: stages were inserted
+  twice, leaving titles that disagreed with both the rail and the counter printed beside them.
+  Routes repeated inside a title (`… (/receive-item)`) went too — the header renders the route
+  as a real link chip directly underneath.
+- **Left column** (`DocsSidebarNav`) — all 34 pages, always visible, chapters numbered 01–05,
+  active row marked with a border rather than a filled pill (a solid block on a two-line Khmer
+  title dominates the rail). Search filters chapters and rows, matching title, subtitle,
+  summary, **route and backend status** — someone hunting "Awaiting Sparepart" read that string
+  in the app, not in this manual. An empty result renders a message; it used to render nothing.
+- **Right column** (`DocsOnThisPage` + `docsOutline.ts`) — the headings of the current article.
+  `docsOutline()` is the single source of truth for **both** the rail entries and the `<h2>`s in
+  the body, so a rail link that scrolls nowhere is not expressible. Sections are conditional
+  (overview / flow / steps / report catalogue / notes), and the rail hides itself below two.
+- **Anchors are `<articleId>--<section>`** (`receive-item--steps`). Unique across every page,
+  and `docsArticleIdFromHash` recovers the article from one, so a pasted section link opens the
+  right page at the right heading. `page.tsx` does that scroll itself: the browser gives up on
+  the anchor before React has chosen, let alone rendered, the article that owns it.
+- The open article lives in the URL (`location.hash`), written with `replaceState` — opening
+  pages does not stack history, so Back leaves the page instead of stepping through every
+  article the reader opened.
+- `useScrollSpy` reads positions directly (rAF-throttled, passive listener) rather than using an
+  IntersectionObserver band. The observer version got two cases structurally wrong: adjacent
+  sections tied and the earlier one won on document order, and the final section could never
+  become active because the page stops scrolling before it reaches the band. See that file's
+  header for the measurements.
 - **The copy is NOT in `i18n/en.ts` / `km.ts`.** It carries both languages inline in
   `components/docs/content/` and travels in this route's own chunk. `LanguageProvider` imports
   `en.ts` statically, so every key there lands in the chunk all 50+ routes download before they
   can paint — several hundred strings of long-form manual, read by one public page, would be a
   bundle regression against §4 for no one's benefit. `useDocsText()` picks the side to render
   from `useI18n().lang`, so the language toggle still drives it; only the payload is local.
-  See `components/docs/docsTypes.ts` for the full reasoning.
-- The catalogue is plain data (no React, no icons) for the same reason `config/navigation.ts`
-  is: `docsIcons.ts` maps icon *names* to lucide components on the rendering side.
-  `config/navigation.ts` is the source the page purposes were written from, so the manual and
-  the sidebar cannot drift.
-- **Topic ids mirror route slugs** (`/receive-item` → `receive-item`) — that is what lets a
-  click on the lifecycle rail land on the instructions, and what makes `/docs#stock-health` a
-  working deep link. The open topic lives in the URL (`useDocsHash`, a `useSyncExternalStore`
-  over `location.hash`), not in page state, so links are shareable. Writes use `replaceState`,
-  deliberately: opening topics does not stack history, so Back leaves the page instead of
-  stepping back through every card the reader opened.
-- Search (`useDocsSearch`) is entirely client-side over a memoised haystack built ONCE per
-  catalogue, and indexes **both** languages plus the route — a Khmer reader finds a screen by
-  typing `/spare-request`, an English one finds it by typing "ស្តុក". Matching is
-  whitespace-tokenised AND. `/` focuses the box from anywhere.
+  See `components/docs/content/articleTypes.ts` for the full reasoning.
+- Numbers interpolated into Khmer prose are rendered in Khmer numerals (`fillCopy(..., isKhmer)`)
+  — the catalogue's own prose already writes them that way, so a Latin-digit counter beside it
+  reads as a string someone forgot to translate. The mono chapter numbers and step chips stay
+  Latin: there they are a visual index, not something read aloud.
+- The catalogue is plain data (no React, no icons); `docsIconMap.ts` maps icon *names* to lucide
+  components on the rendering side and never throws on an unknown name.
+- `content/docsData.ts` runs a **dev-only integrity check** (dead-code-eliminated in production):
+  duplicate article ids, lifecycle stages whose `topicId` matches no article, and a default
+  article id that does not exist. All three fail silently in the browser otherwise — and one was
+  live: six of the eleven lifecycle stops pointed at pages that did not exist, so clicking them
+  threw the reader back to article one. The old check passed because it validated against the
+  chapter catalogue, which still had topics for pages the reader could not reach — **validate
+  against what is RENDERED, never against a parallel list.** Closing it needed a new
+  `/inspection` page and `lifecycle.ts`'s two branch stages retargeted at the single
+  `rejected-unrepairable` page that documents both.
+- **`content/index.ts` and the `DOCS_CHAPTERS` catalogue under it are SUPERSEDED and unimported**
+  — kept, not deleted, because the prose is authored bilingual documentation (see that file's
+  header). `content/lifecycle.ts` and `content/heroCopy.ts` live in the same folder and are NOT
+  superseded; import them directly, never through `index.ts`.
 - Motion collapses to a static premium composition under reduced-motion / Lite Mode via
   `useDocsMotionMode()` (same merge as `useDownloadMotionMode`). Lite Mode forces
   `transform-style: flat`, which collapses the atlas's Z separation — `STATIC_PLANE_SPREAD`
@@ -232,24 +291,17 @@ Next.js App Router tree for a repair/service-item workflow tracker (item intake,
   `/download`: `useAmbientMotion` gates the atlas float, the yaw drift, the orbit chips, the
   scroll cue and the lifecycle pulse on `useInView` **and** `usePageInView`. A manual is read
   for minutes and left open for hours, so a loop driving a hero ten screens up — or a
-  backgrounded tab — is pure cost (§14). Measured: the rig produces 14 distinct transforms
-  over 14 samples while on screen and **1** while scrolled away or while the tab is hidden,
-  resuming on return. The one-shot load choreography still answers to `mode` alone; it is over
-  before any of this can matter.
-- `content/index.ts` runs a **dev-only integrity check** (dead-code-eliminated in production):
-  duplicate topic ids, and lifecycle stages whose `topicId` matches no topic. Both failures are
-  otherwise silent — a duplicate id sends every deep link to whichever card rendered first, and
-  an orphaned stage turns its stop on the rail into a dead click. There is no test runner in
-  this project (§15), so this is the substitute for the test that would otherwise catch them.
+  backgrounded tab — is pure cost (§14).
 - 3D-transform safety rules are inherited verbatim from `download/PhoneRig.tsx` and restated in
   `AtlasCore.tsx`'s header: no `backdrop-filter`, no `filter`, no `overflow-hidden` on any
-  `preserve-3d` ancestor. The atlas spine and floor grid are `lg:`-only because they are taller
-  than the rig and would otherwise escape a stacked mobile hero — the hero cannot clip them
-  without flattening the whole subtree.
+  `preserve-3d` ancestor.
+- `/` focuses the search box from anywhere on the page. The placeholder promised this for a long
+  time before anything implemented it.
 - Entry points: the **centred Docs pill** in `/login`'s top bar (`login/LoginChrome.tsx`), and
   cross-links in both `/download`'s header and its footer (`download.docsLink`, en + km). The
   three public pages point at each other: `/docs`'s own header carries the mirror-image link
   back to `/download`.
+
 
 ## `api/` — Next.js backend routes (proxy + auth + realtime)
 

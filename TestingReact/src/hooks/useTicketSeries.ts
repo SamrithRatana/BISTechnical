@@ -1,7 +1,8 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { fetchRepairServices } from "@/services/api";
+import { fetchRepairServices, getCached, type PaginatedResult } from "@/services/api";
+import { registerSessionCacheClearer } from "@/services/authSession";
 import type { RepairServiceItem } from "@/services/types";
 
 /**
@@ -38,16 +39,61 @@ const FETCH_SIZE = 400;
 let cache: RepairServiceItem[] | null = null;
 let inflight: Promise<RepairServiceItem[]> | null = null;
 
-async function loadTickets(force = false): Promise<RepairServiceItem[]> {
-  if (!force && cache) return cache;
+// Sign-in is now a soft navigation, so module state survives a logout/login
+// cycle in the same tab. Without this, the previous account's ticket sample
+// would seed the next account's sparklines. (The full-reload login used to
+// mask the omission.)
+registerSessionCacheClearer(() => {
+  cache = null;
+  inflight = null;
+});
+
+function hasUserFields(item?: RepairServiceItem): boolean {
+  if (!item) return false;
+  return Boolean(
+    item.repairByName ||
+    item.inspectByName ||
+    item.createdByName ||
+    item.verifiedByName ||
+    item.repairBy ||
+    item.inspectBy ||
+    item.createBy ||
+    item.verifiedBy
+  );
+}
+
+function getInitialTickets(): RepairServiceItem[] | null {
+  if (cache && (cache.length === 0 || hasUserFields(cache[0]))) {
+    return cache;
+  }
+  const prewarmed = getCached<PaginatedResult<RepairServiceItem>>(
+    "repairservices:All:page1:size400:search:xprojection=summary"
+  );
+  if (prewarmed?.items && prewarmed.items.length > 0) {
+    if (!hasUserFields(prewarmed.items[0])) {
+      return null;
+    }
+    cache = prewarmed.items;
+    return cache;
+  }
+  return null;
+}
+
+export function isTicketSeriesCached(): boolean {
+  return cache !== null && cache.length > 0;
+}
+
+export async function loadTickets(force = false): Promise<RepairServiceItem[]> {
+  if (!force && cache && (cache.length === 0 || hasUserFields(cache[0]))) {
+    return cache;
+  }
   if (!force && inflight) return inflight;
 
   inflight = (async () => {
     try {
-      // `projection: "summary"` asks the backend for id + status + the two
-      // dates and nothing else. Everything below reads exactly those; the full
-      // ticket was 901 KB for 400 rows against 39 KB of usable data, with the
-      // SparepartItems of every row along for the ride.
+      // `projection: "summary"` asks the backend for the lightweight summary
+      // projection (id, dates, status, reportNo, companyName, itemName, serialNumber,
+      // servicePriority, serviceType) while avoiding heavy SparepartItems.
       const res = await fetchRepairServices(1, FETCH_SIZE, "All", "", {
         projection: "summary",
       });
@@ -66,8 +112,9 @@ async function loadTickets(force = false): Promise<RepairServiceItem[]> {
 }
 
 export function useTicketSeries() {
-  const [items, setItems] = useState<RepairServiceItem[]>(cache ?? []);
-  const [loading, setLoading] = useState(cache === null);
+  const initial = getInitialTickets();
+  const [items, setItems] = useState<RepairServiceItem[]>(initial ?? []);
+  const [loading, setLoading] = useState(initial === null);
 
   const reload = useCallback(async () => {
     const next = await loadTickets(true);
