@@ -24,6 +24,7 @@ import GlobalSearch from "./GlobalSearch";
 import SystemStatus from "./SystemStatus";
 import ThemeToggle from "./ThemeToggle";
 import CompanionScannerHeaderButton from "./CompanionScannerHeaderButton";
+import PageHelpButton from "@/components/help/PageHelpButton";
 import { useCompanionScanner } from "@/context/CompanionScannerContext";
 
 interface HeaderProps {
@@ -228,6 +229,9 @@ export default function Header({ sidebarOpen, setSidebarOpen }: HeaderProps) {
 
   const renderRightControls = () => (
     <div className="flex items-center gap-2 sm:gap-2.5 shrink-0">
+      {/* Contextual Page Help Guide Button & F1 Handler */}
+      <PageHelpButton />
+
       {/* Mobile Companion Hardware Scanner Button */}
       <CompanionScannerHeaderButton />
 

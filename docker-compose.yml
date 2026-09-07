@@ -23,9 +23,27 @@ services:
       - NEXT_TELEMETRY_DISABLED=1
       - PORT=3000
       - HOSTNAME=0.0.0.0
-      - NEXT_PUBLIC_TECHNICAL_API_URL=http://technical-api:8000
-      - NEXT_PUBLIC_JWT_API_URL=http://user-auth-api:8087
-      - NEXT_PUBLIC_CUSTOMER_API_URL=http://employee-api:8081
+      - NEXT_PUBLIC_TECHNICAL_API_URL=${NEXT_PUBLIC_TECHNICAL_API_URL:-https://techapi.camprotec.com.kh}
+      - NEXT_PUBLIC_JWT_API_URL=${NEXT_PUBLIC_JWT_API_URL:-https://user.camprotec.com.kh}
+      - NEXT_PUBLIC_CUSTOMER_API_URL=${NEXT_PUBLIC_CUSTOMER_API_URL:-https://customerapi.camprotec.com.kh}
+      - NEXT_PUBLIC_API_VERSION=1.0
+      # Cloudflare R2 Storage (Image & Logo Uploads)
+      - R2_ACCOUNT_ID=${R2_ACCOUNT_ID:-57672dc64a9d68fea854c7fae5c824f4}
+      - R2_ACCESS_KEY_ID=${R2_ACCESS_KEY_ID:-924edff78284ac069f992b0a05601b77}
+      - R2_SECRET_ACCESS_KEY=${R2_SECRET_ACCESS_KEY:-59ee20266e96641c7e476a1b050c22b3d464ec95da42f9ac4d1f0bc8c0abedd3}
+      - R2_BUCKET_NAME=${R2_BUCKET_NAME:-cam-storage}
+      - R2_PUBLIC_BASE_URL=${R2_PUBLIC_BASE_URL:-https://pub-c837739939744d62afcc56caa2bda22b.r2.dev}
+      # Google Gemini AI (Beta AI Assistant)
+      - GEMINI_API_KEY=${GEMINI_API_KEY:-AQ.Ab8RN6JPKZugZI6whl7UwLgem42tO_iTO0MvCV94thuvEXw6ug}
+      # AI Image Generation & Fallback
+      - POLLINATIONS_API_KEY=${POLLINATIONS_API_KEY:-sk_NoSKUIcivP9SjAygcwVyyFmvKleuc8Vr}
+      - POLLINATIONS_MODEL=${POLLINATIONS_MODEL:-zimage}
+      - CLOUDFLARE_ACCOUNT_ID=${CLOUDFLARE_ACCOUNT_ID:-57672dc64a9d68fea854c7fae5c824f4}
+      - CLOUDFLARE_API_TOKEN=${CLOUDFLARE_API_TOKEN:-cfut_5EiJQ7Snd0TDylvWegceWQKQ0XSTRrgzS7inZIvxb3dcb634}
+      # Redis & Telegram
+      - REDIS_URL=${REDIS_URL:-rediss://default:gQAAAAAAAl7XAAIgcDE5NDg0MGE1YTgzNGM0YWMyODFjOGZmMTY3OTA5MzI3MA@relaxing-dinosaur-155351.upstash.io:6379}
+      - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN:-8312370431:AAG_mkyfjtplELy5KTnScYcPHZwqQNEAEQw}
+      - TELEGRAM_CHAT_ID=${TELEGRAM_CHAT_ID:--1004379506325}
     depends_on:
       - technical-api
       - user-auth-api
