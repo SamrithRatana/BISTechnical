@@ -20,7 +20,7 @@
  */
 
 const TECHNICAL_API_BASE =
-  process.env.NEXT_PUBLIC_TECHNICAL_API_URL || "https://technicalservicesapi.camprotec.com.kh";
+  process.env.NEXT_PUBLIC_TECHNICAL_API_URL || "https://techapi.camprotec.com.kh";
 const CUSTOMER_API_BASE =
   process.env.NEXT_PUBLIC_CUSTOMER_API_URL || "https://customerapi.camprotec.com.kh";
 const JWT_API_BASE =

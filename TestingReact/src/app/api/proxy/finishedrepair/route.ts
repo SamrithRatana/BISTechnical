@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { broadcast } from '@/services/eventBus';
 import { beginWrite } from '@/services/activityTracker';
 
-const BASE = process.env.NEXT_PUBLIC_TECHNICAL_API_URL || 'https://technicalservicesapi.camprotec.com.kh';
+const BASE = process.env.NEXT_PUBLIC_TECHNICAL_API_URL || 'https://techapi.camprotec.com.kh';
 const VER  = process.env.NEXT_PUBLIC_API_VERSION        || '1.0';
 
 /**

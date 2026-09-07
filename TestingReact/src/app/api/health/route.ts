@@ -25,7 +25,7 @@ export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
 const TECHNICAL_API_BASE =
-  process.env.NEXT_PUBLIC_TECHNICAL_API_URL || "https://technicalservicesapi.camprotec.com.kh";
+  process.env.NEXT_PUBLIC_TECHNICAL_API_URL || "https://techapi.camprotec.com.kh";
 
 /**
  * Give up after this long. Past it the system is unusable in practice, and a
