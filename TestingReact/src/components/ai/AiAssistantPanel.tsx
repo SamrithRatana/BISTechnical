@@ -102,7 +102,7 @@ export default function AiAssistantPanel() {
           <div className="flex flex-col min-w-0">
             <div className="flex items-center gap-1.5">
               <h2 className="text-xs font-bold text-ink truncate tracking-wide">
-                {isKhmer ? "បូណ៌មី BEAURAMEI" : "BEAURAMEI AI"}
+                {isKhmer ? "បេតា Beta AI" : "Beta AI"}
               </h2>
               <span className="px-1.5 py-0.5 rounded-full text-[9px] font-bold bg-accent-soft text-accent border border-accent/20">
                 Assistant
@@ -224,7 +224,7 @@ export default function AiAssistantPanel() {
               <Bot className="w-6 h-6" />
             </div>
             <p className="text-xs font-semibold text-ink mb-1">
-              {isKhmer ? "សូមស្វាគមន៍មកកាន់ ជំនួយការ AI!" : "Welcome to AI Assistant!"}
+              {isKhmer ? "សូមស្វាគមន៍មកកាន់ ជំនួយការ Beta AI!" : "Welcome to Beta AI Assistant!"}
             </p>
             <p className="text-xs text-ink-muted leading-relaxed max-w-xs">
               {t("ai.empty")}

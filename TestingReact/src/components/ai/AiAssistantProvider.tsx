@@ -153,7 +153,7 @@ export function AiAssistantProvider({ children }: { children: React.ReactNode })
   const [models, setModels] = useState<ModelStatus[]>([]);
   const [selectedModel, setSelectedModelState] = useState<string>(() => {
     if (typeof window !== "undefined") {
-      return localStorage.getItem("beauramei_ai_model") || "gemini-3.5-flash-lite";
+      return localStorage.getItem("beta_ai_model") || localStorage.getItem("beauramei_ai_model") || "gemini-3.5-flash-lite";
     }
     return "gemini-3.5-flash-lite";
   });
@@ -161,9 +161,9 @@ export function AiAssistantProvider({ children }: { children: React.ReactNode })
     setSelectedModelState(modelId);
     if (typeof window !== "undefined") {
       if (modelId) {
-        localStorage.setItem("beauramei_ai_model", modelId);
+        localStorage.setItem("beta_ai_model", modelId);
       } else {
-        localStorage.removeItem("beauramei_ai_model");
+        localStorage.removeItem("beta_ai_model");
       }
     }
   }, []);

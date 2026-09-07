@@ -163,7 +163,7 @@ export default function AiLauncher() {
           <div className="flex items-start justify-between gap-2 mb-1.5">
             <div className="flex items-center gap-1.5 text-xs font-bold text-accent ">
               <Sparkles className="w-3.5 h-3.5 text-accent animate-spin" style={{ animationDuration: "6s" }} />
-              <span>{isKhmer ? "ជំនួយការ AI" : "AI Assistant"}</span>
+              <span>{isKhmer ? "ជំនួយការ Beta AI" : "Beta AI"}</span>
               <span className="inline-flex items-center px-1.5 py-0.5 rounded-full text-[10px] bg-accent-soft text-accent border border-accent font-semibold">
                 Hi! 👋
               </span>
@@ -249,7 +249,7 @@ export default function AiLauncher() {
 
         {/* Label */}
         <span className="text-xs font-bold tracking-wide whitespace-nowrap text-white drop-shadow-xs font-sans">
-          {isKhmer ? "ជំនួយការ AI" : "AI Assistant"}
+          {isKhmer ? "ជំនួយការ Beta AI" : "Beta AI"}
         </span>
       </button>
     </div>,
