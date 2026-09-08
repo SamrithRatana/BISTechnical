@@ -54,6 +54,8 @@ export interface ReportDefinition {
   businessPurposeKm: string;
   columnsExplanationKm?: string[];
   columnsExplanationEn?: string[];
+  noteKm?: string;
+  noteEn?: string;
   exampleKm?: string;
   exampleEn?: string;
   href?: string;
@@ -257,11 +259,11 @@ export const ALL_REPORTS: ReportDefinition[] = [
     categoryNameKm: "ប្រតិបត្តិការជួសជុល",
     type: "excel",
     description: "Stage-by-stage ticket volume & bottleneck detection across the workflow.",
-    descriptionKm: "ជួយអ្នកគ្រប់គ្រងរកឃើញចំណុចកកស្ទះ (Bottleneck) ថាតើសំបុត្រកំពុងគាំងនៅដំណាក់កាលណាជាងគេ។",
-    databaseSource: "Real-time count and list of active tickets grouped by ServiceStatusId",
-    databaseSourceKm: "ចំនួន និងបញ្ជីសំបុត្រដែលកំពុងស្ថិតនៅតាមដំណាក់កាលនីមួយៗ (Received, Inspecting, Repairing, Verified)",
-    businessPurpose: "Identifies queue bottlenecks across all 11 lifecycle stages to reallocate technicians.",
-    businessPurposeKm: "ជា «ឧបករណ៍ស្វែងរកចំណុចកកស្ទះ (Bottleneck)» មើលថាតើសំបុត្រកំពុងគាំងនៅកន្លែងណា ដើម្បីដោះស្រាយបានទាន់ពេល។",
+    descriptionKm: "ជួយអ្នកគ្រប់គ្រងរកឃើញចំណុចកកស្ទះ (Bottleneck) ថាតើសំបុត្រកំពុងគាំងនៅដំណាក់កាលណា និងតាមដានប្រវត្តិសកម្មភាពតាមកាលបរិច្ឆេទ។",
+    databaseSource: "Process milestone activity logs matching selected Stage and Date Range (via useProcessDateFiltering)",
+    databaseSourceKm: "ទាញរាល់សំបុត្រដែលបានឆ្លងកាត់ ឬចូលដំណាក់កាលនោះ (Process Date) ក្នុងចន្លោះកាលបរិច្ឆេទកំណត់ ដោយមិនខ្វល់ថាសំបុត្រនោះបច្ចុប្បន្នកំពុងនៅដំណាក់កាលណា ឬជួសជុលរួចរាល់ហើយនោះទេ",
+    businessPurpose: "Identifies queue bottlenecks across all 11 lifecycle stages and audits stage throughput within any custom date range.",
+    businessPurposeKm: "ជា «ឧបករណ៍ស្វែងរកចំណុចកកស្ទះ (Bottleneck)» មើលថាតើសំបុត្រកំពុងគាំងនៅកន្លែងណា ដើម្បីដោះស្រាយបានទាន់ពេល។ របាយការណ៍នេះបង្ហាញរាល់សំបុត្រដែលបានឆ្លងកាត់ដំណាក់កាលដែលបានជ្រើសរើស (Status) ក្នុងចន្លោះថ្ងៃ ខែ ឆ្នាំកំណត់ — មិនខ្វល់ថាម៉ាស៊ីននោះបច្ចុប្បន្នកំពុងជួសជុល ឬបានបញ្ចប់រួចរាល់ហើយនោះទេ ឱ្យតែធ្លាប់មានសកម្មភាពក្នុងចន្លោះកាលបរិច្ឆេទនោះគឺទាញមកទាំងអស់!",
     columnsExplanationKm: [
       "• Action Date ៖ ថ្ងៃខែឆ្នាំដែលសំបុត្របានផ្លាស់ប្តូរដំណាក់កាល",
       "• Report # ៖ លេខកូដសំបុត្រជួសជុល",
@@ -280,8 +282,10 @@ export const ALL_REPORTS: ReportDefinition[] = [
       "• Performed By: Employee who executed the transition",
       "• Current Status: Live lifecycle stage",
     ],
-    exampleKm: "ឃើញមានសំបុត្រចំនួន ១៥ កំពុងជាប់គាំងនៅ `Awaiting Customer Confirm` យូរថ្ងៃ (មធ្យម ៣.៥ ថ្ងៃ) ➔ ប្រធានរោងជាងជំរុញឱ្យផ្នែកលក់ទូរស័ព្ទទៅភ្ញៀវភ្លាមៗដើម្បីពន្យល់តម្លៃ និងជួយភ្ញៀវសម្រេចចិត្ត។",
-    exampleEn: "15 tickets stalled in 'Awaiting Customer Confirm' (avg 3.5 days) -> Workshop head alerts sales to call customers immediately.",
+    noteKm: "📌 ចំណាំសំខាន់អំពីការច្រោះទិន្នន័យ (Process Date Filtering) ៖\nរបាយការណ៍នេះមិនខ្វល់ថាសំបុត្របច្ចុប្បន្នស្ថិតនៅដំណាក់កាលណាទៅដល់ណា ឬបានជួសជុលរួចរាល់ (Finished) ហើយនោះទេ គឺអាស្រ័យលើការជ្រើសរើស «ថ្ងៃ ខែ ឆ្នាំ» ជាមួយនឹង «Status (ដំណាក់កាល)»។ ប្រព័ន្ធនឹងទាញមករាល់សំបុត្រដែលបានចូល ឬមានសកម្មភាពក្នុងដំណាក់កាលនោះ ក្នុងចន្លោះថ្ងៃដែលបានជ្រើសរើស។\nឧទាហរណ៍ ៖ ម៉ាស៊ីនចូលថ្ងៃទី ០១ តែម៉ាស៊ីននេះបានជួសជុលរួចរាល់ហើយ (Finished)។ នៅពេលយើងចង់ស្វែងរកម៉ាស៊ីនដែលស្ថិតក្នុងដំណាក់កាល (ឧ. Item Recieved ឬ Inspecting) ក្នុងចន្លោះថ្ងៃទី ០១ នោះវានឹងបង្ហាញមកទាំងអស់ ទោះជាឥឡូវនេះម៉ាស៊ីននោះហើយរួចរាល់ក៏ដោយ ឱ្យតែចូលក្នុងថ្ងៃដែលបានកំណត់!",
+    noteEn: "📌 Important Note on Historical Process Filtering:\nThis report filters by the exact date milestone when tickets transitioned through the selected Stage/Status, regardless of where the ticket currently sits today (even if already Finished or Closed).\nExample: A machine arrived on Day 1 and has now been fully repaired. When filtering for Day 1 with Status 'Item Recieved', this machine will still be retrieved and displayed because it entered that stage during that timeframe!",
+    exampleKm: "១. ស្វែងរកចំណុចកកស្ទះ ៖ ឃើញមានសំបុត្រចំនួន ១៥ កំពុងជាប់គាំងនៅ `Awaiting Customer Confirm` យូរថ្ងៃ (មធ្យម ៣.៥ ថ្ងៃ) ➔ ប្រធានរោងជាងជំរុញឱ្យផ្នែកលក់ទូរស័ព្ទទៅភ្ញៀវភ្លាមៗដើម្បីពន្យល់តម្លៃ និងជួយភ្ញៀវសម្រេចចិត្ត។\n\n២. តាមដានប្រវត្តិម៉ាស៊ីនចូលតាមកាលបរិច្ឆេទ ៖ ម៉ាស៊ីនចូលថ្ងៃទី ០១ ហើយបច្ចុប្បន្នជួសជុលរួចរាល់ហើយក្តី តែពេលយើងចង់រកម៉ាស៊ីនដែលចូលក្នុងចន្លោះថ្ងៃទី ០១ ដោយជ្រើស Status `Item Recieved` វានឹងទាញម៉ាស៊ីននោះមកបង្ហាញទាំងអស់ មិនបាត់បង់ទិន្នន័យឡើយ។",
+    exampleEn: "1. Bottleneck Detection: 15 tickets stalled in 'Awaiting Customer Confirm' (avg 3.5 days) -> Workshop head alerts sales to call customers immediately.\n2. Milestone Audit: A machine received on Day 1 is already finished today. Filtering for Day 1 with 'Item Recieved' still retrieves this machine, preserving complete historical visibility.",
     href: "/stage-report",
     columns: [],
   },

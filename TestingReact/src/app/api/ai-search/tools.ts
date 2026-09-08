@@ -27,9 +27,11 @@ import {
   searchTickets,
   querySparepartTransactions,
   querySparepartUsage,
+  queryUserActivity,
   type TicketQuery,
   type UserRecord,
 } from "./backend";
+import { getActiveLoginSessions } from "@/lib/loginSessionTracker";
 import { KNOWLEDGE_TOPICS, describeApplication } from "./knowledge";
 import { ALL_NAV_ITEMS } from "@/config/navigation";
 import { TRIGGERABLE_ACTION_IDS } from "@/config/actions";
@@ -227,13 +229,31 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
   {
     name: "find_users",
     description:
-      "Look up system user accounts by name, username, email or role, and read their assigned roles. Use this for questions about people, accounts, roles and permissions, and to confirm a staff member's exact name before filtering tickets by them.",
+      "Look up system user accounts by name, username, email or role, and read their assigned roles and online/offline status. Use this for questions about people, accounts, roles and permissions, and to confirm a staff member's exact name before filtering tickets by them.",
     parameters: {
       type: "object",
       properties: {
         searchTerm: {
           type: "string",
           description: "Name, username, email or role fragment. Omit to list every user.",
+        },
+      },
+    },
+  },
+  {
+    name: "query_user_activity",
+    description:
+      "Query user activity across the whole system for a date: who is currently logged in and online right now (Active Sessions with devices and roles), which staff performed ticket operations (who created, inspected, repaired, verified tickets), who moved spare-part stock, and the complete directory breakdown of all registered users in the organization. Always call this whenever asked about user activity ('តើថ្ងៃនេះមាន user ណាខ្លះធ្វើសកម្មភាព', 'នរណាខ្លះធ្វើការថ្ងៃនេះ'), who is currently active/online ('user ណាខ្លះកំពុង online / ប្រើប្រាស់'), or what staff members exist.",
+    parameters: {
+      type: "object",
+      properties: {
+        date: {
+          type: "string",
+          description: "The calendar date to check activities for, YYYY-MM-DD. Defaults to today.",
+        },
+        userName: {
+          type: "string",
+          description: "Optional specific staff username or full name to check activity for.",
         },
       },
     },
@@ -522,6 +542,7 @@ export async function runTool(
 
       case "find_users": {
         const users = await ctx.getUsers();
+        const sessions = getActiveLoginSessions();
         const needle = term.toLowerCase();
         const hits = needle
           ? users.filter((u) =>
@@ -538,8 +559,16 @@ export async function runTool(
             userName: u.userName,
             email: u.email,
             roles: u.roles,
+            isOnline: sessions.some((s) => s.userName.toLowerCase() === u.userName.toLowerCase() && !s.isRevoked),
           })),
         };
+      }
+
+      case "query_user_activity": {
+        const users = await ctx.getUsers();
+        const date = typeof input.date === "string" && input.date ? input.date : new Date().toISOString().slice(0, 10);
+        const targetUserName = typeof input.userName === "string" ? input.userName.trim() : undefined;
+        return await queryUserActivity(date, targetUserName, ctx.authorization, users, ctx.signal);
       }
 
       case "get_dashboard_stats":

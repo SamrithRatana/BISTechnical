@@ -53,6 +53,7 @@ export default function AuthGuard({ children }: { children: React.ReactNode }) {
   const endSession = useCallback(() => {
     if (typeof window !== "undefined") {
       sessionStorage.removeItem("workspace_pipeline_synced");
+      sessionStorage.removeItem("workspace_dashboard_prewarmed_v1");
       localStorage.removeItem("last_workspace_sync_time");
     }
     clearSession();

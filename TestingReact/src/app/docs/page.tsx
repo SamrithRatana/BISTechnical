@@ -68,12 +68,37 @@ function DocsPageInner() {
 
       setActiveArticleId(articleId);
 
-      setTimeout(() => {
-        const targetElement = document.getElementById(hash) || document.getElementById(READER_SECTION_ID);
+      const subTarget = hash.includes("--") ? hash.split("--")[1] : null;
+
+      let attempts = 0;
+      const scrollToTarget = () => {
+        const targetElement =
+          (subTarget ? document.getElementById(subTarget) : null) ||
+          (subTarget ? document.getElementById(`report-${subTarget}`) : null) ||
+          document.getElementById(hash) ||
+          (attempts >= 6 ? document.getElementById(READER_SECTION_ID) : null);
+
         if (targetElement) {
-          targetElement.scrollIntoView({ behavior: "smooth", block: "start" });
+          targetElement.scrollIntoView({
+            behavior: "smooth",
+            block: subTarget ? "center" : "start",
+          });
+
+          if (subTarget) {
+            targetElement.classList.remove("doc-target-highlight");
+            void (targetElement as HTMLElement).offsetWidth;
+            targetElement.classList.add("doc-target-highlight");
+            setTimeout(() => {
+              targetElement.classList.remove("doc-target-highlight");
+            }, 3600);
+          }
+        } else if (attempts < 8) {
+          attempts++;
+          setTimeout(scrollToTarget, 80);
         }
-      }, 100);
+      };
+
+      setTimeout(scrollToTarget, 60);
     };
 
     readHash();

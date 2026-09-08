@@ -14,6 +14,7 @@ import {
   ChevronDown,
   ChevronUp,
   TableProperties,
+  BookmarkCheck,
 } from "lucide-react";
 import { ALL_REPORTS, REPORT_CATEGORIES } from "@/services/reportCatalog";
 import { useDocsText } from "./useDocsText";
@@ -52,6 +53,21 @@ export default function DocsReportCatalogTable({ filterCategory = "all" }: DocsR
       setShowAllDetails(true);
     }
   };
+
+  React.useEffect(() => {
+    const handleHash = () => {
+      const hash = window.location.hash.replace("#", "");
+      if (!hash) return;
+      const sub = hash.includes("--") ? hash.split("--")[1] : hash;
+      const rep = ALL_REPORTS.find((r) => r.id === sub || `report-${r.id}` === sub);
+      if (rep) {
+        setExpandedIds((prev) => new Set([...prev, rep.id]));
+      }
+    };
+    handleHash();
+    window.addEventListener("hashchange", handleHash);
+    return () => window.removeEventListener("hashchange", handleHash);
+  }, []);
 
   const filtered = useMemo(() => {
     return ALL_REPORTS.filter((r) => {
@@ -190,11 +206,19 @@ export default function DocsReportCatalogTable({ filterCategory = "all" }: DocsR
               const exampleText = isKhmer ? rep.exampleKm : rep.exampleEn;
               const columnExps = isKhmer ? rep.columnsExplanationKm : rep.columnsExplanationEn;
               const purposeText = isKhmer ? rep.businessPurposeKm : rep.businessPurpose;
+              const noteText = isKhmer ? rep.noteKm : rep.noteEn;
 
               return (
                 <React.Fragment key={rep.id}>
-                  <tr className={`transition-colors ${isDark ? "hover:bg-white/[0.02]" : "hover:bg-slate-50"}`}>
-                    <td className={`py-3.5 px-3 text-center font-mono align-top pt-4 ${isDark ? "text-slate-500" : "text-slate-600"}`}>{idx + 1}</td>
+                  <tr
+                    id={rep.id}
+                    data-report-id={rep.id}
+                    className={`transition-colors scroll-mt-28 ${isDark ? "hover:bg-white/[0.02]" : "hover:bg-slate-50"}`}
+                  >
+                    <td className={`py-3.5 px-3 text-center font-mono align-top pt-4 ${isDark ? "text-slate-500" : "text-slate-600"}`}>
+                      <span id={`report-${rep.id}`} className="sr-only" />
+                      {idx + 1}
+                    </td>
                     <td className="py-3.5 px-4 align-top">
                       <div className={`font-bold text-[13px] ${isDark ? "text-white" : "text-slate-900"}`}>{isKhmer ? rep.nameKm : rep.name}</div>
                       <div className={`text-[11px] font-mono mt-0.5 ${isDark ? "text-violet-400" : "text-violet-700"}`}>{rep.href || "/templates-settings"}</div>
@@ -259,6 +283,21 @@ export default function DocsReportCatalogTable({ filterCategory = "all" }: DocsR
                               {purposeText}
                             </p>
                           </div>
+
+                          {/* 1.1 📌 ចំណាំសំខាន់អំពីការទាញទិន្នន័យ (ប្រសិនបើមាន) */}
+                          {noteText && (
+                            <div className={`rounded-xl border p-3.5 shadow-sm ${isDark ? "border-sky-500/35 bg-sky-950/25" : "border-sky-600 bg-sky-50/90 text-sky-950"}`}>
+                              <div className="flex items-center gap-1.5 mb-1.5">
+                                <BookmarkCheck className={`h-4 w-4 shrink-0 ${isDark ? "text-sky-400" : "text-sky-700"}`} />
+                                <span className={`text-xs font-bold ${isDark ? "text-sky-300" : "text-sky-800"}`}>
+                                  {isKhmer ? "📌 ចំណាំសំខាន់អំពីរបាយការណ៍នេះ ៖" : "📌 Important Note:"}
+                                </span>
+                              </div>
+                              <div className={`text-xs leading-relaxed whitespace-pre-line break-words pl-3 border-l-2 font-medium ${isDark ? "border-sky-500/40 text-sky-100" : "border-sky-600 text-sky-950"}`}>
+                                {noteText}
+                              </div>
+                            </div>
+                          )}
 
                           {/* 2. 📋 ពន្យល់ជួរឈរ (Columns) ៖ */}
                           {columnExps && columnExps.length > 0 && (

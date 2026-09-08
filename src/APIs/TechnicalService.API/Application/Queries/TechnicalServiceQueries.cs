@@ -1301,10 +1301,11 @@ public class TechnicalServiceQueries(TechnicalServiceContext context)
             .GroupBy(_ => 1)
             .Select(g => new
             {
-                Total = g.Count(),
-                Good = g.Count(s => s.Quantity > 2),
-                Critical = g.Count(s => s.Quantity > 0 && s.Quantity <= 2),
-                Out = g.Count(s => s.Quantity <= 0)
+                Total = g.Count(s => !s.IsDraft),
+                Good = g.Count(s => !s.IsDraft && s.Quantity > 2),
+                Critical = g.Count(s => !s.IsDraft && s.Quantity > 0 && s.Quantity <= 2),
+                Out = g.Count(s => !s.IsDraft && s.Quantity <= 0),
+                Draft = g.Count(s => s.IsDraft)
             })
             .FirstOrDefaultAsync();
 
@@ -1312,27 +1313,40 @@ public class TechnicalServiceQueries(TechnicalServiceContext context)
         var goodCount = counts?.Good ?? 0;
         var criticalCount = counts?.Critical ?? 0;
         var outCount = counts?.Out ?? 0;
+        var draftCount = counts?.Draft ?? 0;
 
-        // Apply StockBand filter if specified
+        // Apply StockBand filter if specified.
+        // Default behavior across the ENTIRE system: only show non-draft spareparts (!s.IsDraft).
+        // Only when explicitly requesting "draft" stock band or query.IsDraft == true, show drafted parts.
         var spareparts = baseQuery;
-        if (!string.IsNullOrWhiteSpace(query.StockBand) && !string.Equals(query.StockBand, "all", StringComparison.OrdinalIgnoreCase))
+        int totalCount;
+        if (string.Equals(query.StockBand, "draft", StringComparison.OrdinalIgnoreCase) || query.IsDraft == true)
         {
-            spareparts = query.StockBand.ToLower() switch
+            spareparts = spareparts.Where(s => s.IsDraft);
+            totalCount = draftCount;
+        }
+        else
+        {
+            spareparts = spareparts.Where(s => !s.IsDraft);
+            if (!string.IsNullOrWhiteSpace(query.StockBand) && !string.Equals(query.StockBand, "all", StringComparison.OrdinalIgnoreCase))
             {
-                "good" => spareparts.Where(s => s.Quantity > 2),
-                "critical" => spareparts.Where(s => s.Quantity > 0 && s.Quantity <= 2),
-                "out" => spareparts.Where(s => s.Quantity <= 0),
-                _ => spareparts
+                spareparts = query.StockBand.ToLower() switch
+                {
+                    "good" => spareparts.Where(s => s.Quantity > 2),
+                    "critical" => spareparts.Where(s => s.Quantity > 0 && s.Quantity <= 2),
+                    "out" => spareparts.Where(s => s.Quantity <= 0),
+                    _ => spareparts
+                };
+            }
+
+            totalCount = query.StockBand?.ToLower() switch
+            {
+                "good" => goodCount,
+                "critical" => criticalCount,
+                "out" => outCount,
+                _ => totalAll
             };
         }
-
-        var totalCount = query.StockBand?.ToLower() switch
-        {
-            "good" => goodCount,
-            "critical" => criticalCount,
-            "out" => outCount,
-            _ => totalAll
-        };
 
         // Apply sorting
         spareparts = query.SortBy?.ToLower() switch
@@ -1371,6 +1385,7 @@ public class TechnicalServiceQueries(TechnicalServiceContext context)
                 LinkItemId = p.LinkItemId,
                 Quantity = p.Quantity,
                 DefaultPrice = p.DefaultPrice,
+                IsDraft = p.IsDraft,
                 CategoryId = p.CategoryId,
                 CategoryName = p.Category != null ? p.Category.Name : null,
                 TypeId = p.TypeId,
@@ -1386,7 +1401,8 @@ public class TechnicalServiceQueries(TechnicalServiceContext context)
             TotalAll = totalAll,
             GoodCount = goodCount,
             CriticalCount = criticalCount,
-            OutOfStockCount = outCount
+            OutOfStockCount = outCount,
+            DraftCount = draftCount
         };
     }
 
@@ -2274,6 +2290,7 @@ public class TechnicalServiceQueries(TechnicalServiceContext context)
                 LinkItemId = p.LinkItemId,
                 Quantity = p.Quantity,
                 DefaultPrice = p.DefaultPrice,
+                IsDraft = p.IsDraft,
                 CategoryId = p.CategoryId,
                 CategoryName = p.Category != null ? p.Category.Name : null,
                 TypeId = p.TypeId,

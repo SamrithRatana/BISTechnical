@@ -90,13 +90,18 @@ public class UpdateRepairServiceCommandHandler : IRequestHandler<UpdateRepairSer
 
         foreach (var part in incomingList)
         {
-            partList.Add(new SparepartItem(
+            var item = new SparepartItem(
                 part.SparepartId,
                 part.Description,
                 part.Quantity,
                 EnumParsing.Parse<SparepartCondition>(part.Condition, "Condition"),
                 isHoldStatus,
-                part.Remarks));
+                part.Remarks);
+            if (part.Id.HasValue && part.Id.Value != Guid.Empty)
+            {
+                item.Update(part.Id.Value);
+            }
+            partList.Add(item);
         }
 
         var serviceDate = command.ServiceDate.Kind == DateTimeKind.Utc

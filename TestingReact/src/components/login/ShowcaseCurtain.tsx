@@ -21,10 +21,21 @@
 
 import React from "react";
 import { AnimatePresence, motion } from "framer-motion";
-import { ArrowLeft, ShieldCheck } from "lucide-react";
+import {
+  Activity,
+  ArrowLeft,
+  Bot,
+  Package,
+  ShieldCheck,
+  Sparkles,
+  Wrench,
+  Zap,
+} from "lucide-react";
 import { useI18n } from "@/i18n/LanguageProvider";
+import { useTheme } from "@/theme/ThemeProvider";
+import { useBrandLogo } from "@/services/brandLogoStore";
+import BrandLogo from "@/components/BrandLogo";
 import BrandChip from "./BrandChip";
-import ShowcaseSpotlight from "./ShowcaseSpotlight";
 import { AUTH_METHODS } from "./constants";
 import { CURTAIN_EASE, DUR, REVEAL_EASE, SHEAR } from "./motion";
 import type { HoloTriad } from "./color";
@@ -39,6 +50,8 @@ interface ShowcaseCurtainProps {
 
 export default function ShowcaseCurtain({ selectorOpen, mode, holo, onBack }: ShowcaseCurtainProps) {
   const { lang, t } = useI18n();
+  const { isDark, prefs } = useTheme();
+  const brandLogo = useBrandLogo();
   const full = mode === "full";
 
   // Travel direction: opening the selector sweeps LEFT (blades trail right,
@@ -68,8 +81,10 @@ export default function ShowcaseCurtain({ selectorOpen, mode, holo, onBack }: Sh
           : { duration: 0 }
       }
       style={{
-        backgroundColor: "#070d16",
-        backgroundImage: `linear-gradient(150deg, ${holo.a} 0%, ${holo.a}b3 32%, #0b1a2e 68%, #08101d 100%)`,
+        backgroundColor: isDark ? "#070d16" : "#091c2b",
+        backgroundImage: isDark
+          ? `linear-gradient(150deg, ${holo.a} 0%, ${holo.a}b3 32%, #0b1a2e 68%, #08101d 100%)`
+          : `linear-gradient(155deg, ${holo.a}cc 0%, #0d2838 35%, #091a27 75%, #06131e 100%)`,
         willChange: "transform",
         backfaceVisibility: "hidden",
         WebkitBackfaceVisibility: "hidden",
@@ -126,27 +141,21 @@ export default function ShowcaseCurtain({ selectorOpen, mode, holo, onBack }: Sh
 
       <AnimatePresence mode="wait">
         {!selectorOpen ? (
-          /* ── SIGN-IN MODE: brand header + feature spotlight ── */
+          /* ── SIGN-IN MODE: Clean Brand Logo & System Functions ── */
           <motion.div
             key={`overlay-signin-${lang}`}
             initial={{ opacity: 0, x: 20 }}
             animate={{ opacity: 1, x: 0 }}
             exit={{ opacity: 0, x: -20 }}
             transition={contentTransition}
-            className="relative z-10 flex flex-col h-full gap-1.5 xl:gap-2.5"
+            className="relative z-10 flex flex-col justify-between h-full p-1 sm:p-2"
           >
+            {/* Top header bar */}
             <div className="flex items-center justify-between gap-2 shrink-0">
-              <div className="flex items-center gap-2 xl:gap-2.5 min-w-0">
-                <BrandChip size="sm" />
-                <div className="min-w-0">
-                  <span className="text-[8.5px] xl:text-[9.5px] font-bold uppercase tracking-wider text-white/90 bg-white/15 px-2.5 py-0.5 rounded-full border border-white/20 shadow-xs inline-block">
-                    {lang === "km" ? "ប្រព័ន្ធកម្រិតសហគ្រាស" : "Enterprise Edition"}
-                  </span>
-                  <h3 className="text-xs sm:text-sm font-bold text-white tracking-tight mt-0.5 truncate">
-                    {t("login.brandTitle")}
-                  </h3>
-                </div>
-              </div>
+              <span className="text-[9px] xl:text-[10px] font-bold uppercase tracking-wider text-white/90 bg-white/15 px-3 py-1 rounded-full border border-white/20 shadow-xs inline-flex items-center gap-1.5">
+                <Sparkles className="w-3 h-3 text-emerald-300" />
+                <span>{lang === "km" ? "ប្រព័ន្ធកម្រិតសហគ្រាស • Enterprise Portal" : "Enterprise Edition • v2.4"}</span>
+              </span>
 
               <span className="flex items-center gap-1.5 text-[10px] font-mono text-emerald-300 bg-emerald-950/40 px-2.5 py-1 rounded-full border border-emerald-500/30 shadow-xs shrink-0">
                 <span className={`w-1.5 h-1.5 rounded-full bg-emerald-400 ${full ? "animate-pulse" : ""}`} />
@@ -154,7 +163,116 @@ export default function ShowcaseCurtain({ selectorOpen, mode, holo, onBack }: Sh
               </span>
             </div>
 
-            <ShowcaseSpotlight mode={mode} />
+            {/* Central Brand Identity & Hero Logo */}
+            <div className="flex flex-col items-center justify-center text-center my-auto py-2 space-y-3">
+              {/* Prominent Logo Container with glowing aura */}
+              <div className="relative group">
+                <div
+                  className="absolute -inset-2 rounded-3xl opacity-70 blur-xl transition-all duration-500 group-hover:opacity-100 pointer-events-none"
+                  style={{ backgroundColor: `${holo.a}50` }}
+                />
+                <div className="relative w-20 h-20 sm:w-24 sm:h-24 rounded-3xl bg-white/10 backdrop-blur-xl border border-white/30 p-3 shadow-2xl flex items-center justify-center ring-4 ring-white/10">
+                  {brandLogo ? (
+                    <BrandLogo
+                      src={brandLogo}
+                      alt="Logo"
+                      style={{ transform: `scale(${(prefs.logoScale ?? 130) / 100})` }}
+                      className="w-full h-full object-contain drop-shadow-md"
+                    />
+                  ) : (
+                    <ShieldCheck className="w-10 h-10 text-white" />
+                  )}
+                </div>
+              </div>
+
+              {/* Title & Subtitle */}
+              <div className="space-y-1 max-w-md mx-auto">
+                <h3 className="text-base sm:text-lg xl:text-xl font-black text-white tracking-tight leading-snug">
+                  {lang === "km"
+                    ? "ប្រព័ន្ធគ្រប់គ្រងការងារបច្ចេកទេស និងជួសជុល"
+                    : "Technical & Repair Management System"}
+                </h3>
+                <p className="text-[11px] sm:text-xs font-semibold tracking-wide text-emerald-300/90 uppercase">
+                  {t("login.brandTitle")}
+                </p>
+                <p className="text-[10.5px] sm:text-[11px] text-white/70 max-w-xs mx-auto leading-relaxed pt-0.5">
+                  {lang === "km"
+                    ? "ដំណោះស្រាយគ្រប់គ្រងការងារជួសជុល ស្តុកគ្រឿងបន្លាស់ និងតាមដានទិន្នន័យ Telemetry"
+                    : "Unified solution for repair lifecycle, spare parts inventory & live telemetry"}
+                </p>
+              </div>
+
+              {/* Core System Functions (Clean Minimalist 2x2 Grid) */}
+              <div className="grid grid-cols-2 gap-2 w-full max-w-sm pt-1">
+                <div className="flex items-center gap-2 p-2 rounded-xl bg-white/[0.08] hover:bg-white/[0.12] border border-white/15 text-left transition-colors">
+                  <div className="w-7 h-7 rounded-lg bg-emerald-500/20 border border-emerald-500/30 flex items-center justify-center text-emerald-300 shrink-0">
+                    <Wrench className="w-3.5 h-3.5" />
+                  </div>
+                  <div className="min-w-0">
+                    <p className="text-[11px] font-bold text-white truncate">
+                      {lang === "km" ? "សេវាកម្មជួសជុល" : "Repair Services"}
+                    </p>
+                    <p className="text-[9px] text-white/60 truncate">
+                      {lang === "km" ? "តាមដានគ្រប់ដំណាក់កាល" : "End-to-end Tracking"}
+                    </p>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-2 p-2 rounded-xl bg-white/[0.08] hover:bg-white/[0.12] border border-white/15 text-left transition-colors">
+                  <div className="w-7 h-7 rounded-lg bg-cyan-500/20 border border-cyan-500/30 flex items-center justify-center text-cyan-300 shrink-0">
+                    <Package className="w-3.5 h-3.5" />
+                  </div>
+                  <div className="min-w-0">
+                    <p className="text-[11px] font-bold text-white truncate">
+                      {lang === "km" ? "ស្តុកគ្រឿងបន្លាស់" : "Spare Parts"}
+                    </p>
+                    <p className="text-[9px] text-white/60 truncate">
+                      {lang === "km" ? "កាត់ស្តុក Real-Time" : "Real-time Stock"}
+                    </p>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-2 p-2 rounded-xl bg-white/[0.08] hover:bg-white/[0.12] border border-white/15 text-left transition-colors">
+                  <div className="w-7 h-7 rounded-lg bg-teal-500/20 border border-teal-500/30 flex items-center justify-center text-teal-300 shrink-0">
+                    <Activity className="w-3.5 h-3.5" />
+                  </div>
+                  <div className="min-w-0">
+                    <p className="text-[11px] font-bold text-white truncate">
+                      {lang === "km" ? "ទិន្នន័យ Telemetry" : "Live Telemetry"}
+                    </p>
+                    <p className="text-[9px] text-white/60 truncate">
+                      {lang === "km" ? "KPIs & របាយការណ៍" : "Real-time Insights"}
+                    </p>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-2 p-2 rounded-xl bg-white/[0.08] hover:bg-white/[0.12] border border-white/15 text-left transition-colors">
+                  <div className="w-7 h-7 rounded-lg bg-purple-500/20 border border-purple-500/30 flex items-center justify-center text-purple-300 shrink-0">
+                    <Bot className="w-3.5 h-3.5" />
+                  </div>
+                  <div className="min-w-0">
+                    <p className="text-[11px] font-bold text-white truncate">
+                      {lang === "km" ? "ជំនួយការ AI" : "AI Intelligence"}
+                    </p>
+                    <p className="text-[9px] text-white/60 truncate">
+                      {lang === "km" ? "ស្វែងរក និងវិភាគ" : "Smart Search & Assist"}
+                    </p>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Bottom footnote */}
+            <div className="flex items-center justify-between text-[10px] text-white/60 border-t border-white/15 pt-2 shrink-0">
+              <span className="flex items-center gap-1 text-emerald-300/90 font-medium">
+                <ShieldCheck className="w-3 h-3 text-emerald-400" />
+                <span>{lang === "km" ? "សុវត្ថិភាពសហគ្រាស Zero-Trust" : "Zero-Trust Security"}</span>
+              </span>
+              <span className="flex items-center gap-1 text-cyan-300/80 font-mono text-[9.5px]">
+                <Zap className="w-2.5 h-2.5 text-cyan-400" />
+                <span>{lang === "km" ? "ភ្ជាប់បណ្តាញ Microservices" : "Real-Time Engine"}</span>
+              </span>
+            </div>
           </motion.div>
         ) : (
           /* ── SELECTOR MODE: multi-factor security brief ── */

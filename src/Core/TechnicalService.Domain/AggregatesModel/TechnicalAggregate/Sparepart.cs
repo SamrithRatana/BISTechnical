@@ -1,4 +1,4 @@
-﻿using System.ComponentModel.DataAnnotations;
+using System.ComponentModel.DataAnnotations;
 namespace TechnicalService.Domain.AggregatesModel.TechnicalAggregate;
 public class Sparepart : Entity
 {
@@ -11,6 +11,7 @@ public class Sparepart : Entity
     public int Quantity { get; private set; }
     public Guid LinkItemId { get; private set; }
     public decimal DefaultPrice { get; private set; }
+    public bool IsDraft { get; private set; }
 
     // ── Classification (all optional; the pre-existing catalogue has none) ──
     // Category → Type is a hierarchy; Brand is independent of both.
@@ -29,7 +30,8 @@ public class Sparepart : Entity
     public Sparepart(string itemName, string serialNumber, string description,
         string useFor, string pictureUrl, Guid linkItemId,
         int quantity = 0, decimal defaultPrice = 0,
-        Guid? categoryId = null, Guid? typeId = null, Guid? brandId = null)
+        Guid? categoryId = null, Guid? typeId = null, Guid? brandId = null,
+        bool isDraft = false)
     {
         ItemName = itemName;
         SerialNumber = serialNumber;
@@ -39,6 +41,7 @@ public class Sparepart : Entity
         Quantity = quantity >= 0 ? quantity : 0;
         LinkItemId = linkItemId;
         DefaultPrice = defaultPrice >= 0 ? defaultPrice : 0;
+        IsDraft = isDraft;
         SetClassification(categoryId, typeId, brandId);
     }
 
@@ -107,5 +110,10 @@ public class Sparepart : Entity
             return false;
         Quantity -= amount;
         return true;
+    }
+
+    public void SetDraft(bool isDraft)
+    {
+        IsDraft = isDraft;
     }
 }

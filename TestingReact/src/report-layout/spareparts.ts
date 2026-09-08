@@ -38,7 +38,35 @@ function pickNumber(source: Dict, ...keys: string[]): number | undefined {
 
 /** The identifier a ticket line uses to point at a catalogue part. */
 export function sparePartLineId(raw: ReportSparePartLike): string {
-  return pick(raw as Dict, "sparepartId", "SparepartId", "sparePartId", "SparePartId", "id", "Id");
+  const line = raw as Dict;
+  const candidates = [
+    line.sparePartId,
+    line.sparepartId,
+    line.SparePartId,
+    line.SparepartId,
+    line.partId,
+    line.PartId,
+  ];
+  for (const val of candidates) {
+    if (val != null && typeof val === "string") {
+      const trimmed = val.trim();
+      if (trimmed && trimmed !== "00000000-0000-0000-0000-000000000000") {
+        return trimmed;
+      }
+    }
+  }
+  const rawId = line.id ?? line.Id;
+  if (rawId != null && typeof rawId === "string") {
+    const trimmed = rawId.trim();
+    if (
+      trimmed &&
+      !trimmed.startsWith("part-") &&
+      trimmed !== "00000000-0000-0000-0000-000000000000"
+    ) {
+      return trimmed;
+    }
+  }
+  return "";
 }
 
 /**
@@ -80,15 +108,18 @@ export function resolveSparePartRow(
   const match = inventoryMatch ?? {};
 
   const itemName =
-    pick(match, "itemName", "partName") ||
+    pick(match, "itemName", "partName", "name") ||
     pick(line, "itemName", "ItemName", "description", "Description") ||
     "—";
 
-  const useFor = pick(match, "useFor") || pick(line, "useFor", "UseFor") || "—";
+  const useFor =
+    pick(match, "useFor", "compatibleModel") ||
+    pick(line, "useFor", "UseFor", "compatibleModel") ||
+    "—";
 
   let partNo =
-    pick(match, "serialNumber", "partNumber") ||
-    pick(line, "partNumber", "PartNumber", "serialNumber", "SerialNumber");
+    pick(match, "partNumber", "serialNumber", "code", "partNo") ||
+    pick(line, "partNumber", "PartNumber", "serialNumber", "SerialNumber", "code");
 
   // A raw GUID is the ticket line's own primary key leaking through, not a
   // part number; so is anything longer than a real catalogue code.

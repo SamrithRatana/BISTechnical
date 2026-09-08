@@ -21,6 +21,8 @@ const en = {
 
   // ─── Sidebar navigation ───────────────────────────────────────────────────
   "nav.homeDashboard": "Home Dashboard",
+  "nav.groupAdministration": "System Administration",
+  "nav.systemObservability": "System Observability & Monitoring",
   "nav.groupInventory": "Inventory Items",
   "nav.receivedItemsInventory": "Received Items Inventory",
   "nav.sparePartInventory": "SparePart Items Inventory",
@@ -298,6 +300,11 @@ const en = {
   "sp.stockGood": "GOOD STOCK",
   "sp.stockCritical": "CRITICAL",
   "sp.stockOut": "OUT OF STOCK",
+  "sp.stockDraft": "DRAFT / HIDDEN",
+  "sp.markDraft": "Hide (Draft)",
+  "sp.markUndraft": "Restore (Undraft)",
+  "sp.draftSuccess": "Sparepart moved to draft",
+  "sp.undraftSuccess": "Sparepart restored from draft",
   "sp.stockLevel": "{qty} in stock",
   "sp.filterAll": "All",
   "sp.loadedOf": "{loaded} of {total}",

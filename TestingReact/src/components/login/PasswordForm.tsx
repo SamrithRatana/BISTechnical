@@ -42,7 +42,7 @@ interface PasswordFormProps {
 }
 
 const INPUT_CLASS =
-  "relative w-full pl-8 sm:pl-9 pr-3 py-1 sm:py-1.5 xl:py-2 text-[11.5px] sm:text-xs bg-slate-50/90 hover:bg-slate-100/60 focus:bg-white text-slate-900 placeholder-slate-400 border border-slate-200/90 rounded-xl focus:outline-none focus:border-transparent dark:bg-slate-950/80 dark:hover:bg-slate-950/90 dark:focus:bg-slate-950 dark:text-white dark:placeholder-slate-500 dark:border-white/[0.12] transition-colors font-medium shadow-inner";
+  "relative w-full pl-8 sm:pl-9 pr-3 py-1.5 sm:py-2 text-[12px] sm:text-xs bg-slate-50 hover:bg-slate-100/80 focus:bg-white text-slate-800 placeholder-slate-400 border border-slate-300/90 rounded-xl focus:outline-none focus:border-transparent dark:bg-slate-950/80 dark:hover:bg-slate-950/90 dark:focus:bg-slate-950 dark:text-white dark:placeholder-slate-500 dark:border-white/[0.12] transition-colors font-medium shadow-xs";
 
 export default function PasswordForm({
   userName,

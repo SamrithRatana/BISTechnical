@@ -112,10 +112,10 @@ export const REPORTS_SECTION: DocsSectionGroup = {
       callouts: [
         {
           type: "tip",
-          titleKm: "គន្លឹះយល់ដឹង៖ ស្វែងរកចំណុចកកស្ទះ (Bottleneck Detection)",
-          titleEn: "Bottleneck Detection",
-          contentKm: "របាយការណ៍ `Stage Report (/stage-report)` បង្ហាញថាសំបុត្រនីមួយៗចំណាយពេលប៉ុន្មានម៉ោងនៅគ្រប់ដំណាក់កាល (Intake ➔ Inspect ➔ Stock ➔ Sales ➔ Repair ➔ QA) ជួយឱ្យថ្នាក់ដឹកនាំដឹងច្បាស់ថាផ្នែកណាដំណើរការយឺត ដើម្បីកែលម្អបានទាន់ពេល។",
-          contentEn: "Stage breakdown audit tracks hours spent at every single transition point, isolating operational bottlenecks.",
+          titleKm: "គន្លឹះយល់ដឹង៖ ស្វែងរកចំណុចកកស្ទះ (Bottleneck) & តាមដាន Process Date តាមដំណាក់កាល",
+          titleEn: "Bottleneck Detection & Historical Process Date Filtering",
+          contentKm: "របាយការណ៍ `Stage Report (/stage-report)` ជួយឱ្យដឹងថាសំបុត្រកំពុងកកស្ទះនៅកន្លែងណា។ ពិសេសជាងនេះទៅទៀត Report នេះដំណើរការផ្អែកលើ «ចន្លោះកាលបរិច្ឆេទ ជាមួយនិង Status ដំណាក់កាល» — ដោយមិនខ្វល់ថាសំបុត្រនោះបច្ចុប្បន្នស្ថិតនៅដល់ណា ឬជួសជុលរួចរាល់ (Finished) ហើយនោះឡើយ (ឧ. ម៉ាស៊ីនចូលថ្ងៃទី ០១ ទោះឥឡូវនេះជួសជុលហើយក៏ដោយ នៅពេល Filter រកម៉ាស៊ីនចូល ឬត្រួតពិនិត្យថ្ងៃទី ០១ វានឹងទាញមកបង្ហាញទាំងអស់)។",
+          contentEn: "Stage Breakdown (/stage-report) isolates operational bottlenecks. It filters tickets by historical milestone dates (Process Date) matching the selected Stage — regardless of whether the ticket is currently in-progress or already fully completed.",
         },
       ],
     },

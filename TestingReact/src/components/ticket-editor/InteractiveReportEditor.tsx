@@ -99,6 +99,9 @@ interface InteractiveReportEditorProps {
   readOnly?: boolean;
 }
 
+const getTicketParts = (t: RepairServiceItem): SparePartItemDetail[] =>
+  (ticketSparePartLines(t as unknown as Record<string, unknown>) as unknown as SparePartItemDetail[]) || [];
+
 export default function InteractiveReportEditor({
   ticket,
   onSelectSection,
@@ -123,6 +126,20 @@ export default function InteractiveReportEditor({
   // Active inline text edit on DOM
   const activeEditRef = useRef<ActiveInlineEdit | null>(null);
   const sheetContainerRef = useRef<HTMLDivElement>(null);
+
+  // Keep latest ticket in a ref to eliminate stale closure state clobbering
+  const latestTicketRef = useRef(ticket);
+  latestTicketRef.current = ticket;
+
+  const emitTicketUpdate = useCallback(
+    (updater: Partial<RepairServiceItem> | ((prev: RepairServiceItem) => RepairServiceItem)) => {
+      const cur = latestTicketRef.current;
+      const next = typeof updater === "function" ? updater(cur) : { ...cur, ...updater };
+      latestTicketRef.current = next;
+      onUpdateTicket?.(next);
+    },
+    [onUpdateTicket]
+  );
 
 
   // Company Search state inside popover
@@ -222,7 +239,7 @@ export default function InteractiveReportEditor({
       try {
         const res = await fetchSparePartsInventory(1, 25, partSearchQuery.trim());
         if (active) {
-          setSparePartsList(res.items || []);
+          setSparePartsList((res.items || []).filter((p) => !p.isDraft));
           setSparePartsTotal(res.totalCount || (res.items || []).length);
           setPartsPage(1);
         }
@@ -247,7 +264,7 @@ export default function InteractiveReportEditor({
         try {
           const nextPage = partsPage + 1;
           const res = await fetchSparePartsInventory(nextPage, 25, partSearchQuery.trim());
-          setSparePartsList((prev) => [...prev, ...(res.items || [])]);
+          setSparePartsList((prev) => [...prev, ...((res.items || []).filter((p) => !p.isDraft))]);
           setPartsPage(nextPage);
         } catch (err) {
           console.warn("Failed to load more spare parts:", err);
@@ -303,8 +320,7 @@ export default function InteractiveReportEditor({
     const rawAddress = comp.address ?? "";
     const cleanAddress = rawAddress && rawAddress !== "—" ? rawAddress.trim() : "";
 
-    onUpdateTicket?.({
-      ...ticket,
+    emitTicketUpdate({
       customerId: comp.id,
       companyName: comp.companyName,
       contactName: cleanContact,
@@ -334,8 +350,7 @@ export default function InteractiveReportEditor({
   };
 
   const handleSelectItem = (item: ItemModel) => {
-    onUpdateTicket?.({
-      ...ticket,
+    emitTicketUpdate({
       itemId: item.id,
       itemName: item.itemName,
       serialNumber: item.serialNumber ? item.serialNumber.trim() : "",
@@ -347,52 +362,85 @@ export default function InteractiveReportEditor({
 
   const handleSelectPartForRow = (rowIndex: number, invPart: any) => {
     if (isSparepartLocked) return;
-    const existing = [...(ticket.sparepartItems || [])];
+    if (activeEditRef.current) {
+      activeEditRef.current.finish(true);
+    }
+    const cur = latestTicketRef.current;
+    const existing = [...getTicketParts(cur)];
     const name = invPart.itemName || invPart.name || invPart.description || "Spare Part";
-    const model = invPart.useFor || invPart.compatibleModel || ticket.itemName || "Universal";
+    const model = invPart.useFor || invPart.compatibleModel || cur.itemName || "Universal";
     const partNo = invPart.partNumber || invPart.serialNumber || invPart.code || "—";
     const price = invPart.defaultPrice ?? invPart.price ?? 0;
 
-    existing[rowIndex] = {
+    const updatedRow: any = {
       ...(existing[rowIndex] || {}),
       id: existing[rowIndex]?.id || "part-" + Date.now(),
       sparePartId: invPart.id,
+      sparepartId: invPart.id,
+      SparepartId: invPart.id,
       itemName: name,
       description: name,
       useFor: model,
       partNumber: partNo,
+      serialNumber: partNo,
       condition: normalizeCondition(existing[rowIndex]?.condition),
       quantity: existing[rowIndex]?.quantity || 1,
       defaultPrice: price,
     };
+    existing[rowIndex] = updatedRow;
 
-    onUpdateTicket?.({
-      ...ticket,
+    emitTicketUpdate({
       sparepartItems: existing,
+      sparePartItems: existing,
     });
+
+    setSparePartRows((prev) => {
+      const next = [...prev];
+      next[rowIndex] = resolveSparePartRow(updatedRow, invPart, rowIndex);
+      return next;
+    });
+
     setActivePopover(null);
     toast.success(`បានបញ្ចូលបន្លាស់៖ ${name}`);
   };
 
   const handleCustomPartDescription = (rowIndex: number, desc: string) => {
     if (isSparepartLocked) return;
-    const existing = [...(ticket.sparepartItems || [])];
-    const cur = existing[rowIndex] || {
+    if (activeEditRef.current) {
+      activeEditRef.current.finish(true);
+    }
+    const cur = latestTicketRef.current;
+    const existing = [...getTicketParts(cur)];
+    const curRow = existing[rowIndex] || {
       id: "part-" + Date.now() + "-" + rowIndex,
-      sparePartId: "00000000-0000-0000-0000-000000000000",
-      useFor: ticket.itemName || "—",
+      useFor: cur.itemName || "—",
       partNumber: "—",
       quantity: 1,
       condition: "Replace" as const,
       defaultPrice: 0,
       remarks: "",
     };
-    existing[rowIndex] = {
-      ...cur,
+    const updatedRow: any = {
+      ...curRow,
+      sparePartId: "00000000-0000-0000-0000-000000000000",
+      sparepartId: "00000000-0000-0000-0000-000000000000",
+      SparepartId: "00000000-0000-0000-0000-000000000000",
       itemName: desc.trim(),
       description: desc.trim(),
     };
-    onUpdateTicket?.({ ...ticket, sparepartItems: existing });
+    existing[rowIndex] = updatedRow;
+
+    emitTicketUpdate({
+      sparepartItems: existing,
+      sparePartItems: existing,
+    });
+
+    setSparePartRows((prev) => {
+      const next = [...prev];
+      next[rowIndex] = resolveSparePartRow(updatedRow, undefined, rowIndex);
+      return next;
+    });
+
     setActivePopover(null);
   };
 
@@ -401,20 +449,32 @@ export default function InteractiveReportEditor({
       toast.error("មិនអាចបន្ថែមគ្រឿងបន្លាស់ក្នុងស្ថានភាពនេះបានទេ (Locked)");
       return;
     }
-    const existing = [...(ticket.sparepartItems || [])];
+    if (activeEditRef.current) {
+      activeEditRef.current.finish(true);
+    }
+    const cur = latestTicketRef.current;
+    const existing = [...getTicketParts(cur)];
     const newPart: SparePartItemDetail = {
       id: "part-" + Date.now(),
       sparePartId: "00000000-0000-0000-0000-000000000000",
+      sparepartId: "00000000-0000-0000-0000-000000000000",
       itemName: "",
       description: "",
-      useFor: ticket.itemName || "—",
+      useFor: cur.itemName || "—",
       quantity: 1,
       condition: "Replace",
       defaultPrice: 0,
       partNumber: "—",
     };
     const updated = [...existing, newPart];
-    onUpdateTicket?.({ ...ticket, sparepartItems: updated });
+    emitTicketUpdate({
+      sparepartItems: updated,
+      sparePartItems: updated,
+    });
+    setSparePartRows((prev) => [
+      ...prev,
+      resolveSparePartRow(newPart, undefined, updated.length - 1),
+    ]);
     toast.success("បានបន្ថែមជួរគ្រឿងបន្លាស់ថ្មី");
 
     // Automatically anchor popover search to the newly created row's description cell
@@ -440,9 +500,21 @@ export default function InteractiveReportEditor({
       toast.error("មិនអាចលុបគ្រឿងបន្លាស់ក្នុងស្ថានភាពនេះបានទេ (Locked)");
       return;
     }
-    const existing = [...(ticket.sparepartItems || [])];
+    if (activeEditRef.current) {
+      activeEditRef.current.finish(true);
+    }
+    const cur = latestTicketRef.current;
+    const existing = [...getTicketParts(cur)];
     existing.splice(index, 1);
-    onUpdateTicket?.({ ...ticket, sparepartItems: existing });
+    emitTicketUpdate({
+      sparepartItems: existing,
+      sparePartItems: existing,
+    });
+    setSparePartRows((prev) => {
+      const next = [...prev];
+      next.splice(index, 1);
+      return next;
+    });
     toast.success("បានលុបគ្រឿងបន្លាស់ចេញពីតារាង");
   };
 
@@ -524,20 +596,21 @@ export default function InteractiveReportEditor({
     if (boxEl) {
       const boxKey = boxEl.dataset.rptBox;
       if (boxKey === "onSite") {
-        onUpdateTicket?.({ ...ticket, serviceLocation: "OnSite" });
+        emitTicketUpdate({ serviceLocation: "OnSite" });
         return;
       }
       if (boxKey === "companyService") {
-        onUpdateTicket?.({ ...ticket, serviceLocation: "CompanyService" });
+        emitTicketUpdate({ serviceLocation: "CompanyService" });
         return;
       }
       if (boxKey === "contract") {
-        onUpdateTicket?.({ ...ticket, hasContract: !ticket.hasContract });
+        emitTicketUpdate({ hasContract: !latestTicketRef.current.hasContract });
         return;
       }
       if (boxKey === "dateStart" || boxKey === "dateFinish" || boxKey === "dateWaiting") {
+        const cur = latestTicketRef.current;
         const rect = boxEl.getBoundingClientRect();
-        const initialIso = boxKey === "dateFinish" ? ticket.finishedDate : ticket.serviceDate;
+        const initialIso = boxKey === "dateFinish" ? cur.finishedDate : cur.serviceDate;
         setTempDateValue(toLocalDatetimeValue(initialIso));
         setActivePopover({
           type: "date",
@@ -630,9 +703,9 @@ export default function InteractiveReportEditor({
         bodyEl,
         initialVal,
         (newVal) => {
-          if (bodyKey === "request") onUpdateTicket?.({ ...ticket, customerRequest: newVal });
-          else if (bodyKey === "diagnostic") onUpdateTicket?.({ ...ticket, inspection: newVal });
-          else if (bodyKey === "solution") onUpdateTicket?.({ ...ticket, solution: newVal });
+          if (bodyKey === "request") emitTicketUpdate({ customerRequest: newVal });
+          else if (bodyKey === "diagnostic") emitTicketUpdate({ inspection: newVal });
+          else if (bodyKey === "solution") emitTicketUpdate({ solution: newVal });
         },
         false
       );
@@ -671,14 +744,16 @@ export default function InteractiveReportEditor({
         }
 
         const ensureRowAt = (idx: number): SparePartItemDetail[] => {
-          const parts = [...(ticket.sparepartItems || [])];
+          const cur = latestTicketRef.current;
+          const parts = [...getTicketParts(cur)];
           if (!parts[idx]) {
             parts[idx] = {
               id: "part-" + Date.now() + "-" + idx,
               sparePartId: "00000000-0000-0000-0000-000000000000",
+              sparepartId: "00000000-0000-0000-0000-000000000000",
               itemName: "",
               description: "",
-              useFor: ticket.itemName || "—",
+              useFor: cur.itemName || "—",
               partNumber: "—",
               quantity: 1,
               condition: "Replace",
@@ -691,7 +766,10 @@ export default function InteractiveReportEditor({
 
         if (col === "no" || col === "index") {
           const parts = ensureRowAt(rowIdx);
-          onUpdateTicket?.({ ...ticket, sparepartItems: parts });
+          emitTicketUpdate({
+            sparepartItems: parts,
+            sparePartItems: parts,
+          });
           const descCell = rowEl.querySelector<HTMLElement>('[data-rpt-part-col="description"]') || partCell;
           setPartSearchQuery("");
           setActivePopover({
@@ -704,7 +782,8 @@ export default function InteractiveReportEditor({
         }
 
         if (col === "description") {
-          const q = ticket.sparepartItems?.[rowIdx]?.description || "";
+          const currentParts = getTicketParts(latestTicketRef.current);
+          const q = currentParts?.[rowIdx]?.description || currentParts?.[rowIdx]?.itemName || "";
           setPartSearchQuery(q);
           setActivePopover({
             type: "sparePart",
@@ -717,8 +796,12 @@ export default function InteractiveReportEditor({
 
         if (col === "condition") {
           const parts = ensureRowAt(rowIdx);
-          if (!ticket.sparepartItems?.[rowIdx]) {
-            onUpdateTicket?.({ ...ticket, sparepartItems: parts });
+          const currentParts = getTicketParts(latestTicketRef.current);
+          if (!currentParts?.[rowIdx]) {
+            emitTicketUpdate({
+              sparepartItems: parts,
+              sparePartItems: parts,
+            });
           }
           setActivePopover({
             type: "condition",
@@ -743,14 +826,25 @@ export default function InteractiveReportEditor({
         }
 
         if (col === "remarks") {
-          const curVal = ticket.sparepartItems?.[rowIdx]?.remarks || "";
+          const currentParts = getTicketParts(latestTicketRef.current);
+          const curVal = currentParts?.[rowIdx]?.remarks || "";
           startInlineTextEdit(
             partCell,
             curVal,
             (newVal) => {
               const parts = ensureRowAt(rowIdx);
               parts[rowIdx] = { ...parts[rowIdx], remarks: newVal };
-              onUpdateTicket?.({ ...ticket, sparepartItems: parts });
+              emitTicketUpdate({
+                sparepartItems: parts,
+                sparePartItems: parts,
+              });
+              setSparePartRows((prev) => {
+                const next = [...prev];
+                if (next[rowIdx]) {
+                  next[rowIdx] = { ...next[rowIdx], remarks: newVal };
+                }
+                return next;
+              });
             },
             true
           );
@@ -758,7 +852,8 @@ export default function InteractiveReportEditor({
         }
 
         if (col === "qty") {
-          const curQty = String(ticket.sparepartItems?.[rowIdx]?.quantity || 1);
+          const currentParts = getTicketParts(latestTicketRef.current);
+          const curQty = String(currentParts?.[rowIdx]?.quantity || 1);
           startInlineTextEdit(
             partCell,
             curQty,
@@ -766,7 +861,17 @@ export default function InteractiveReportEditor({
               const q = Math.max(1, parseInt(newVal, 10) || 1);
               const parts = ensureRowAt(rowIdx);
               parts[rowIdx] = { ...parts[rowIdx], quantity: q };
-              onUpdateTicket?.({ ...ticket, sparepartItems: parts });
+              emitTicketUpdate({
+                sparepartItems: parts,
+                sparePartItems: parts,
+              });
+              setSparePartRows((prev) => {
+                const next = [...prev];
+                if (next[rowIdx]) {
+                  next[rowIdx] = { ...next[rowIdx], quantity: q };
+                }
+                return next;
+              });
             },
             true
           );
@@ -957,7 +1062,7 @@ export default function InteractiveReportEditor({
                       onKeyDown={(e) => {
                         if (e.key === "Enter" && companySearchQuery.trim()) {
                           e.preventDefault();
-                          onUpdateTicket?.({ ...ticket, companyName: companySearchQuery.trim() });
+                          emitTicketUpdate({ companyName: companySearchQuery.trim() });
                           setActivePopover(null);
                         }
                       }}
@@ -982,7 +1087,7 @@ export default function InteractiveReportEditor({
                             type="button"
                             onClick={() => {
                               if (companySearchQuery.trim()) {
-                                onUpdateTicket?.({ ...ticket, companyName: companySearchQuery.trim() });
+                                emitTicketUpdate({ companyName: companySearchQuery.trim() });
                               }
                               setActivePopover(null);
                             }}
@@ -1047,7 +1152,7 @@ export default function InteractiveReportEditor({
                       onKeyDown={(e) => {
                         if (e.key === "Enter" && itemSearchQuery.trim()) {
                           e.preventDefault();
-                          onUpdateTicket?.({ ...ticket, itemName: itemSearchQuery.trim() });
+                          emitTicketUpdate({ itemName: itemSearchQuery.trim() });
                           setActivePopover(null);
                         }
                       }}
@@ -1072,7 +1177,7 @@ export default function InteractiveReportEditor({
                             type="button"
                             onClick={() => {
                               if (itemSearchQuery.trim()) {
-                                onUpdateTicket?.({ ...ticket, itemName: itemSearchQuery.trim() });
+                                emitTicketUpdate({ itemName: itemSearchQuery.trim() });
                               }
                               setActivePopover(null);
                             }}
@@ -1112,8 +1217,7 @@ export default function InteractiveReportEditor({
                   <button
                     type="button"
                     onClick={() => {
-                      onUpdateTicket?.({
-                        ...ticket,
+                      emitTicketUpdate({
                         serviceType: "Free",
                         serviceTypeId: 1,
                       });
@@ -1131,8 +1235,7 @@ export default function InteractiveReportEditor({
                   <button
                     type="button"
                     onClick={() => {
-                      onUpdateTicket?.({
-                        ...ticket,
+                      emitTicketUpdate({
                         serviceType: "Charge",
                         serviceTypeId: 2,
                       });
@@ -1279,29 +1382,45 @@ export default function InteractiveReportEditor({
                     key={cond}
                     type="button"
                     onClick={() => {
-                      const parts = [...(ticket.sparepartItems || [])];
-                      const cur = parts[activePopover.rowIndex] || {
+                      const cur = latestTicketRef.current;
+                      const parts = [...getTicketParts(cur)];
+                      const curPart = parts[activePopover.rowIndex] || {
                         id: "part-" + Date.now(),
                         sparePartId: "00000000-0000-0000-0000-000000000000",
+                        sparepartId: "00000000-0000-0000-0000-000000000000",
+                        SparepartId: "00000000-0000-0000-0000-000000000000",
                         itemName: "",
                         description: "",
-                        useFor: ticket.itemName || "—",
+                        useFor: cur.itemName || "—",
                         partNumber: "—",
                         quantity: 1,
                         defaultPrice: 0,
                         remarks: "",
                       };
                       parts[activePopover.rowIndex] = {
-                        ...cur,
+                        ...curPart,
                         condition: cond,
                       };
-                      onUpdateTicket?.({ ...ticket, sparepartItems: parts });
+                      emitTicketUpdate({
+                        sparepartItems: parts,
+                        sparePartItems: parts,
+                      });
+                      setSparePartRows((prev) => {
+                        const next = [...prev];
+                        if (next[activePopover.rowIndex]) {
+                          next[activePopover.rowIndex] = {
+                            ...next[activePopover.rowIndex],
+                            condition: cond,
+                          };
+                        }
+                        return next;
+                      });
                       setActivePopover(null);
                     }}
                     className="w-full px-3 py-1.5 text-xs font-semibold rounded-lg hover:bg-accent hover:text-white transition-all text-left flex items-center justify-between cursor-pointer"
                   >
                     <span>{cond}</span>
-                    {ticket.sparepartItems?.[activePopover.rowIndex]?.condition === cond && (
+                    {getTicketParts(latestTicketRef.current)?.[activePopover.rowIndex]?.condition === cond && (
                       <Check className="w-3.5 h-3.5" />
                     )}
                   </button>
@@ -1342,9 +1461,9 @@ export default function InteractiveReportEditor({
                     type="button"
                     onClick={() => {
                       if (activePopover.dateKey === "dateFinish") {
-                        onUpdateTicket?.({ ...ticket, finishedDate: undefined });
+                        emitTicketUpdate({ finishedDate: undefined });
                       } else {
-                        onUpdateTicket?.({ ...ticket, serviceDate: "" });
+                        emitTicketUpdate({ serviceDate: "" });
                       }
                       setActivePopover(null);
                     }}
@@ -1357,9 +1476,9 @@ export default function InteractiveReportEditor({
                     onClick={() => {
                       const backendVal = fromLocalDatetimeValue(tempDateValue);
                       if (activePopover.dateKey === "dateFinish") {
-                        onUpdateTicket?.({ ...ticket, finishedDate: backendVal });
+                        emitTicketUpdate({ finishedDate: backendVal });
                       } else {
-                        onUpdateTicket?.({ ...ticket, serviceDate: backendVal });
+                        emitTicketUpdate({ serviceDate: backendVal });
                       }
                       setActivePopover(null);
                     }}
@@ -1415,18 +1534,16 @@ export default function InteractiveReportEditor({
                           key={user.id}
                           onClick={() => {
                             if (activePopover.role === "engineer") {
-                              onUpdateTicket?.({
-                                ...ticket,
+                              emitTicketUpdate({
                                 repairBy: user.id,
                                 repairByName: fullName,
-                                repairByPhone: user.phoneNumber || ticket.repairByPhone || "",
+                                repairByPhone: user.phoneNumber || latestTicketRef.current.repairByPhone || "",
                               });
                             } else {
-                              onUpdateTicket?.({
-                                ...ticket,
+                              emitTicketUpdate({
                                 verifiedBy: user.id,
                                 verifiedByName: fullName,
-                                verifiedByPhone: user.phoneNumber || ticket.verifiedByPhone || "",
+                                verifiedByPhone: user.phoneNumber || latestTicketRef.current.verifiedByPhone || "",
                               });
                             }
                             setActivePopover(null);
@@ -1466,14 +1583,12 @@ export default function InteractiveReportEditor({
                     type="button"
                     onClick={() => {
                       if (activePopover.role === "engineer") {
-                        onUpdateTicket?.({
-                          ...ticket,
+                        emitTicketUpdate({
                           repairByName: customSigName.trim(),
                           repairByPhone: customSigPhone.trim(),
                         });
                       } else {
-                        onUpdateTicket?.({
-                          ...ticket,
+                        emitTicketUpdate({
                           verifiedByName: customSigName.trim(),
                           verifiedByPhone: customSigPhone.trim(),
                         });

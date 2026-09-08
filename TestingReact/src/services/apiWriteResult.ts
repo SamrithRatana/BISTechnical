@@ -10,6 +10,7 @@
  */
 
 import type { ApiWriteResult } from "./types";
+import { captureSystemError } from "./systemObservability";
 
 type FailureCode = Extract<ApiWriteResult, { ok: false }>["code"];
 
@@ -61,6 +62,20 @@ export async function readWriteResult(res: Response): Promise<ApiWriteResult> {
   const proxyError = typeof body.error === "string" ? body.error : undefined;
   const detail = typeof body.detail === "string" ? body.detail : (bareText ?? proxyError);
   const code = proxyError && res.status >= 500 ? "network" : codeForStatus(res.status, serverCode);
+
+  // Capture write failure into centralized observability engine
+  try {
+    const url = typeof res.url === "string" ? res.url : "";
+    const isUserApi = url.includes("/auth") || url.includes("/users") || url.includes(":5005");
+    captureSystemError({
+      serviceId: isUserApi ? "our-user-api" : "our-technical-api",
+      endpoint: url,
+      statusCode: res.status,
+      message: detail || `Write operation failed with HTTP ${res.status}`,
+      stackTrace: typeof body === "object" ? JSON.stringify(body, null, 2) : undefined,
+    });
+  } catch {}
+
   return {
     ok: false,
     status: res.status,
@@ -71,6 +86,16 @@ export async function readWriteResult(res: Response): Promise<ApiWriteResult> {
 }
 
 /** The result for a request that never got a response (offline, timeout). */
-export function networkFailure(): ApiWriteResult {
+export function networkFailure(endpoint?: string): ApiWriteResult {
+  try {
+    const isUserApi = endpoint?.includes("/auth") || endpoint?.includes("/users") || endpoint?.includes(":5005");
+    captureSystemError({
+      serviceId: isUserApi ? "our-user-api" : "our-technical-api",
+      endpoint: endpoint || "network-layer",
+      statusCode: 0,
+      message: "Network connection lost or request timed out",
+      severity: "CRITICAL",
+    });
+  } catch {}
   return { ok: false, status: 0, code: "network" };
 }

@@ -7,6 +7,7 @@ var builder = WebApplication.CreateBuilder(args);
 // Add services to the container.
 builder.AddApplicationServices();
 builder.Services.AddProblemDetails();
+builder.Services.AddHostedService<MemoryMaintenanceHostedService>();
 
 // Maps a missing record to 404 before the generic 500 path sees it.
 builder.Services.AddExceptionHandler<NotFoundExceptionHandler>();
@@ -25,6 +26,11 @@ var withApiVersioning = builder.Services.AddApiVersioning();
 builder.AddDefaultOpenApi(withApiVersioning);
 
 var app = builder.Build();
+
+app.UseForwardedHeaders(new ForwardedHeadersOptions
+{
+    ForwardedHeaders = Microsoft.AspNetCore.HttpOverrides.ForwardedHeaders.XForwardedFor | Microsoft.AspNetCore.HttpOverrides.ForwardedHeaders.XForwardedProto
+});
 
 // AddProblemDetails() only registers the writer — without this an unhandled
 // exception left the client with a bare, bodyless 500 (and a stack trace in
@@ -62,6 +68,21 @@ app.MapGet("/health/metrics", () =>
         workingSetMb = Math.Round(proc.WorkingSet64 / (1024.0 * 1024.0), 1),
         gcHeapMb = Math.Round(GC.GetTotalMemory(false) / (1024.0 * 1024.0), 1),
         threads = proc.Threads.Count
+    });
+});
+
+// On-demand Memory Cleaner endpoint (triggers GC collection and OS page release)
+app.MapPost("/health/clean-memory", () =>
+{
+    var (beforeMb, afterMb, savedMb, gcHeapMb) = MemoryCleaner.CleanMemory();
+    return Results.Ok(new
+    {
+        success = true,
+        service = "TechnicalService.API",
+        beforeMb,
+        afterMb,
+        savedMb,
+        gcHeapMb
     });
 });
 

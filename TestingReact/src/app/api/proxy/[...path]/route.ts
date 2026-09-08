@@ -15,6 +15,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import { broadcast, type RealtimeResource } from "@/services/eventBus";
 import { beginWrite, recordRequest } from "@/services/activityTracker";
+import {
+  recordProcessActivity,
+  captureSystemError,
+  type ServiceId,
+} from "@/services/systemObservability";
 
 const TECHNICAL_API_BASE =
   process.env.NEXT_PUBLIC_TECHNICAL_API_URL || "https://techapi.camprotec.com.kh";
@@ -131,6 +136,151 @@ function inferResourceFromPath(pathString: string): RealtimeResource {
   return "ticket";
 }
 
+function extractUserFromAuth(authHeader: string | null): string | undefined {
+  if (!authHeader || !authHeader.startsWith("Bearer ")) return undefined;
+  try {
+    const token = authHeader.substring(7);
+    const parts = token.split(".");
+    if (parts.length >= 2) {
+      const payload = JSON.parse(Buffer.from(parts[1], "base64").toString("utf-8"));
+      return (
+        payload.unique_name ||
+        payload.name ||
+        payload.sub ||
+        payload.username ||
+        payload["http://schemas.xmlsoap.org/ws/2005/05/identity/claims/name"] ||
+        undefined
+      );
+    }
+  } catch {}
+  return undefined;
+}
+
+function mapServiceId(targetService: string): ServiceId {
+  if (targetService === "jwt" || targetService === "user") return "our-user-api";
+  if (targetService === "customer") return "our-user-api";
+  return "our-technical-api";
+}
+
+function inferOperationDescriptions(
+  method: string,
+  pathString: string
+): { km: string; en: string; type: "MUTATION" | "QUERY" | "AUTH" } {
+  const p = pathString.toLowerCase();
+
+  if (p.includes("auth/login") || p.includes("authenticate") || p.includes("token")) {
+    return {
+      km: "ផ្ទៀងផ្ទាត់គណនីចូលប្រព័ន្ធ (Login)",
+      en: "User authentication / Login request",
+      type: "AUTH",
+    };
+  }
+  if (p.includes("receiveitem")) {
+    return {
+      km: "បង្កើតប័ណ្ណទទួលជួសជុលថ្មី (Receive Ticket)",
+      en: "Created new repair intake ticket",
+      type: "MUTATION",
+    };
+  }
+  if (p.includes("inspectitem") || p.includes("setinspecting")) {
+    return {
+      km: "កត់ត្រាការត្រួតពិនិត្យបច្ចេកទេស (Technical Inspection)",
+      en: "Recorded technical inspection details",
+      type: "MUTATION",
+    };
+  }
+  if (p.includes("setrepair") || p.includes("repairitem") || p.includes("repairservice")) {
+    return {
+      km: "ប្តូរស្ថានភាពទៅកំពុងជួសជុល (Repairing)",
+      en: "Updated ticket status to Repairing",
+      type: "MUTATION",
+    };
+  }
+  if (p.includes("setfinished") || p.includes("finishedrepair")) {
+    return {
+      km: "បញ្ចប់ការជួសជុលជាស្ថាពរ (Finished Repair)",
+      en: "Marked repair ticket as Finished",
+      type: "MUTATION",
+    };
+  }
+  if (p.includes("spareparts/manual-stockout")) {
+    return {
+      km: "កាត់ស្តុកគ្រឿងបន្លាស់ដោយផ្ទាល់ (Stockout)",
+      en: "Manual spare parts stock deduction",
+      type: "MUTATION",
+    };
+  }
+  if (p.includes("sentspareparts")) {
+    return {
+      km: "បញ្ជូនគ្រឿងបន្លាស់ទៅកាន់ជាង (Sent Spareparts)",
+      en: "Dispatched spare parts to technician",
+      type: "MUTATION",
+    };
+  }
+  if (p.includes("awaitingcustomer")) {
+    return {
+      km: "រង់ចាំការបញ្ជាក់ពីអតិថិជន (Awaiting Customer)",
+      en: "Moved ticket to Awaiting Customer Confirmation",
+      type: "MUTATION",
+    };
+  }
+  if (p.includes("customerrejected")) {
+    return {
+      km: "អតិថិជនបដិសេធមិនជួសជុល (Customer Rejected)",
+      en: "Customer rejected repair quotation",
+      type: "MUTATION",
+    };
+  }
+  if (p.includes("spareparts")) {
+    if (method === "GET") {
+      return {
+        km: "ទាញយកទិន្នន័យគ្រឿងបន្លាស់ (Spareparts Catalogue)",
+        en: "Queried spare parts catalogue",
+        type: "QUERY",
+      };
+    }
+    return {
+      km: "កែប្រែទិន្នន័យគ្រឿងបន្លាស់ (Spareparts Mutation)",
+      en: "Modified spare parts catalogue",
+      type: "MUTATION",
+    };
+  }
+  if (p.includes("technicalservices")) {
+    if (method === "GET") {
+      return {
+        km: "ទាញយកបញ្ជីប័ណ្ណជួសជុល (Fetch Tickets)",
+        en: "Fetched technical repair tickets",
+        type: "QUERY",
+      };
+    }
+    return {
+      km: "កែប្រែទិន្នន័យប័ណ្ណជួសជុល (Update Ticket)",
+      en: "Updated technical repair ticket",
+      type: "MUTATION",
+    };
+  }
+  if (p.includes("users")) {
+    if (method === "GET") {
+      return {
+        km: "ទាញយកបញ្ជីអ្នកប្រើប្រាស់ (Fetch Users)",
+        en: "Queried user accounts list",
+        type: "QUERY",
+      };
+    }
+    return {
+      km: "កែប្រែគណនីអ្នកប្រើប្រាស់ (User Management)",
+      en: "Modified user account credentials",
+      type: "MUTATION",
+    };
+  }
+
+  return {
+    km: `${method} /api/${pathString}`,
+    en: `${method} /api/${pathString}`,
+    type: method === "GET" ? "QUERY" : "MUTATION",
+  };
+}
+
 // ---------------------------------------------------------------------------
 // GET — read-only, no broadcast needed
 // ---------------------------------------------------------------------------
@@ -139,12 +289,17 @@ export async function GET(
   req: NextRequest,
   { params }: { params: Promise<{ path: string[] }> }
 ) {
+  const startTime = performance.now();
+  let pathString = "";
+  let targetService = "technical";
+  let authHeader: string | null = null;
+
   try {
     const { path } = await params;
-    const pathString = path ? path.join("/") : "";
+    pathString = path ? path.join("/") : "";
     const searchParams = new URLSearchParams(req.nextUrl.searchParams);
 
-    const targetService = searchParams.get("service") || "technical";
+    targetService = searchParams.get("service") || "technical";
     searchParams.delete("service");
 
     let baseUrl = TECHNICAL_API_BASE;
@@ -158,14 +313,10 @@ export async function GET(
     const queryString = searchParams.toString() ? `?${searchParams.toString()}` : "";
     const targetUrl = `${baseUrl}/api/${pathString}${queryString}`;
 
-    // A read does not block a deploy — nobody loses work to a restart while
-    // reading — but it is evidence someone is here, which the SSE session
-    // count alone would miss on pages that mount no realtime table.
     recordRequest();
-
     logProxy("GET", targetUrl);
 
-    const authHeader = req.headers.get("authorization");
+    authHeader = req.headers.get("authorization");
     const reqHeaders: Record<string, string> = {
       Accept: "application/json",
       "Accept-Encoding": "br, gzip",
@@ -179,8 +330,34 @@ export async function GET(
       signal: withTimeout(req.signal),
     });
 
+    const durationMs = Math.round(performance.now() - startTime);
+    const serviceId = mapServiceId(targetService);
+    const user = extractUserFromAuth(authHeader);
+
+    // Record activity for normal API queries (skip health checks)
+    if (!pathString.startsWith("health")) {
+      const { km, en, type } = inferOperationDescriptions("GET", pathString);
+      recordProcessActivity({
+        serviceId,
+        type,
+        descriptionKm: `${km} (${res.status})`,
+        descriptionEn: `${en} (${res.status})`,
+        durationMs,
+        statusCode: res.status,
+        user,
+      });
+    }
+
     if (!res.ok) {
       console.warn(`⚠️ Backend API ${targetUrl} returned status ${res.status}`);
+      captureSystemError({
+        serviceId,
+        endpoint: `/api/${pathString}`,
+        method: "GET",
+        statusCode: res.status,
+        message: `Upstream API returned HTTP ${res.status} for /api/${pathString}`,
+        userContext: user ? { username: user } : undefined,
+      });
       return NextResponse.json(
         { error: `Backend API returned status ${res.status}` },
         { status: res.status }
@@ -193,19 +370,35 @@ export async function GET(
     return response;
   } catch (error: unknown) {
     const msg = error instanceof Error ? error.message : "Unknown error";
+    const durationMs = Math.round(performance.now() - startTime);
+    const serviceId = mapServiceId(targetService);
+    const user = extractUserFromAuth(authHeader);
 
-    // A timeout also aborts, so check it first — otherwise a backend that
-    // stalled for 30s would be reported as "client went away" and never show
-    // up as a problem worth looking at.
     if (error instanceof Error && error.name === "TimeoutError") {
       console.error("❌ Proxy GET timed out after", UPSTREAM_TIMEOUT_MS, "ms");
+      captureSystemError({
+        serviceId,
+        endpoint: `/api/${pathString}`,
+        method: "GET",
+        statusCode: 504,
+        message: `Upstream API timed out after ${UPSTREAM_TIMEOUT_MS}ms`,
+        userContext: user ? { username: user } : undefined,
+      });
       return NextResponse.json({ error: "Backend API timed out" }, { status: 504 });
     }
-    // Ignore abort errors (client disconnected)
     if (msg.includes("abort") || msg.includes("signal")) {
       return NextResponse.json({ error: "Request aborted" }, { status: 499 });
     }
     console.error("❌ Proxy GET Error:", msg);
+    captureSystemError({
+      serviceId,
+      endpoint: `/api/${pathString}`,
+      method: "GET",
+      statusCode: 500,
+      message: `Proxy GET Error: ${msg}`,
+      stackTrace: error instanceof Error ? error.stack : undefined,
+      userContext: user ? { username: user } : undefined,
+    });
     return NextResponse.json({ error: "Failed to connect to backend API service" }, { status: 500 });
   }
 }
@@ -218,22 +411,24 @@ export async function POST(
   req: NextRequest,
   { params }: { params: Promise<{ path: string[] }> }
 ) {
-  // Declared outside the try so the finally block can always settle it — an
-  // abandoned counter would pin the system at "busy" and make the deploy-safety
-  // indicator permanently wrong.
   let endWrite: (() => void) | undefined;
+  const startTime = performance.now();
+  let pathString = "";
+  let targetService = "technical";
+  let authHeader: string | null = null;
+  let body = "";
 
   try {
     const { path } = await params;
-    const pathString = path ? path.join("/") : "";
+    pathString = path ? path.join("/") : "";
+    targetService = req.nextUrl.searchParams.get("service") || "technical";
     const targetUrl = getTargetUrl(req, pathString);
 
     endWrite = beginWrite(`POST /${pathString}`);
-
     logProxy("POST", targetUrl);
 
-    const authHeader = req.headers.get("authorization");
-    const body = await req.text();
+    authHeader = req.headers.get("authorization");
+    body = await req.text();
     const reqHeaders: Record<string, string> = {
       "Content-Type": "application/json",
       Accept: "application/json",
@@ -246,11 +441,35 @@ export async function POST(
       headers: reqHeaders,
       body,
       cache: "no-store",
-      // Deliberately not chained to req.signal: a mutation that has already
-      // reached the backend should be allowed to finish even if the user
-      // closed the tab, so the write and the SSE broadcast stay consistent.
       signal: withTimeout(),
     });
+
+    const durationMs = Math.round(performance.now() - startTime);
+    const serviceId = mapServiceId(targetService);
+    const user = extractUserFromAuth(authHeader);
+    const { km, en, type } = inferOperationDescriptions("POST", pathString);
+
+    recordProcessActivity({
+      serviceId,
+      type: res.ok ? type : "ERROR",
+      descriptionKm: `${km} (${res.status})`,
+      descriptionEn: `${en} (${res.status})`,
+      durationMs,
+      statusCode: res.status,
+      user,
+    });
+
+    if (!res.ok) {
+      captureSystemError({
+        serviceId,
+        endpoint: `/api/${pathString}`,
+        method: "POST",
+        statusCode: res.status,
+        message: `Upstream POST error [HTTP ${res.status}] on /api/${pathString}`,
+        payloadSnippet: typeof body === "string" ? body.substring(0, 300) : undefined,
+        userContext: user ? { username: user } : undefined,
+      });
+    }
 
     const data = await res.json().catch(() => ({}));
 
@@ -270,7 +489,21 @@ export async function POST(
     return relay(res, data);
   } catch (error: unknown) {
     const msg = error instanceof Error ? error.message : "Unknown error";
+    const durationMs = Math.round(performance.now() - startTime);
+    const serviceId = mapServiceId(targetService);
+    const user = extractUserFromAuth(authHeader);
+
     console.error("❌ Proxy POST Error:", msg);
+    captureSystemError({
+      serviceId,
+      endpoint: `/api/${pathString}`,
+      method: "POST",
+      statusCode: 500,
+      message: `Proxy POST Error: ${msg}`,
+      stackTrace: error instanceof Error ? error.stack : undefined,
+      payloadSnippet: typeof body === "string" ? body.substring(0, 300) : undefined,
+      userContext: user ? { username: user } : undefined,
+    });
     return NextResponse.json({ error: "Failed to connect to backend API service" }, { status: 500 });
   } finally {
     endWrite?.();
@@ -279,13 +512,6 @@ export async function POST(
 
 /**
  * Relays an upstream mutation response to the browser.
- *
- * `NextResponse.json(data, { status })` is `Response.json`, and the Fetch spec
- * forbids a body on 204 / 205 — the constructor throws
- * `Invalid response status code 204`, which landed in each handler's `catch`
- * and came back as a **500** for a write the backend had already committed
- * and broadcast. Nothing hit this until 2026-09-05: the spare-part taxonomy
- * endpoints are the API's first `NoContent` responses.
  */
 function relay(res: Response, data: unknown): NextResponse {
   if (res.status === 204 || res.status === 205) {
@@ -303,18 +529,23 @@ export async function PUT(
   { params }: { params: Promise<{ path: string[] }> }
 ) {
   let endWrite: (() => void) | undefined;
+  const startTime = performance.now();
+  let pathString = "";
+  let targetService = "technical";
+  let authHeader: string | null = null;
+  let body = "";
 
   try {
     const { path } = await params;
-    const pathString = path ? path.join("/") : "";
+    pathString = path ? path.join("/") : "";
+    targetService = req.nextUrl.searchParams.get("service") || "technical";
     const targetUrl = getTargetUrl(req, pathString);
 
     endWrite = beginWrite(`PUT /${pathString}`);
-
     logProxy("PUT", targetUrl);
 
-    const authHeader = req.headers.get("authorization");
-    const body = await req.text();
+    authHeader = req.headers.get("authorization");
+    body = await req.text();
     const reqHeaders: Record<string, string> = {
       "Content-Type": "application/json",
       Accept: "application/json",
@@ -329,6 +560,33 @@ export async function PUT(
       cache: "no-store",
       signal: withTimeout(),
     });
+
+    const durationMs = Math.round(performance.now() - startTime);
+    const serviceId = mapServiceId(targetService);
+    const user = extractUserFromAuth(authHeader);
+    const { km, en, type } = inferOperationDescriptions("PUT", pathString);
+
+    recordProcessActivity({
+      serviceId,
+      type: res.ok ? type : "ERROR",
+      descriptionKm: `${km} (${res.status})`,
+      descriptionEn: `${en} (${res.status})`,
+      durationMs,
+      statusCode: res.status,
+      user,
+    });
+
+    if (!res.ok) {
+      captureSystemError({
+        serviceId,
+        endpoint: `/api/${pathString}`,
+        method: "PUT",
+        statusCode: res.status,
+        message: `Upstream PUT error [HTTP ${res.status}] on /api/${pathString}`,
+        payloadSnippet: typeof body === "string" ? body.substring(0, 300) : undefined,
+        userContext: user ? { username: user } : undefined,
+      });
+    }
 
     const data = await res.json().catch(() => ({}));
 
@@ -345,7 +603,21 @@ export async function PUT(
     return relay(res, data);
   } catch (error: unknown) {
     const msg = error instanceof Error ? error.message : "Unknown error";
+    const durationMs = Math.round(performance.now() - startTime);
+    const serviceId = mapServiceId(targetService);
+    const user = extractUserFromAuth(authHeader);
+
     console.error("❌ Proxy PUT Error:", msg);
+    captureSystemError({
+      serviceId,
+      endpoint: `/api/${pathString}`,
+      method: "PUT",
+      statusCode: 500,
+      message: `Proxy PUT Error: ${msg}`,
+      stackTrace: error instanceof Error ? error.stack : undefined,
+      payloadSnippet: typeof body === "string" ? body.substring(0, 300) : undefined,
+      userContext: user ? { username: user } : undefined,
+    });
     return NextResponse.json({ error: "Failed to connect to backend API service" }, { status: 500 });
   } finally {
     endWrite?.();
@@ -361,17 +633,21 @@ export async function DELETE(
   { params }: { params: Promise<{ path: string[] }> }
 ) {
   let endWrite: (() => void) | undefined;
+  const startTime = performance.now();
+  let pathString = "";
+  let targetService = "technical";
+  let authHeader: string | null = null;
 
   try {
     const { path } = await params;
-    const pathString = path ? path.join("/") : "";
+    pathString = path ? path.join("/") : "";
+    targetService = req.nextUrl.searchParams.get("service") || "technical";
     const targetUrl = getTargetUrl(req, pathString);
 
     endWrite = beginWrite(`DELETE /${pathString}`);
-
     logProxy("DELETE", targetUrl);
 
-    const authHeader = req.headers.get("authorization");
+    authHeader = req.headers.get("authorization");
     const reqHeaders: Record<string, string> = {
       Accept: "application/json",
       "Bypass-Tunnel-Reminder": "true",
@@ -384,6 +660,31 @@ export async function DELETE(
       cache: "no-store",
       signal: withTimeout(),
     });
+
+    const durationMs = Math.round(performance.now() - startTime);
+    const serviceId = mapServiceId(targetService);
+    const user = extractUserFromAuth(authHeader);
+
+    recordProcessActivity({
+      serviceId,
+      type: res.ok ? "MUTATION" : "ERROR",
+      descriptionKm: `លុបទិន្នន័យ ${pathString} (${res.status})`,
+      descriptionEn: `Deleted ${pathString} (${res.status})`,
+      durationMs,
+      statusCode: res.status,
+      user,
+    });
+
+    if (!res.ok) {
+      captureSystemError({
+        serviceId,
+        endpoint: `/api/${pathString}`,
+        method: "DELETE",
+        statusCode: res.status,
+        message: `Upstream DELETE error [HTTP ${res.status}] on /api/${pathString}`,
+        userContext: user ? { username: user } : undefined,
+      });
+    }
 
     const data = await res.json().catch(() => ({}));
 
@@ -399,7 +700,20 @@ export async function DELETE(
     return relay(res, data);
   } catch (error: unknown) {
     const msg = error instanceof Error ? error.message : "Unknown error";
+    const durationMs = Math.round(performance.now() - startTime);
+    const serviceId = mapServiceId(targetService);
+    const user = extractUserFromAuth(authHeader);
+
     console.error("❌ Proxy DELETE Error:", msg);
+    captureSystemError({
+      serviceId,
+      endpoint: `/api/${pathString}`,
+      method: "DELETE",
+      statusCode: 500,
+      message: `Proxy DELETE Error: ${msg}`,
+      stackTrace: error instanceof Error ? error.stack : undefined,
+      userContext: user ? { username: user } : undefined,
+    });
     return NextResponse.json({ error: "Failed to connect to backend API service" }, { status: 500 });
   } finally {
     endWrite?.();

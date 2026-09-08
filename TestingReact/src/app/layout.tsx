@@ -14,6 +14,7 @@ import GlobalCompanionModal from "@/components/GlobalCompanionModal";
 import PerformanceProvider from "@/components/PerformanceProvider";
 import TopNavigationProgressBar from "@/components/TopNavigationProgressBar";
 import AppShell from "@/components/AppShell";
+import { ObservabilityProvider } from "@/components/monitor/ObservabilityProvider";
 import { Toaster } from "react-hot-toast";
 import "./globals.css";
 
@@ -73,46 +74,48 @@ export default function RootLayout({
       </head>
       <body className="min-h-full flex flex-col bg-[var(--background)]" suppressHydrationWarning>
         <LanguageProvider>
-          <Suspense fallback={null}>
-            <TopNavigationProgressBar />
-          </Suspense>
-          {/* Outside AuthGuard: the login screen is themed too, and the theme
-              must survive the route change that logging in causes. */}
-          <ThemeProvider>
-          {/* Inside ThemeProvider because it reads the in-app motion switch,
-              and above everything animated because framer's reduced-motion
-              mode is delivered through context. The stylesheet's own
-              reduced-motion rules cannot reach a framer animation — see
-              components/MotionPreference.tsx. */}
-          <MotionPreference>
-          {/* Inside MotionPreference because `isLiteMode` folds in framer's
-              resolved reduced-motion value, which is delivered through that
-              context. Above AuthGuard so the one-time device check runs on the
-              login screen too — it measures the machine, not the session, and
-              a technician who never signs out would otherwise never be asked.
-              It renders nothing until its idle callback fires. */}
-          <PerformanceProvider>
-          {/* Above AuthGuard so a requested action survives the page change it
-              usually accompanies — the provider stays mounted while routes swap
-              underneath it. */}
-          <ActionBusProvider>
-            {/* Inside the bus so the assistant can open dialogs; outside the
-                pages so the conversation survives navigation. */}
-            <AiAssistantProvider>
-              <CompanionScannerProvider>
-                <AuthGuard>
-                  <AppShell>{children}</AppShell>
-                </AuthGuard>
-                <GlobalCompanionModal />
-                <AiLauncher />
-                <AiAssistantPanelHost />
-              </CompanionScannerProvider>
-            </AiAssistantProvider>
-          </ActionBusProvider>
-          </PerformanceProvider>
-          </MotionPreference>
-          </ThemeProvider>
-          <Toaster position="top-right" />
+          <ObservabilityProvider>
+            <Suspense fallback={null}>
+              <TopNavigationProgressBar />
+            </Suspense>
+            {/* Outside AuthGuard: the login screen is themed too, and the theme
+                must survive the route change that logging in causes. */}
+            <ThemeProvider>
+            {/* Inside ThemeProvider because it reads the in-app motion switch,
+                and above everything animated because framer's reduced-motion
+                mode is delivered through context. The stylesheet's own
+                reduced-motion rules cannot reach a framer animation — see
+                components/MotionPreference.tsx. */}
+            <MotionPreference>
+            {/* Inside MotionPreference because `isLiteMode` folds in framer's
+                resolved reduced-motion value, which is delivered through that
+                context. Above AuthGuard so the one-time device check runs on the
+                login screen too — it measures the machine, not the session, and
+                a technician who never signs out would otherwise never be asked.
+                It renders nothing until its idle callback fires. */}
+            <PerformanceProvider>
+            {/* Above AuthGuard so a requested action survives the page change it
+                usually accompanies — the provider stays mounted while routes swap
+                underneath it. */}
+            <ActionBusProvider>
+              {/* Inside the bus so the assistant can open dialogs; outside the
+                  pages so the conversation survives navigation. */}
+              <AiAssistantProvider>
+                <CompanionScannerProvider>
+                  <AuthGuard>
+                    <AppShell>{children}</AppShell>
+                  </AuthGuard>
+                  <GlobalCompanionModal />
+                  <AiLauncher />
+                  <AiAssistantPanelHost />
+                </CompanionScannerProvider>
+              </AiAssistantProvider>
+            </ActionBusProvider>
+            </PerformanceProvider>
+            </MotionPreference>
+            </ThemeProvider>
+            <Toaster position="top-right" />
+          </ObservabilityProvider>
         </LanguageProvider>
       </body>
     </html>

@@ -94,18 +94,24 @@ function LoginBackdrop({
 
   return (
     <div className="fixed inset-0 pointer-events-none overflow-hidden" aria-hidden>
-      {/* Light mode: silky-smooth diffused ambient lighting inspired by tailwindcss.com/showcase (zero grid lines, pure clean canvas) */}
+      {/* Light mode: elegant textured canvas with subtle micro-dots and gentle ambient glow */}
       <div className="absolute inset-0 dark:hidden pointer-events-none overflow-hidden">
+        {/* Subtle mesh background gradient */}
+        <div className="absolute inset-0 bg-gradient-to-br from-slate-100/80 via-[#edf2f7] to-slate-200/60" />
+        {/* Clean subtle dot texture */}
+        <div className="absolute inset-0 bg-[radial-gradient(#94a3b8_1px,transparent_1px)] [background-size:24px_24px] opacity-25" />
+        {/* Soft top-left ambient aura */}
         <div
-          className="absolute -top-28 left-[15%] w-[720px] h-[540px] rounded-full blur-[140px] opacity-45 pointer-events-none"
+          className="absolute -top-32 left-[10%] w-[800px] h-[600px] rounded-full blur-[150px] opacity-60 pointer-events-none"
           style={{
-            background: `radial-gradient(circle, ${holo.a}28 0%, ${holo.b}14 45%, transparent 70%)`,
+            background: `radial-gradient(circle, ${holo.a}30 0%, ${holo.b}18 45%, transparent 70%)`,
           }}
         />
+        {/* Soft bottom-right ambient aura */}
         <div
-          className="absolute -bottom-20 right-[12%] w-[640px] h-[500px] rounded-full blur-[140px] opacity-35 pointer-events-none"
+          className="absolute -bottom-28 right-[10%] w-[700px] h-[550px] rounded-full blur-[150px] opacity-50 pointer-events-none"
           style={{
-            background: `radial-gradient(circle, ${holo.c}22 0%, ${holo.b}10 45%, transparent 70%)`,
+            background: `radial-gradient(circle, ${holo.c}28 0%, ${holo.b}15 45%, transparent 70%)`,
           }}
         />
       </div>

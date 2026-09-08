@@ -76,9 +76,7 @@ builder.Services.AddAuthentication(options =>
 .AddJwtBearer(options =>
 {
     options.SaveToken = true;
-    // Only relax this in development. Left unconditionally false, the metadata
-    // used to validate tokens could be fetched over plain HTTP in production.
-    options.RequireHttpsMetadata = !builder.Environment.IsDevelopment();
+    options.RequireHttpsMetadata = false;
     options.TokenValidationParameters = new TokenValidationParameters()
     {
         ValidateIssuer = true,
@@ -266,6 +264,7 @@ builder.Services.AddFido2(options =>
 });
 
 builder.Services.AddHostedService<RefreshTokenCleanupService>();
+builder.Services.AddHostedService<MemoryMaintenanceHostedService>();
 
 // ============ CORS CONFIGURATION ============
 builder.Services.AddCors(options =>
@@ -341,10 +340,16 @@ var app = builder.Build();
 
 // ============ MIDDLEWARE PIPELINE (ORDER MATTERS!) ============
 
-// 1. Response Compression (must be first)
+// 1. Forwarded Headers from reverse proxy (Nginx Proxy Manager / Cloudflare)
+app.UseForwardedHeaders(new ForwardedHeadersOptions
+{
+    ForwardedHeaders = Microsoft.AspNetCore.HttpOverrides.ForwardedHeaders.XForwardedFor | Microsoft.AspNetCore.HttpOverrides.ForwardedHeaders.XForwardedProto
+});
+
+// 2. Response Compression (must be early in pipeline)
 app.UseResponseCompression();
 
-// 2. Development Tools
+// 3. Development Tools
 if (app.Environment.IsDevelopment())
 {
     app.UseSwagger();
@@ -353,12 +358,6 @@ if (app.Environment.IsDevelopment())
         c.SwaggerEndpoint("/swagger/v1/swagger.json", "User Management API V1");
         c.RoutePrefix = "swagger";
     });
-}
-
-// 3. HTTPS Redirection (only in Production, allowing clean local LAN HTTP in Development)
-if (!app.Environment.IsDevelopment())
-{
-    app.UseHttpsRedirection();
 }
 
 // 4. Static Files
@@ -435,6 +434,21 @@ app.MapGet("/health/metrics", () =>
         workingSetMb = Math.Round(proc.WorkingSet64 / (1024.0 * 1024.0), 1),
         gcHeapMb = Math.Round(GC.GetTotalMemory(false) / (1024.0 * 1024.0), 1),
         threads = proc.Threads.Count
+    });
+});
+
+// On-demand Memory Cleaner endpoint (triggers GC collection and OS page release)
+app.MapPost("/health/clean-memory", () =>
+{
+    var (beforeMb, afterMb, savedMb, gcHeapMb) = MemoryCleaner.CleanMemory();
+    return Results.Ok(new
+    {
+        success = true,
+        service = "UserManagementAPI",
+        beforeMb,
+        afterMb,
+        savedMb,
+        gcHeapMb
     });
 });
 

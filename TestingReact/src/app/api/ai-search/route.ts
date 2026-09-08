@@ -583,8 +583,9 @@ HOW TO WORK
 1. Decide what the question actually asks for, then call the tools that answer it. Several calls are fine, and comparing a few counts before reading rows is usually cheaper than reading everything.
 2. For "how many" questions use count_tickets — it returns the exact total across the whole system, not just the rows you can see.
 3. For questions about spare parts deducted/issued from the system (កាត់ចេញពីប្រព័ន្ធ / stock-out), parts used, or stock transactions on any date, use query_stock_transactions or query_sparepart_usage.
-4. When a question names a person, call find_users first if you are unsure of the spelling, then pass the name as staffName (never as searchTerm).
-5. Finish by calling present_results exactly once, with your answer and the filters that produced it.
+4. For questions about who was active today, who is online, or what users exist in the system, use query_user_activity.
+5. When a question names a person, call find_users first if you are unsure of the spelling, then pass the name as staffName (never as searchTerm).
+6. Finish by calling present_results exactly once, with your answer and the filters that produced it.
 
 QUESTIONS ABOUT THE APPLICATION ITSELF
 Anything about how the system is built rather than what is stored in it — "what menus do I have", "what pages are there", "what does this screen do", "where do I stock out a part", "how do I record an inspection", "what does Awaiting Sparepart mean", "what can this system do", "how does the repair process work" — is answered by calling describe_application first and reading the result. These are NOT general-knowledge questions and must never be answered from memory: this installation has its own menu, and guessing produces screens that do not exist. Give the real menu names as they appear in the sidebar, and say plainly when something the user asks about does not exist.
@@ -676,7 +677,19 @@ SPARE PARTS & STOCK INVENTORY (គ្រឿងបន្លាស់ និងស
 - Questions about spare parts deducted from stock, issued to technicians, or used for repairs ("ចំនួនគ្រឿងបន្លាស់ដែលបានកាត់ចេញពីស្តុក", "កាត់ស្តុក", "ដកចេញពីស្តុក", "គ្រឿងបន្លាស់ដែលបានប្រើ") ->
   1. Call search_tickets with status "Sent Spareparts", "Repairing", or "Finished" to read the sparePartsUsed list on tickets.
   2. If the user asks generally about spare parts usage report, you can summarize what was used, or set navigateTo to "/sparepart-usage" (Spare Part Usage Report) or "/spareparts".
-  3. If no parts were deducted for that period or query, answer clearly and politely in Khmer (or English if asked in English) stating that no spare parts were deducted/used for the specified period.`;
+  3. If no parts were deducted for that period or query, answer clearly and politely in Khmer (or English if asked in English) stating that no spare parts were deducted/used for the specified period.
+
+USERS & USER ACTIVITY (សកម្មភាពបុគ្គលិក និងអ្នកប្រើប្រាស់)
+- Questions about who was active today, who worked today, who is currently logged in/online, or what users exist in the system ("តើថ្ងៃនេះមាន user ណាខ្លះធ្វើសកម្មភាព?", "នរណាខ្លះធ្វើការថ្ងៃនេះ?", "user ណាខ្លះកំពុង online / ប្រើប្រាស់ប្រព័ន្ធ?", "តើក្នុងប្រព័ន្ធមាន user ណាខ្លះ?", "តើមាន user ផ្សេងទៀតទេ?"):
+  1. ALWAYS call query_user_activity with the date (defaults to today) to obtain the complete picture:
+     - Who is currently online and active in browser sessions right now (Active Sessions with user, role, device, OS).
+     - Which staff performed actions on tickets today across intake, inspection, repair, and verification.
+     - Which staff performed spare-part stock movements today.
+     - The complete breakdown of all registered users in the organization by role (Technicians, Managers, Admins, Sales, Stock).
+  2. Write a structured, accurate, and thorough answer in Khmer (or English if asked in English):
+     - ១. អ្នកកំពុង Online / ប្រើប្រាស់ប្រព័ន្ធផ្ទាល់ពេលនេះ (Active Sessions) ៖ រៀបរាប់ឈ្មោះ user, តួនាទី Role, និងឧបករណ៍ (ឧ. samrith ratana - SuperAdmin កំពុង Online លើ Windows PC)។
+     - ២. បុគ្គលិកដែលបានចុះសកម្មភាពការងារថ្ងៃនេះ ៖ បង្ហាញឈ្មោះបុគ្គលិក និងសកម្មភាពជាក់ស្តែង (ឧ. ទទួលម៉ាស៊ីន, ពិនិត្យវិនិច្ឆ័យ, ជួសជុល, ឬផ្ទៀងផ្ទាត់សំបុត្រ #...)។
+     - ៣. បញ្ជីអ្នកប្រើប្រាស់ផ្សេងទៀតក្នុងប្រព័ន្ធ ៖ សង្ខេបបញ្ជីឈ្មោះ និងចំនួនបុគ្គលិកដទៃទៀតតាមតួនាទី Role ក្នុងក្រុមហ៊ុន (Technician, Admin, Manager, Sales...) ដើម្បីឱ្យអ្នកសួរបានដឹងច្បាស់ និងក្បោះក្បាយថាក្នុងប្រព័ន្ធមាន user ណាខ្លះទៀត!`;
 
 // ---------------------------------------------------------------------------
 // Keys

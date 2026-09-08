@@ -16,6 +16,9 @@
 export interface SparePartItemDetail {
   id: string;
   sparePartId: string;
+  sparepartId?: string;
+  SparepartId?: string;
+  serialNumber?: string;
   itemName?: string;
   useFor?: string;
   partNumber?: string;
@@ -64,6 +67,7 @@ export interface SparePartItem {
   brandId?: string | null;
   brandName?: string | null;
   brandLogoUrl?: string | null;
+  isDraft?: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -629,6 +633,7 @@ export interface PaginatedResult<T> {
   goodCount?: number;
   criticalCount?: number;
   outOfStockCount?: number;
+  draftCount?: number;
   totalAll?: number;
 }
 

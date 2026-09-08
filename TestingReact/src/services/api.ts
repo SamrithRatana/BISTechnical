@@ -70,6 +70,7 @@ import {
 import { fetchUserMap, enrichTicketUsers } from "./userService";
 import { registerSessionCacheClearer } from "./authSession";
 import { timeoutAfter, fetchWithRetry } from "@/lib/withTimeout";
+import { captureSystemError, recordProcessActivity } from "./systemObservability";
 import {
   checkStockShortages,
   isStockDeductingStatus,
@@ -420,10 +421,37 @@ export async function loginUser(userName: string, password: string): Promise<Log
       message: "Unexpected response format from server"
     });
     if (!res.ok || !data.isSuccess) {
+      captureSystemError({
+        serviceId: "our-user-api",
+        endpoint: "/api/auth/login",
+        method: "POST",
+        statusCode: res.status || 401,
+        message: data.message ?? "Authentication failed: Invalid credentials",
+        userContext: { username: userName },
+      });
       return { isSuccess: false, message: data.message ?? "Invalid username or password" };
     }
+
+    recordProcessActivity({
+      serviceId: "our-user-api",
+      type: "AUTH",
+      descriptionKm: `អ្នកប្រើប្រាស់ "${userName}" បានចូលប្រព័ន្ធជោគជ័យ`,
+      descriptionEn: `User "${userName}" successfully authenticated`,
+      statusCode: 200,
+      user: userName,
+    });
+
     return data;
-  } catch {
+  } catch (err) {
+    captureSystemError({
+      serviceId: "our-user-api",
+      endpoint: "/api/auth/login",
+      method: "POST",
+      statusCode: 0,
+      message: "Connection failed. Please check your internet or API service status.",
+      severity: "CRITICAL",
+      userContext: { username: userName },
+    });
     return {
       isSuccess: false,
       message: "Connection failed. Please check your internet or API service status."
@@ -846,6 +874,14 @@ export async function updateServiceStatus(
         if (process.env.NODE_ENV !== "production") {
           console.log(`✅ Status updated to "${newStatus}" via ${statusRequest.endpoint}`);
         }
+        recordProcessActivity({
+          serviceId: "our-technical-api",
+          type: "MUTATION",
+          descriptionKm: `ប្តូរស្ថានភាពប័ណ្ណជួសជុល ${item.reportNo || item.id} ទៅជា "${newStatus}"`,
+          descriptionEn: `Updated ticket ${item.reportNo || item.id} status to "${newStatus}"`,
+          statusCode: 200,
+          user: performedBy,
+        });
         notifyLocalRealtime({ type: "status_changed", resource: "ticket", status: newStatus });
         void dispatchTelegramNotificationSafe(item, newStatus);
         return { success: true };
@@ -858,11 +894,29 @@ export async function updateServiceStatus(
       } catch {
         parsedError = errText.replace(/^"|"$/g, "");
       }
+      captureSystemError({
+        serviceId: "our-technical-api",
+        endpoint: statusRequest.endpoint,
+        method: "POST",
+        statusCode: res.status,
+        message: parsedError || `Failed to update status to ${newStatus}`,
+        payloadSnippet: JSON.stringify(statusRequest.payload),
+        userContext: { username: performedBy },
+      });
       console.warn(`❌ Status update failed [${res.status}]: ${parsedError}`);
       return { success: false, error: parsedError || "Failed to update status" };
     } catch (err: unknown) {
       console.error("Failed to update status via BIS endpoint:", err);
       const errMsg = err instanceof Error ? err.message : "Failed to update status";
+      captureSystemError({
+        serviceId: "our-technical-api",
+        endpoint: statusRequest.endpoint,
+        method: "POST",
+        statusCode: 0,
+        message: errMsg,
+        stackTrace: err instanceof Error ? err.stack : undefined,
+        userContext: { username: performedBy },
+      });
       return { success: false, error: errMsg };
     }
   }
@@ -882,14 +936,39 @@ export async function updateServiceStatus(
       body: JSON.stringify(updated)
     });
     if (res.ok) {
+      recordProcessActivity({
+        serviceId: "our-technical-api",
+        type: "MUTATION",
+        descriptionKm: `ប្តូរស្ថានភាពប័ណ្ណ ${item.reportNo || item.id} ទៅជា "${newStatus}" (PUT)`,
+        descriptionEn: `Updated ticket ${item.reportNo || item.id} status to "${newStatus}" via PUT`,
+        statusCode: 200,
+        user: performedBy,
+      });
       notifyLocalRealtime({ type: "status_changed", resource: "ticket", status: newStatus });
       void dispatchTelegramNotificationSafe(item, newStatus);
       return { success: true };
     }
     const errText = await res.text().catch(() => "");
+    captureSystemError({
+      serviceId: "our-technical-api",
+      endpoint: "/api/proxy/technicalservices",
+      method: "PUT",
+      statusCode: res.status,
+      message: errText || `Failed to update status to ${newStatus}`,
+      userContext: { username: performedBy },
+    });
     return { success: false, error: errText || "Failed to update status" };
   } catch (err: unknown) {
     console.error("Fallback PUT status update failed:", err);
+    captureSystemError({
+      serviceId: "our-technical-api",
+      endpoint: "/api/proxy/technicalservices",
+      method: "PUT",
+      statusCode: 0,
+      message: err instanceof Error ? err.message : "Failed to update status",
+      stackTrace: err instanceof Error ? err.stack : undefined,
+      userContext: { username: performedBy },
+    });
     return { success: false, error: "Failed to update status" };
   }
 }
@@ -1229,6 +1308,7 @@ function mapSparePartRow(p: Record<string, unknown>, fallbackId = ""): SparePart
     brandId:      nullableStr(p.brandId ?? p.BrandId),
     brandName:    nullableStr(p.brandName ?? p.BrandName),
     brandLogoUrl: nullableStr(p.brandLogoUrl ?? p.BrandLogoUrl),
+    isDraft:      Boolean(p.isDraft ?? p.IsDraft ?? false),
   };
 }
 
@@ -1280,6 +1360,7 @@ export async function fetchSparePartsInventory(
       const goodCount = (data.goodCount ?? data.GoodCount) as number | undefined;
       const criticalCount = (data.criticalCount ?? data.CriticalCount) as number | undefined;
       const outOfStockCount = (data.outOfStockCount ?? data.OutOfStockCount) as number | undefined;
+      const draftCount = (data.draftCount ?? data.DraftCount) as number | undefined;
       const totalAll = (data.totalAll ?? data.TotalAll) as number | undefined;
 
       return {
@@ -1291,13 +1372,10 @@ export async function fetchSparePartsInventory(
         goodCount,
         criticalCount,
         outOfStockCount,
+        draftCount,
         totalAll,
       };
     } catch {
-      // Offline: mirror the server's search fields so the fallback behaves
-      // the same way rather than ignoring the term and showing everything.
-      // The mock rows carry no classification, so any classification filter
-      // yields an empty list — which is also what the server would answer.
       const term = searchTerm.trim().toLowerCase();
       const hasClassificationFilter = Boolean(categoryId || typeId || brandId);
       const filtered = hasClassificationFilter
@@ -1319,6 +1397,38 @@ export async function fetchSparePartsInventory(
       };
     }
   }, 15_000);
+}
+
+export async function toggleSparePartDraft(id: string, isDraft: boolean): Promise<boolean> {
+  invalidateCachePrefix("spareparts");
+  try {
+    const res = await fetchWithRetry(`/api/proxy/spareparts/${id}/draft?isDraft=${isDraft}`, {
+      method: "PUT",
+      headers: getAuthHeaders(),
+    });
+    return res.ok;
+  } catch (err) {
+    console.error("toggleSparePartDraft failed", err);
+    return false;
+  }
+}
+
+export async function batchSetSparePartsDraft(ids: string[], isDraft: boolean): Promise<boolean> {
+  invalidateCachePrefix("spareparts");
+  try {
+    const res = await fetchWithRetry(`/api/proxy/spareparts/batch-draft`, {
+      method: "PUT",
+      headers: {
+        ...getAuthHeaders(),
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ ids, isDraft }),
+    });
+    return res.ok;
+  } catch (err) {
+    console.error("batchSetSparePartsDraft failed", err);
+    return false;
+  }
 }
 
 const NULL_GUID = "00000000-0000-0000-0000-000000000000";

@@ -1152,16 +1152,27 @@ html.av-type-transition :is(h1, h2, h3, h4, h5, h6, p, span, label, button, a, t
   transition: letter-spacing 0.18s ease-out, line-height 0.18s ease-out;
 }
 
-/* Dark theme input autofill override (Prevents Chrome/Edge from turning inputs white) */
-input:-webkit-autofill,
-input:-webkit-autofill:hover, 
-input:-webkit-autofill:focus,
-input:-webkit-autofill:active {
+/* Theme-aware input autofill override (Prevents Chrome/Edge from turning inputs jarring colors) */
+.dark input:-webkit-autofill,
+.dark input:-webkit-autofill:hover, 
+.dark input:-webkit-autofill:focus,
+.dark input:-webkit-autofill:active {
   -webkit-text-fill-color: #f8fafc !important;
   -webkit-box-shadow: 0 0 0px 1000px #090d16 inset !important;
   box-shadow: 0 0 0px 1000px #090d16 inset !important;
   transition: background-color 5000s ease-in-out 0s !important;
   caret-color: #10b981 !important;
+}
+
+input:-webkit-autofill,
+input:-webkit-autofill:hover, 
+input:-webkit-autofill:focus,
+input:-webkit-autofill:active {
+  -webkit-text-fill-color: #0f172a !important;
+  -webkit-box-shadow: 0 0 0px 1000px #f8fafc inset !important;
+  box-shadow: 0 0 0px 1000px #f8fafc inset !important;
+  transition: background-color 5000s ease-in-out 0s !important;
+  caret-color: #059669 !important;
 }
 
 /* Entrance for popover-style panels positioned with exact fixed pixel
@@ -2117,4 +2128,58 @@ html:not(.dark) .docs-sidebar-scroll::-webkit-scrollbar-thumb:hover {
   user-select: none;
   transition: filter 0.2s ease;
 }
+
+/* ══════════════════════════════════════════════════════════════════════
+   DOCS TARGET DEEP-LINK HIGHLIGHT ANIMATION
+   ══════════════════════════════════════════════════════════════════════ */
+.doc-target-highlight {
+  animation: docTargetFlash 3.5s cubic-bezier(0.16, 1, 0.3, 1) forwards !important;
+}
+
+@keyframes docTargetFlash {
+  0% {
+    background-color: rgba(139, 92, 246, 0.35) !important;
+    outline: 2px solid #8b5cf6 !important;
+    outline-offset: -2px;
+    box-shadow: 0 0 25px rgba(139, 92, 246, 0.5);
+  }
+  30% {
+    background-color: rgba(139, 92, 246, 0.22) !important;
+    outline: 2px solid #8b5cf6 !important;
+    outline-offset: -2px;
+    box-shadow: 0 0 15px rgba(139, 92, 246, 0.3);
+  }
+  75% {
+    background-color: rgba(139, 92, 246, 0.1) !important;
+    outline: 1.5px solid rgba(139, 92, 246, 0.4) !important;
+    outline-offset: -2px;
+  }
+  100% {
+    background-color: transparent;
+    outline: 2px solid transparent;
+    box-shadow: none;
+  }
+}
+
+tr.doc-target-highlight > td {
+  background-color: rgba(139, 92, 246, 0.16) !important;
+  transition: background-color 3s ease-out;
+}
+
+/* ══════════════════════════════════════════════════════════════════════
+   5-SECOND HELP TIP COUNTDOWN ANIMATION
+   ══════════════════════════════════════════════════════════════════════ */
+@keyframes tipCountdown {
+  0% {
+    width: 100%;
+  }
+  100% {
+    width: 0%;
+  }
+}
+
+.animate-tip-countdown {
+  animation: tipCountdown 5s linear forwards;
+}
+
 

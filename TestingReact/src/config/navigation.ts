@@ -18,7 +18,7 @@
  */
 
 import type { TranslationKey } from "@/i18n/translations";
-import { ADMIN_ROLES } from "@/services/authSession";
+import { ADMIN_ROLES, ROLES } from "@/services/authSession";
 
 export interface NavItem {
   /** i18n key for the label — resolved at render, and read in both languages by the assistant. */
@@ -103,6 +103,14 @@ export const PERMISSIONS_ITEM: NavItem = {
   purpose:
     "Role-based permission matrix and security privilege configuration across system modules.",
   requiredRoles: ADMIN_ROLES,
+};
+
+export const SYSTEM_MONITOR_ITEM: NavItem = {
+  nameKey: "nav.systemObservability",
+  href: "/system-monitor",
+  purpose:
+    "System observability and monitoring: live microservices workflow topology, real-time warning & error logs with root-cause analysis, and live process stream.",
+  requiredRoles: [ROLES.superAdmin],
 };
 
 export const NAV_GROUPS: NavGroup[] = [
@@ -552,6 +560,11 @@ export const NAV_GROUPS: NavGroup[] = [
       },
     ],
   },
+  {
+    titleKey: "nav.groupAdministration",
+    requiredRoles: [ROLES.superAdmin],
+    items: [SYSTEM_MONITOR_ITEM],
+  },
 ];
 
 /** Every routable destination, sidebar or not — what the assistant may offer to open. */
@@ -561,6 +574,7 @@ export const ALL_NAV_ITEMS: NavItem[] = [
     ...(group.items ?? []),
     ...(group.subGroups?.flatMap((sg) => sg.items) ?? []),
   ]),
+  SYSTEM_MONITOR_ITEM,
   USERS_ITEM,
   PERMISSIONS_ITEM,
   SETTINGS_ITEM,

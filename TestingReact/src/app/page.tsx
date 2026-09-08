@@ -35,7 +35,10 @@ const PREWARM_SESSION_KEY = "workspace_dashboard_prewarmed_v1";
 function checkIsPrewarmed(): boolean {
   if (typeof window === "undefined") return false;
   try {
-    return sessionStorage.getItem(PREWARM_SESSION_KEY) === "true";
+    return (
+      sessionStorage.getItem(PREWARM_SESSION_KEY) === "true" ||
+      sessionStorage.getItem("workspace_pipeline_synced") === "true"
+    );
   } catch {
     return false;
   }
@@ -45,6 +48,7 @@ registerSessionCacheClearer(() => {
   if (typeof window !== "undefined") {
     try {
       sessionStorage.removeItem(PREWARM_SESSION_KEY);
+      sessionStorage.removeItem("workspace_pipeline_synced");
     } catch {}
   }
 });
@@ -127,7 +131,7 @@ export default function Home() {
         setCurrentStep(2);
         setProgress(50);
         try {
-          await fetchDashboardStats(true);
+          await fetchDashboardStats(false);
         } catch (e) {
           console.warn("Stats prewarm warning:", e);
         }
@@ -138,7 +142,7 @@ export default function Home() {
         setCurrentStep(3);
         setProgress(75);
         try {
-          await loadTickets(true);
+          await loadTickets(false);
         } catch (e) {
           console.warn("Tickets prewarm warning:", e);
         }
@@ -149,7 +153,7 @@ export default function Home() {
         setCurrentStep(4);
         setProgress(95);
         try {
-          await fetchSparepartTransactions(1, 25, "All", "", true);
+          await fetchSparepartTransactions(1, 25, "All", "", false);
         } catch (e) {
           console.warn("Spareparts prewarm warning:", e);
         }
@@ -163,6 +167,7 @@ export default function Home() {
         if (cancelled) return;
         try {
           sessionStorage.setItem(PREWARM_SESSION_KEY, "true");
+          sessionStorage.setItem("workspace_pipeline_synced", "true");
         } catch {}
         setIsInitialReady(true);
       } catch (err) {

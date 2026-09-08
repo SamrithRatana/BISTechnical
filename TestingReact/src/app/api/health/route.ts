@@ -282,12 +282,28 @@ export async function POST() {
     } catch {}
   }
 
-  // 2. Invalidate cached health probe so next read is 100% fresh
+  // 2. Trigger .NET GC collection & working set release on backend APIs in parallel
+  try {
+    await Promise.allSettled([
+      fetch(`${TECHNICAL_API_BASE}/health/clean-memory`, {
+        method: "POST",
+        cache: "no-store",
+        signal: AbortSignal.timeout(1800),
+      }),
+      fetch(`${USER_API_BASE}/health/clean-memory`, {
+        method: "POST",
+        cache: "no-store",
+        signal: AbortSignal.timeout(1800),
+      }),
+    ]);
+  } catch {}
+
+  // 3. Invalidate cached health probe so next read is 100% fresh
   cachedReport = null;
   cachedAt = 0;
   inFlightProbe = null;
 
-  // 3. Measure fresh metrics
+  // 4. Measure fresh metrics
   const freshReport = await measure();
   cachedReport = freshReport;
   cachedAt = Date.now();

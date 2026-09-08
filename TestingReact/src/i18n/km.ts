@@ -24,6 +24,8 @@ const km: Record<TranslationKey, string> = {
 
   // ─── Sidebar navigation ───────────────────────────────────────────────────
   "nav.homeDashboard": "ទំព័រដើម",
+  "nav.groupAdministration": "គ្រប់គ្រងប្រព័ន្ធ (Admin)",
+  "nav.systemObservability": "ត្រួតពិនិត្យប្រព័ន្ធ (Observability)",
   "nav.groupInventory": "បញ្ជីទំនិញ",
   "nav.receivedItemsInventory": "ទទួលម៉ាស៊ីនចូលថ្មី",
   "nav.sparePartInventory": "បញ្ជីគ្រឿងបន្លាស់",
@@ -299,6 +301,11 @@ const km: Record<TranslationKey, string> = {
   "sp.stockGood": "ស្តុកគ្រប់គ្រាន់",
   "sp.stockCritical": "ស្តុកតិច",
   "sp.stockOut": "អស់ស្តុក",
+  "sp.stockDraft": "ព្រាង / លាក់ទុក",
+  "sp.markDraft": "លាក់ទុក (Draft)",
+  "sp.markUndraft": "លើកលែងការលាក់ (Undraft)",
+  "sp.draftSuccess": "បានលាក់ទុក Sparepart ដោយជោគជ័យ",
+  "sp.undraftSuccess": "បានលើកលែងការលាក់ Sparepart ដោយជោគជ័យ",
   "sp.stockLevel": "មាន {qty} ក្នុងស្តុក",
   "sp.filterAll": "ទាំងអស់",
   "sp.loadedOf": "{loaded} ក្នុង {total}",

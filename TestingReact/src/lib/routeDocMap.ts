@@ -37,98 +37,132 @@ export interface RouteDocSummary {
 }
 
 /**
- * Direct route-to-articleId lookup table.
- * Order matters: more specific sub-routes come before generic parent routes.
+ * Direct route-to-documentation URL mapping table.
+ * Maps application paths to specific articles and sub-target elements (sections or catalog rows).
+ * Format:
+ *  - Standard article: "/docs#<articleId>"
+ *  - Deep link with row/sub-target: "/docs#<articleId>--<subTargetId>"
  */
-export const ROUTE_TO_DOC_ID: Record<string, string> = {
-  // --- Core Dashboard ---
-  "/": "getting-started-guide",
+export const ROUTE_TO_DOC_URL: Record<string, string> = {
+  // ── Chapter 1: Core Dashboard & Authentication ──
+  "/": "/docs#getting-started-guide",
+  "/login": "/docs#login-process-flow",
+  "/face-link": "/docs#face-link",
+  "/scanner": "/docs#mobile-barcode-scanner",
+  "/download": "/docs#mobile-barcode-scanner",
+  "/download/android": "/docs#mobile-barcode-scanner",
+  "/download/ios": "/docs#mobile-barcode-scanner",
 
-  // --- Chapter 2: 11-Stage Repair Lifecycle ---
-  "/receive-item": "receive-item",
-  "/received-inventory": "receive-item",
-  "/inspect-item": "inspect-item",
-  "/inspection": "inspection",
-  "/spare-request": "spare-request",
-  "/waiting-confirm": "waiting-confirm",
-  "/confirmed-sale": "confirmed-sale",
-  "/approve-repair": "approve-repair",
-  "/approve-verify": "approve-verify",
-  "/finished-repair": "finished-handover",
-  "/completed-repairs": "finished-handover",
-  "/rejected": "rejected",
-  "/unrepairable": "unrepairable",
-  "/service-tickets": "receive-item",
+  // ── Chapter 2: 11-Stage Repair Lifecycle ──
+  "/received-inventory": "/docs#received-inventory",
+  "/receive-item": "/docs#receive-item",
+  "/service-tickets": "/docs#receive-item",
+  "/inspect-item": "/docs#inspect-item",
+  "/inspection": "/docs#inspection",
+  "/spare-request": "/docs#spare-request",
+  "/waiting-confirm": "/docs#waiting-confirm",
+  "/confirmed-sale": "/docs#confirmed-sale",
+  "/pending-repairs": "/docs#pending-repairs",
+  "/approve-repair": "/docs#approve-repair",
+  "/approve-verify": "/docs#approve-verify",
+  "/completed-repairs": "/docs#completed-repairs",
+  "/finished-repair": "/docs#completed-repairs",
+  "/rejected": "/docs#rejected-unrepairable",
+  "/unrepairable": "/docs#rejected-unrepairable",
+  "/third-party-repairs": "/docs#third-party-repairs",
 
-  // --- Chapter 3: Spare Parts & Inventory ---
-  "/spareparts/brands": "brand-taxonomy",
-  "/spareparts/categories": "category-taxonomy",
-  "/spareparts/types": "type-taxonomy",
-  "/spareparts": "spare-catalog",
-  "/sparepart-usage": "sparepart-usage-report",
-  "/sparepart-hold": "sparepart-hold-report",
-  "/stock-transactions": "stock-transactions-report",
-  "/stock-movement": "stock-movement-report",
-  "/stock-adjustments": "stock-adjustments-report",
-  "/stock-reconciliation": "stock-reconciliation-report",
-  "/stock-health": "stock-health-report",
-  "/stock-dead": "stock-dead-report",
+  // ── Chapter 3: Spare Parts Catalog & Stock Ledger ──
+  "/spareparts/brands": "/docs#spareparts-catalog",
+  "/spareparts/categories": "/docs#spareparts-catalog",
+  "/spareparts/types": "/docs#spareparts-catalog",
+  "/spareparts": "/docs#spareparts-catalog",
+  "/sparepart-hold": "/docs#sparepart-hold",
+  "/stock-transactions": "/docs#stock-transactions",
+  "/stock-movement": "/docs#stock-movement",
+  "/stock-adjustments": "/docs#stock-adjustments",
+  "/stock-reconciliation": "/docs#stock-transactions",
+  "/stock-health": "/docs#stock-health",
+  "/stock-dead": "/docs#stock-dead",
 
-  // --- Chapter 4: Business Reports ---
-  "/daily-report": "daily-operations-report",
-  "/monthly-report": "monthly-operations-report",
-  "/history-report": "repair-history-report",
-  "/engineer-kpi-report": "engineer-kpi-report",
-  "/engineer-report": "engineer-kpi-report",
-  "/monthly-technical-matrix": "monthly-technical-matrix",
-  "/sales-followup": "sales-followup-report",
-  "/sales-conversion-report": "sales-followup-report",
-  "/sales-leads-report": "sales-followup-report",
-  "/faults-report": "fault-analysis-report",
-  "/customer-report": "customer-report",
-  "/customers": "customer-report",
-  "/contract-report": "contract-report",
-  "/contract-renewal-report": "contract-report",
-  "/stage-report": "stage-report",
-  "/pending-repairs": "pending-repairs",
-  "/third-party-repairs": "third-party-repairs",
-  "/repair-report": "repair-history-report",
-  "/location-report": "daily-operations-report",
+  // ── Chapter 4: Enterprise Reports - Operations (10 Reports) ──
+  "/daily-report": "/docs#report-repair-operations--daily-report",
+  "/monthly-report": "/docs#report-repair-operations--monthly-report",
+  "/monthly-technical-matrix": "/docs#report-repair-operations--monthly-technical-matrix",
+  "/repair-report": "/docs#report-repair-operations--repair-report",
+  "/history-report": "/docs#report-repair-operations--history-report",
+  "/stage-report": "/docs#report-repair-operations--stage-report",
+  "/location-report": "/docs#report-repair-operations--location-report",
+  "/contract-report": "/docs#report-repair-operations--contract-report",
 
-  // --- Chapter 5: Administration & Settings ---
-  "/profile": "profile-overview",
-  "/settings": "system-branding-customization",
-  "/templates-settings": "template-management",
-  "/users": "admin-user-management",
-  "/permissions": "admin-user-management",
-  "/login": "login-access-guide",
-  "/face-link": "login-access-guide",
+  // ── Chapter 4: Enterprise Reports - Quality & Diagnostics (2 Reports) ──
+  "/faults-report": "/docs#report-quality-diagnostics--faults-report",
+  "/rejected-report": "/docs#report-quality-diagnostics--rejected-report",
+
+  // ── Chapter 4: Enterprise Reports - Technician KPIs (2 Reports) ──
+  "/engineer-kpi-report": "/docs#report-technician-kpis--engineer-kpi-report",
+  "/engineer-report": "/docs#report-technician-kpis--engineer-report",
+
+  // ── Chapter 4: Enterprise Reports - Sales & CRM (7 Reports) ──
+  "/sales-followup": "/docs#report-sales-crm--waiting-confirm",
+  "/sales-leads-report": "/docs#report-sales-crm--sales-leads-report",
+  "/sales-conversion-report": "/docs#report-sales-crm--sales-conversion-report",
+  "/customer-report": "/docs#report-sales-crm--customer-report",
+  "/customers": "/docs#report-sales-crm--customer-report",
+  "/top-customers-report": "/docs#report-sales-crm--top-customers-report",
+  "/contract-renewal-report": "/docs#report-sales-crm--contract-renewal-report",
+
+  // ── Chapter 4: Enterprise Reports - Spare Parts Stock (8 Reports) ──
+  "/sparepart-usage": "/docs#report-spare-parts-stock--sparepart-usage-report",
+
+  // ── Chapter 5: Administration & Security Settings ──
+  "/profile": "/docs#admin-profile",
+  "/settings": "/docs#admin-theme",
+  "/templates-settings": "/docs#reports-overview",
+  "/users": "/docs#admin-users",
+  "/permissions": "/docs#admin-users",
 };
+
+/**
+ * Backward compatibility alias for ROUTE_TO_DOC_ID.
+ */
+export const ROUTE_TO_DOC_ID: Record<string, string> = Object.fromEntries(
+  Object.entries(ROUTE_TO_DOC_URL).map(([route, docUrl]) => {
+    const hash = docUrl.split("#")[1] || "getting-started-guide";
+    return [route, hash.split("--")[0]];
+  })
+);
+
+/**
+ * Resolves a URL pathname to the exact documentation deep-link URL (including hash and sub-targets).
+ */
+export function resolveDocUrlForPath(pathname: string): string {
+  if (!pathname) return "/docs#getting-started-guide";
+
+  // Clean trailing slash and strip query string
+  const cleanPath = pathname.split("?")[0].replace(/\/+$/, "") || "/";
+
+  // 1. Direct exact match
+  if (ROUTE_TO_DOC_URL[cleanPath]) {
+    return ROUTE_TO_DOC_URL[cleanPath];
+  }
+
+  // 2. Prefix matching for nested sub-routes
+  for (const [routeKey, targetUrl] of Object.entries(ROUTE_TO_DOC_URL)) {
+    if (routeKey !== "/" && cleanPath.startsWith(routeKey)) {
+      return targetUrl;
+    }
+  }
+
+  return "/docs#getting-started-guide";
+}
 
 /**
  * Resolves a URL pathname to the most accurate Docs Article ID.
  */
 export function resolveArticleIdForPath(pathname: string): string {
-  if (!pathname) return "getting-started-guide";
-
-  // 1. Direct exact match
-  if (ROUTE_TO_DOC_ID[pathname]) {
-    return ROUTE_TO_DOC_ID[pathname];
-  }
-
-  // 2. Prefix matching for nested routes
-  const cleanPath = pathname.split("?")[0].replace(/\/$/, "");
-  if (ROUTE_TO_DOC_ID[cleanPath]) {
-    return ROUTE_TO_DOC_ID[cleanPath];
-  }
-
-  for (const [routeKey, docId] of Object.entries(ROUTE_TO_DOC_ID)) {
-    if (routeKey !== "/" && cleanPath.startsWith(routeKey)) {
-      return docId;
-    }
-  }
-
-  return "getting-started-guide";
+  const targetUrl = resolveDocUrlForPath(pathname);
+  const hash = targetUrl.split("#")[1] || "getting-started-guide";
+  return hash.split("--")[0];
 }
 
 /**
@@ -137,6 +171,7 @@ export function resolveArticleIdForPath(pathname: string): string {
  */
 export async function loadDocSummaryForRoute(pathname: string): Promise<RouteDocSummary> {
   const articleId = resolveArticleIdForPath(pathname);
+  const targetUrl = resolveDocUrlForPath(pathname);
 
   try {
     const { DOCS_ALL_ARTICLES } = await import("@/components/docs/content/docsData");
@@ -168,7 +203,7 @@ export async function loadDocSummaryForRoute(pathname: string): Promise<RouteDoc
         contentKm: c.contentKm,
         contentEn: c.contentEn,
       })),
-      docsUrl: `/docs#${article.id}`,
+      docsUrl: targetUrl,
     };
   } catch (err) {
     console.error("[routeDocMap] Failed to load docs data", err);
@@ -183,7 +218,7 @@ export async function loadDocSummaryForRoute(pathname: string): Promise<RouteDoc
       icon: "BookOpen",
       summaryKm: "ប្រព័ន្ធគ្រប់គ្រងសេវាកម្មជួសជុល និងថែទាំកុំព្យូទ័រ/ម៉ាស៊ីនបោះពុម្ព Camprotec។",
       summaryEn: "Camprotec Service Maintenance and Repair Management Portal.",
-      docsUrl: "/docs#getting-started-guide",
+      docsUrl: targetUrl,
     };
   }
 }

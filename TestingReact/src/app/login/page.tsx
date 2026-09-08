@@ -105,7 +105,7 @@ export default function LoginPage() {
   return (
     /* `clip` not `hidden`: an overflow-hidden ancestor flattens the 3D rig
        (the download page root uses overflow-x-clip for the same reason). */
-    <div className="min-h-screen h-screen w-full bg-slate-50 dark:bg-[#03060c] text-slate-900 dark:text-slate-100 flex flex-col items-center justify-between lg:justify-center p-1.5 sm:p-2.5 lg:p-3 xl:p-6 relative overflow-x-clip overflow-y-auto font-sans select-none transition-colors duration-300">
+    <div className="min-h-screen h-screen w-full bg-[#f1f5f9] dark:bg-[#03060c] text-slate-900 dark:text-slate-100 flex flex-col items-center justify-between lg:justify-center p-1.5 sm:p-2.5 lg:p-3 xl:p-6 relative overflow-x-clip overflow-y-auto font-sans select-none transition-colors duration-300">
       <LoginBackdrop
         mode={motionMode}
         curtainSide={mode === "signin" ? "right" : "left"}
@@ -130,11 +130,11 @@ export default function LoginPage() {
         <div className="relative rounded-2xl sm:rounded-3xl">
           <CardRim rig={rig} holo={holo} mode={motionMode} frozen={qrOrCameraVisible} flipKey={mode} />
           <div
-            className="w-full bg-white dark:bg-gradient-to-b dark:from-[#0c1526] dark:via-[#0a111f] dark:to-[#0b1424] border border-slate-200/80 dark:border-white/[0.08] rounded-2xl sm:rounded-3xl overflow-hidden relative flex flex-col transition-colors duration-300"
+            className="w-full bg-white dark:bg-gradient-to-b dark:from-[#0c1526] dark:via-[#0a111f] dark:to-[#0b1424] border border-slate-300/80 dark:border-white/[0.08] rounded-2xl sm:rounded-3xl overflow-hidden relative flex flex-col transition-colors duration-300"
             style={{
               boxShadow: isDark
                 ? `0 30px 90px -15px rgba(0,0,0,0.9), 0 0 40px ${holo.a}14`
-                : "0 0 0 1px rgba(15, 23, 42, 0.05), 0 2px 4px rgba(15, 23, 42, 0.02), 0 10px 24px -4px rgba(15, 23, 42, 0.04), 0 24px 48px -10px rgba(15, 23, 42, 0.06), 0 50px 100px -20px rgba(15, 23, 42, 0.07)",
+                : "0 25px 65px -12px rgba(15, 23, 42, 0.14), 0 10px 24px -6px rgba(15, 23, 42, 0.08), 0 0 0 1px rgba(15, 23, 42, 0.08)",
             }}
           >
           {/* Faint accent wash so the form side reads lit, not flat */}

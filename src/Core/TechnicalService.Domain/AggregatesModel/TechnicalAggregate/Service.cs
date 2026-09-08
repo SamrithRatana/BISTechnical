@@ -188,22 +188,28 @@ public class Service
         bool isHoldStatus = !(statusId == 5 || statusId == 6 || statusId == 12);
 
         var existingItems = _sparepartItems.ToList();
-        var incomingList = sparepartItems.Where(x => x.SparepartId != Guid.Empty).ToList();
-        var incomingSparepartIds = incomingList.Select(x => x.SparepartId).ToHashSet();
+        var incomingList = sparepartItems.Where(x => !string.IsNullOrWhiteSpace(x.Description)).ToList();
 
-        // 1. Remove items no longer present
-        var itemsToRemove = existingItems.Where(e => !incomingSparepartIds.Contains(e.SparepartId)).ToList();
-        foreach (var item in itemsToRemove)
-        {
-            _sparepartItems.Remove(item);
-        }
+        var matchedExisting = new HashSet<SparepartItem>();
 
-        // 2. Update existing or add new
         foreach (var incoming in incomingList)
         {
-            var existing = existingItems.FirstOrDefault(e => e.SparepartId == incoming.SparepartId);
-            if (existing != null && !itemsToRemove.Contains(existing))
+            SparepartItem existing = null;
+            // 1. Try match by Id if incoming has a valid non-empty Id
+            if (incoming.Id != Guid.Empty)
             {
+                existing = existingItems.FirstOrDefault(e => e.Id == incoming.Id && !matchedExisting.Contains(e));
+            }
+
+            // 2. If not matched by Id, match by SparepartId (if non-empty)
+            if (existing == null && incoming.SparepartId != Guid.Empty)
+            {
+                existing = existingItems.FirstOrDefault(e => e.SparepartId == incoming.SparepartId && !matchedExisting.Contains(e));
+            }
+
+            if (existing != null)
+            {
+                matchedExisting.Add(existing);
                 existing.UpdateDetails(
                     incoming.Description,
                     incoming.Quantity,
@@ -214,7 +220,7 @@ public class Service
                     existing.UpdateRemarks(incoming.Remarks);
                 }
             }
-            else if (existing == null)
+            else
             {
                 _sparepartItems.Add(new SparepartItem(
                     incoming.SparepartId,
@@ -224,6 +230,13 @@ public class Service
                     isHoldStatus,
                     incoming.Remarks));
             }
+        }
+
+        // 3. Remove any existing items that were not matched to an incoming line
+        var itemsToRemove = existingItems.Where(e => !matchedExisting.Contains(e)).ToList();
+        foreach (var item in itemsToRemove)
+        {
+            _sparepartItems.Remove(item);
         }
     }
 

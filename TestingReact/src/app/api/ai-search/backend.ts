@@ -19,6 +19,8 @@
  * into a large bill.
  */
 
+import { getActiveLoginSessions } from "@/lib/loginSessionTracker";
+
 const TECHNICAL_API_BASE =
   process.env.NEXT_PUBLIC_TECHNICAL_API_URL || "https://techapi.camprotec.com.kh";
 const CUSTOMER_API_BASE =
@@ -583,6 +585,228 @@ export async function querySparepartUsage(
         totalCost: num(r, "totalCost", "totalAmount"),
       })
     ),
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Comprehensive User Activity Query
+// ---------------------------------------------------------------------------
+
+export async function queryUserActivity(
+  date: string,
+  targetUserName: string | undefined,
+  authorization: string | null,
+  users: UserRecord[],
+  signal?: AbortSignal
+) {
+  // 1. Current Live Online Sessions from active login sessions
+  const sessions = getActiveLoginSessions();
+  const now = Date.now();
+  const onlineUsers = sessions
+    .filter((s) => !s.isRevoked && now - s.lastActiveTime <= 20 * 60 * 1000)
+    .map((s) => {
+      const match = users.find(
+        (u) => u.userName.toLowerCase() === s.userName.toLowerCase()
+      );
+      return {
+        userName: s.userName,
+        fullName: match?.fullName || s.userName,
+        role: s.role || match?.roles.join(", ") || "Staff",
+        device: s.deviceDisplay,
+        os: s.osName,
+        browser: s.browserName,
+        ip: s.ip,
+        loginTime: new Date(s.loginTime).toISOString(),
+        minutesAgoActive: Math.max(0, Math.round((now - s.lastActiveTime) / 60000)),
+      };
+    });
+
+  const filteredOnline = targetUserName
+    ? onlineUsers.filter(
+        (u) =>
+          u.userName.toLowerCase().includes(targetUserName.toLowerCase()) ||
+          u.fullName.toLowerCase().includes(targetUserName.toLowerCase())
+      )
+    : onlineUsers;
+
+  // 2. Fetch Tickets activity for this date
+  let ticketRows: Row[] = [];
+  try {
+    const params = new URLSearchParams({
+      pageNumber: "1",
+      pageSize: "100",
+      fromDate: date,
+      toDate: date,
+      sortBy: "ServiceDate",
+      sortDescending: "true",
+    });
+    const res = await getJson(TECHNICAL_API_BASE, "technicalservices/search", params, authorization, signal);
+    const { rows } = unwrap(res);
+    ticketRows = rows;
+  } catch (err) {
+    console.warn("[ai-search] error querying tickets for user activity:", err);
+  }
+
+  // Also query with useProcessDateFiltering across stages for that date
+  try {
+    const processParams = new URLSearchParams({
+      pageNumber: "1",
+      pageSize: "100",
+      useProcessDateFiltering: "true",
+      fromDate: date,
+      toDate: date,
+      sortBy: "ServiceDate",
+      sortDescending: "true",
+    });
+    for (const st of [
+      "Item Recieved",
+      "Inspection",
+      "Inspecting",
+      "Repairing",
+      "Finished",
+      "Sale Confirmed",
+      "Sent Spareparts",
+      "Awaiting Customer Confirm",
+      "Awaiting Sparepart",
+      "Customer Rejected",
+      "Unrepairable",
+      "Repair by Third-Party",
+    ]) {
+      processParams.append("statusesForProcessFiltering", st);
+    }
+    const pRes = await getJson(TECHNICAL_API_BASE, "technicalservices/search", processParams, authorization, signal);
+    const { rows: pRows } = unwrap(pRes);
+    const seen = new Set(ticketRows.map((r) => str(r, "id") || str(r, "reportNo")));
+    for (const pr of pRows) {
+      const key = str(pr, "id") || str(pr, "reportNo");
+      if (key && !seen.has(key)) {
+        seen.add(key);
+        ticketRows.push(pr);
+      }
+    }
+  } catch {
+    // Non-fatal
+  }
+
+  const byId = new Map<string, UserRecord>();
+  for (const u of users) {
+    byId.set(u.id.toLowerCase(), u);
+  }
+
+  const staffActivityMap: Record<
+    string,
+    {
+      fullName: string;
+      userName: string;
+      roles: string[];
+      actions: string[];
+      ticketsHandled: string[];
+    }
+  > = {};
+
+  function recordStaffAction(
+    userIdOrGuid: string | undefined,
+    actionDesc: string,
+    reportNo: string
+  ) {
+    if (!userIdOrGuid || userIdOrGuid === "00000000-0000-0000-0000-000000000000") return;
+    const u = byId.get(userIdOrGuid.toLowerCase());
+    const name = u?.fullName || u?.userName || userIdOrGuid;
+    const key = u?.userName || userIdOrGuid;
+
+    if (!staffActivityMap[key]) {
+      staffActivityMap[key] = {
+        fullName: name,
+        userName: u?.userName || "",
+        roles: u?.roles || [],
+        actions: [],
+        ticketsHandled: [],
+      };
+    }
+    if (!staffActivityMap[key].actions.includes(actionDesc)) {
+      staffActivityMap[key].actions.push(actionDesc);
+    }
+    if (reportNo && !staffActivityMap[key].ticketsHandled.includes(reportNo)) {
+      staffActivityMap[key].ticketsHandled.push(reportNo);
+    }
+  }
+
+  for (const row of ticketRows) {
+    const reportNo = str(row, "reportNo") || "";
+    const item = str(row, "itemName") || "";
+    const company = str(row, "companyName") || "";
+    const label = `${reportNo} (${item}${company ? ` - ${company}` : ""})`;
+
+    const receivedDay = day(row, "serviceDate");
+    if (receivedDay === date) {
+      recordStaffAction(str(row, "createBy", "userId"), `ទទួលម៉ាស៊ីនចូល (Intake/Created): ${label}`, reportNo);
+    }
+
+    const inspectDay = day(row, "inspectDate");
+    if (inspectDay === date) {
+      recordStaffAction(str(row, "inspectBy", "inspectingBy"), `ពិនិត្យ/វិនិច្ឆ័យ (Inspected): ${label}`, reportNo);
+    }
+
+    const saleConfirmDay = day(row, "saleConfirmedDate");
+    if (saleConfirmDay === date) {
+      recordStaffAction(str(row, "setSaleConfirmedBy"), `យល់ព្រមតម្លៃជួសជុល (Sale Confirmed): ${label}`, reportNo);
+    }
+
+    const repairDay = day(row, "repairDate");
+    if (repairDay === date) {
+      recordStaffAction(str(row, "repairBy"), `ជួសជុលម៉ាស៊ីន (Repaired): ${label}`, reportNo);
+    }
+
+    const finishDay = day(row, "finishedDate");
+    if (finishDay === date) {
+      recordStaffAction(str(row, "verifiedBy"), `ផ្ទៀងផ្ទាត់គុណភាព/រួចរាល់ (Verified/Finished): ${label}`, reportNo);
+    }
+
+    if (str(row, "setSentSparepartsBy")) {
+      recordStaffAction(str(row, "setSentSparepartsBy"), `បញ្ជូនគ្រឿងបន្លាស់ (Sent Spareparts): ${label}`, reportNo);
+    }
+    if (str(row, "setAwaitingCustomerConfirmBy")) {
+      recordStaffAction(str(row, "setAwaitingCustomerConfirmBy"), `រង់ចាំអតិថិជនសម្រេចចិត្ត (Awaiting Confirm): ${label}`, reportNo);
+    }
+  }
+
+  // 3. Query Stock movements on that date
+  let stockTxCount = 0;
+  try {
+    const stData = await querySparepartTransactions(
+      { fromDate: date, toDate: date, pageSize: 20 },
+      authorization,
+      signal
+    );
+    stockTxCount = stData.totalCount;
+  } catch {
+    // Non-fatal
+  }
+
+  // 4. Role breakdown & user list
+  const roleDistribution: Record<string, number> = {};
+  for (const u of users) {
+    for (const r of u.roles) {
+      roleDistribution[r] = (roleDistribution[r] || 0) + 1;
+    }
+  }
+
+  return {
+    queryDate: date,
+    onlineUsersNow: filteredOnline,
+    onlineUsersCount: filteredOnline.length,
+    staffWithTicketActionsToday: Object.values(staffActivityMap),
+    stockTransactionsTodayCount: stockTxCount,
+    allRegisteredUsersSummary: {
+      totalUsersCount: users.length,
+      rolesBreakdown: roleDistribution,
+      sampleUsersList: users.slice(0, 40).map((u) => ({
+        fullName: u.fullName,
+        userName: u.userName,
+        roles: u.roles,
+        isOnline: sessions.some((s) => s.userName.toLowerCase() === u.userName.toLowerCase()),
+      })),
+    },
   };
 }
 

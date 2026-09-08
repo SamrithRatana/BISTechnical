@@ -201,7 +201,7 @@ internal static class Extensions
             // category's page to a request for another.
             options.AddPolicy(SparepartsCachePolicy, policy => policy
                 .Expire(TimeSpan.FromSeconds(60))
-                .SetVaryByQuery("pageNumber", "pageSize", "searchTerm", "stockBand", "linkItemId",
+                .SetVaryByQuery("pageNumber", "pageSize", "searchTerm", "stockBand", "isDraft", "linkItemId",
                                 "categoryId", "typeId", "brandId", "sortBy", "sortDescending", "api-version")
                 .Tag(SparepartsCacheTag));
 

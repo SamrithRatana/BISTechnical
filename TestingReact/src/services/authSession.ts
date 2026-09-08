@@ -269,6 +269,7 @@ export function clearSession(): void {
     localStorage.removeItem(USER_KEY);
     localStorage.removeItem("last_workspace_sync_time");
     sessionStorage.removeItem("workspace_pipeline_synced");
+    sessionStorage.removeItem("workspace_dashboard_prewarmed_v1");
     sessionStorage.removeItem("robot_greeted");
 
     for (const clear of sessionCacheClearers) {

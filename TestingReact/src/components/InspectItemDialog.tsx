@@ -212,7 +212,13 @@ export default function InspectItemDialog({ item, onClose, onSave, prefill }: In
     scrollRootRef: partsScrollRootRef,
     sentinelRef: partsSentinelRef
   } = useInfiniteList<SparePartItem, HTMLDivElement, HTMLDivElement>({
-    fetchPage: (pageNumber, size) => fetchSparePartsInventory(pageNumber, size, partSearchTerm),
+    fetchPage: async (pageNumber, size) => {
+      const res = await fetchSparePartsInventory(pageNumber, size, partSearchTerm);
+      return {
+        ...res,
+        items: (res.items || []).filter((p) => !p.isDraft),
+      };
+    },
     pageSize: 25,
     resetKey: partSearchTerm,
     getId: (p) => p.id

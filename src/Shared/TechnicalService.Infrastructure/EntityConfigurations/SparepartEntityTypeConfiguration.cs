@@ -19,12 +19,14 @@ class SparepartEntityTypeConfiguration
         // 2026-09-05). Without this EF warned at every start-up that values
         // could be silently truncated.
         sparepartConfiguration.Property(b => b.DefaultPrice).HasPrecision(38, 2);
+        sparepartConfiguration.Property(b => b.IsDraft).HasDefaultValue(false);
 
         sparepartConfiguration.HasIndex(b => b.ItemName);
         sparepartConfiguration.HasIndex(b => b.SerialNumber);
         sparepartConfiguration.HasIndex(b => b.UserFor);
         sparepartConfiguration.HasIndex(b => b.Quantity);
         sparepartConfiguration.HasIndex(b => b.LinkItemId);
+        sparepartConfiguration.HasIndex(b => b.IsDraft).HasDatabaseName("IX_Spareparts_IsDraft");
 
         // ── Classification: nullable FKs to the taxonomy tables ──────────
         // Restrict on every one: a category/type/brand still referenced by a

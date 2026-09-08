@@ -19,6 +19,7 @@ public record PagedResult<T>
     public int GoodCount { get; set; }
     public int CriticalCount { get; set; }
     public int OutOfStockCount { get; set; }
+    public int DraftCount { get; set; }
     public int TotalAll { get; set; }
     public bool HasPreviousPage => PageNumber > 1;
     public bool HasNextPage => PageNumber < TotalPages;
@@ -62,7 +63,8 @@ public record SparepartSearchQuery(
     string? StockBand = null,
     Guid? CategoryId = null,
     Guid? TypeId = null,
-    Guid? BrandId = null);
+    Guid? BrandId = null,
+    bool? IsDraft = null);
 public record CompanyStatusSummary
 {
     public string CompanyName { get; init; } = "";

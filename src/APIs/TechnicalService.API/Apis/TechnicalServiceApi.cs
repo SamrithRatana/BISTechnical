@@ -45,6 +45,8 @@ public static class TechnicalServiceApi
         api.MapGet("/spareparts/{sparepartId:Guid}", GetSparepartAsync);
         api.MapPost("/spareparts", CreateSparepartAsync);
         api.MapPut("/spareparts", UpdateSparepartAsync);
+        api.MapPut("/spareparts/{sparepartId:Guid}/draft", SetSparepartDraftAsync);
+        api.MapPut("/spareparts/batch-draft", BatchSetSparepartsDraftAsync);
         api.MapGet("/spareparts/used-in-services", GetSparePartsUsedInServicesAsync);
         // Seeded lookup tables — they only change when a migration reseeds them,
         // but the UI asks for them on every page load. Cached server-side so the
@@ -647,6 +649,38 @@ public static class TechnicalServiceApi
         services.Logger.LogWarning("{CommandName} failed", command.GetType().Name);
         return TypedResults.BadRequest($"{command.GetType().Name} failed.");
     }
+
+    public static async Task<Results<Ok, BadRequest<string>>> SetSparepartDraftAsync(
+        Guid sparepartId,
+        [FromQuery] bool isDraft,
+        [AsParameters] TechnicalServices services,
+        IOutputCacheStore cache)
+    {
+        var command = new SetSparepartDraftCommand(sparepartId, isDraft);
+        var result = await services.Mediator.Send(command);
+        if (result)
+        {
+            await cache.EvictByTagAsync(Extensions.SparepartsCacheTag, CancellationToken.None);
+            return TypedResults.Ok();
+        }
+        return TypedResults.BadRequest("Failed to update spare part draft status.");
+    }
+
+    public static async Task<Results<Ok, BadRequest<string>>> BatchSetSparepartsDraftAsync(
+        BatchSparepartsDraftRequest request,
+        [AsParameters] TechnicalServices services,
+        IOutputCacheStore cache)
+    {
+        var command = new BatchSetSparepartsDraftCommand(request.Ids, request.IsDraft);
+        var result = await services.Mediator.Send(command);
+        if (result)
+        {
+            await cache.EvictByTagAsync(Extensions.SparepartsCacheTag, CancellationToken.None);
+            return TypedResults.Ok();
+        }
+        return TypedResults.BadRequest("Failed to batch update spare parts draft status.");
+    }
+
     // បន្ថែម handler method ថ្មី
     public static async Task<Ok<List<SparepartWithUsage>>> GetSparePartsUsedInServicesAsync(
      ITechnicalServiceQueries queries)
@@ -1623,3 +1657,4 @@ public record SetSentSparepartsRequest(
 public record UpdateSparepartItemRemarksRequest(string Remarks);
 public record SaveTelegramMessageRequest(string TopicKey, int MessageId);
 public record UpdateTelegramMessageIdRequest(int TelegramMessageId);
+public record BatchSparepartsDraftRequest(List<Guid> Ids, bool IsDraft);

@@ -1,6 +1,6 @@
 "use client";
 
-import React, { Suspense, useCallback, useEffect, useState } from "react";
+import React, { Suspense, useCallback, useEffect, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import PageWrapper from "@/components/PageWrapper";
 import { useI18n } from "@/i18n/LanguageProvider";
@@ -39,7 +39,7 @@ import {
   dispatchTelegramNotificationSafe,
   type CustomerItem,
 } from "@/services/api";
-import { matchSparePartInventory } from "@/report-layout";
+import { matchSparePartInventory, ticketSparePartLines } from "@/report-layout";
 import { fetchUserMap, getCurrentUserFullName } from "@/services/userService";
 import {
   buildStockInTelegramMessage,
@@ -80,6 +80,20 @@ function ServiceTicketsContent() {
 
   // Active ticket & edits
   const [activeTicket, setActiveTicket] = useState<RepairServiceItem | null>(null);
+  const activeTicketRef = useRef<RepairServiceItem | null>(activeTicket);
+  activeTicketRef.current = activeTicket;
+
+  const handleUpdateTicket = useCallback(
+    (updater: RepairServiceItem | ((prev: RepairServiceItem | null) => RepairServiceItem | null)) => {
+      setActiveTicket((prev) => {
+        const next = typeof updater === "function" ? updater(prev) : updater;
+        activeTicketRef.current = next;
+        return next;
+      });
+    },
+    []
+  );
+
   const [originalTicket, setOriginalTicket] = useState<RepairServiceItem | null>(null);
   const [isLoadingTicket, setIsLoadingTicket] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
@@ -146,11 +160,12 @@ function ServiceTicketsContent() {
           // ignore
         }
         // Enrich spare part descriptions from inventory if empty
-        if (data.sparepartItems && Array.isArray(data.sparepartItems) && data.sparepartItems.length > 0) {
+        const rawParts = data.sparepartItems || data.sparePartItems;
+        if (rawParts && Array.isArray(rawParts) && rawParts.length > 0) {
           try {
             const invRes = await fetchSparePartsInventory(1, 500);
             const invItems = invRes.items || [];
-            data.sparepartItems = data.sparepartItems.map((p: any) => {
+            const mappedParts = rawParts.map((p: any) => {
               const match = matchSparePartInventory(p, invItems as unknown as Record<string, unknown>[]);
               if (match) {
                 const resolvedName = (match.itemName || match.partName || match.name) as string | undefined;
@@ -164,6 +179,7 @@ function ServiceTicketsContent() {
                   ...p,
                   sparepartId: resolvedId,
                   sparePartId: resolvedId,
+                  SparepartId: resolvedId,
                   description: p.description?.trim() ? p.description : resolvedName || p.description || "Spare Part",
                   itemName: p.itemName?.trim() ? p.itemName : resolvedName || p.itemName || "Spare Part",
                   useFor: p.useFor || match.useFor || match.compatibleModel || "—",
@@ -172,6 +188,8 @@ function ServiceTicketsContent() {
               }
               return p;
             });
+            data.sparepartItems = mappedParts;
+            data.sparePartItems = mappedParts;
           } catch (partErr) {
             console.warn("Could not enrich spare parts on ticket load:", partErr);
           }
@@ -240,43 +258,57 @@ function ServiceTicketsContent() {
 
   // Save changes
   const handleSave = async () => {
-    if (!activeTicket) return;
+    // 1. Force blur active element to ensure any in-progress inline text edits (like Solution, Qty, Remarks) commit immediately!
+    if (typeof document !== "undefined" && document.activeElement instanceof HTMLElement) {
+      document.activeElement.blur();
+    }
+    // Yield to allow inline text edit blur handlers to complete and sync into activeTicketRef
+    await new Promise((resolve) => setTimeout(resolve, 60));
+
+    const currentTicket = activeTicketRef.current || activeTicket;
+    if (!currentTicket) return;
     setIsSaving(true);
 
     try {
       // Normalize location
-      const loc = activeTicket.serviceLocation === "OnSite" ? "OnSite" : "CompanyService";
+      const loc = currentTicket.serviceLocation === "OnSite" ? "OnSite" : "CompanyService";
 
       // Priority ID: 1 = Low, 2 = Normal, 3 = High
-      let prioId = activeTicket.servicePriorityId;
-      if (!prioId && activeTicket.servicePriority) {
-        const p = activeTicket.servicePriority.toLowerCase();
+      let prioId = currentTicket.servicePriorityId;
+      if (!prioId && currentTicket.servicePriority) {
+        const p = currentTicket.servicePriority.toLowerCase();
         prioId = p.includes("high") ? 3 : p.includes("low") ? 1 : 2;
       }
       prioId = prioId || 2;
 
       // Service Type ID: 1 = Free, 2 = Charge
-      let sTypeId = activeTicket.serviceTypeId;
+      let sTypeId = currentTicket.serviceTypeId;
       if (!sTypeId) {
-        const isCharge = (activeTicket.serviceType || "").toLowerCase() === "charge";
+        const isCharge = (currentTicket.serviceType || "").toLowerCase() === "charge";
         sTypeId = isCharge ? 2 : 1;
       }
 
       const statusId =
         (originalTicket?.statusId && originalTicket.statusId > 0 ? originalTicket.statusId : undefined) ??
-        (activeTicket.statusId && activeTicket.statusId > 0 ? activeTicket.statusId : undefined) ??
-        resolveStatusFallback(originalTicket?.status || activeTicket.status);
+        (currentTicket.statusId && currentTicket.statusId > 0 ? currentTicket.statusId : undefined) ??
+        resolveStatusFallback(originalTicket?.status || currentTicket.status);
 
       // Clean spare parts (filter out blank/draft nullable rows)
       // If status is Sent Spareparts (12), Repairing (5), or Finished (6), isHoldStatus is false (live stock deduction/restoration).
       // If status is Inspection (2), Awaiting Customer Confirm (3), Awaiting Sparepart (4), Sale Confirmed (11), etc., isHoldStatus is true (hold, zero stock movements).
       const isHold = !(statusId === 5 || statusId === 6 || statusId === 12);
-      const cleanParts = (activeTicket.sparepartItems || [])
+      const ticketParts = ticketSparePartLines(currentTicket as unknown as Record<string, unknown>);
+      const cleanParts = ticketParts
         .filter((p: any) => Boolean((p.description || p.itemName || "").trim()))
         .map((p: any) => {
           const rawCond = (p.condition || "").trim().toLowerCase();
           const cond = rawCond === "fix" ? "Fix" : rawCond === "free" ? "Free" : "Replace";
+          const rawId = p.id || p.sparepartItemId || p.lineId;
+          const isValidGuid =
+            typeof rawId === "string" &&
+            /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(rawId);
           return {
+            id: isValidGuid ? rawId : undefined,
             sparepartId: p.sparePartId || p.sparepartId || "00000000-0000-0000-0000-000000000000",
             description: (p.description || p.itemName || "Spare Part").trim(),
             quantity: Math.max(1, p.quantity || 1),
@@ -375,7 +407,7 @@ function ServiceTicketsContent() {
       }
 
       // ServiceDate normalized
-      let svcDate = activeTicket.serviceDate;
+      let svcDate = currentTicket.serviceDate;
       if (svcDate && /(?:Z|[+-]\d{2}:?\d{2})$/i.test(svcDate.trim())) {
         const d = new Date(svcDate);
         if (!Number.isNaN(d.getTime())) {
@@ -383,7 +415,7 @@ function ServiceTicketsContent() {
         }
       }
 
-      let finDate = activeTicket.finishedDate;
+      let finDate = currentTicket.finishedDate;
       if (finDate && /(?:Z|[+-]\d{2}:?\d{2})$/i.test(finDate.trim())) {
         const d = new Date(finDate);
         if (!Number.isNaN(d.getTime())) {
@@ -392,17 +424,17 @@ function ServiceTicketsContent() {
       }
 
       // Auto-resolve Customer ID if missing or Guid.Empty
-      let resolvedCustomerId = activeTicket.customerId;
+      let resolvedCustomerId = currentTicket.customerId;
       if (
         (!resolvedCustomerId || resolvedCustomerId === "00000000-0000-0000-0000-000000000000") &&
-        activeTicket.companyName?.trim()
+        currentTicket.companyName?.trim()
       ) {
         try {
-          const lookup = await fetchCustomerCenter(1, 20, activeTicket.companyName.trim());
-          const target = activeTicket.companyName.trim().toLowerCase();
+          const lookup = await fetchCustomerCenter(1, 20, currentTicket.companyName.trim());
+          const target = currentTicket.companyName.trim().toLowerCase();
           const found =
             (lookup.items || []).find((c: CustomerItem) => c.companyName.trim().toLowerCase() === target) ||
-            (lookup.items || []).find((c: CustomerItem) => c.phoneNumber?.trim() && c.phoneNumber.trim() === activeTicket.phoneNumber?.trim()) ||
+            (lookup.items || []).find((c: CustomerItem) => c.phoneNumber?.trim() && c.phoneNumber.trim() === currentTicket.phoneNumber?.trim()) ||
             (lookup.items || [])[0];
           if (found && found.id) {
             resolvedCustomerId = found.id;
@@ -413,28 +445,28 @@ function ServiceTicketsContent() {
       }
 
       const payload = {
-        id: activeTicket.id,
+        id: currentTicket.id,
         customerId: resolvedCustomerId || "00000000-0000-0000-0000-000000000000",
-        companyName: activeTicket.companyName || "N/A",
-        address: activeTicket.address || "",
-        contactName: activeTicket.contactName || "",
-        phoneNumber: activeTicket.phoneNumber || "",
-        itemId: activeTicket.itemId || null,
-        itemName: (activeTicket.itemName || "").trim(),
-        serialNumber: (activeTicket.serialNumber || "").trim(),
-        reportNo: activeTicket.reportNo, // strictly locked
+        companyName: currentTicket.companyName || "N/A",
+        address: currentTicket.address || "",
+        contactName: currentTicket.contactName || "",
+        phoneNumber: currentTicket.phoneNumber || "",
+        itemId: currentTicket.itemId || null,
+        itemName: (currentTicket.itemName || "").trim(),
+        serialNumber: (currentTicket.serialNumber || "").trim(),
+        reportNo: currentTicket.reportNo, // strictly locked
         serviceDate: svcDate,
         finishedDate: finDate || null,
-        customerRequest: activeTicket.customerRequest?.trim() || "Service Request",
-        inspection: activeTicket.inspection || "",
-        solution: activeTicket.solution || "",
+        customerRequest: currentTicket.customerRequest?.trim() || "Service Request",
+        inspection: currentTicket.inspection || "",
+        solution: currentTicket.solution || "",
         serviceLocation: loc,
         serviceTypeId: sTypeId,
         servicePriorityId: prioId,
         statusId, // strictly locked & accurately resolved
-        hasContract: Boolean(activeTicket.hasContract),
-        repairBy: activeTicket.repairBy || null,
-        verifiedBy: activeTicket.verifiedBy || null,
+        hasContract: Boolean(currentTicket.hasContract),
+        repairBy: currentTicket.repairBy || null,
+        verifiedBy: currentTicket.verifiedBy || null,
         sparepartItems: cleanParts,
       };
 
@@ -454,14 +486,14 @@ function ServiceTicketsContent() {
         try {
           await dispatchTelegramNotificationSafe(
             {
-              ...activeTicket,
+              ...currentTicket,
               ...payload,
               statusId,
-              status: originalTicket?.status || activeTicket.status,
+              status: originalTicket?.status || currentTicket.status,
               sparepartItems: cleanParts,
               sparePartItems: cleanParts,
             } as unknown as RepairServiceItem,
-            originalTicket?.status || activeTicket.status,
+            originalTicket?.status || currentTicket.status,
             undefined,
             true // forceEdit in-place
           );
@@ -472,8 +504,8 @@ function ServiceTicketsContent() {
         // 📦 Alert Telegram for real stock movements (StockIn / StockOut)
         if (stockDeltas.length > 0) {
           const performedBy = getCurrentUserFullName() || "System";
-          const reportNo = activeTicket.reportNo || "N/A";
-          const companyName = activeTicket.companyName || "";
+          const reportNo = currentTicket.reportNo || "N/A";
+          const companyName = currentTicket.companyName || "";
 
           for (const delta of stockDeltas) {
             try {
@@ -542,7 +574,7 @@ function ServiceTicketsContent() {
         }
 
         // Reload full fresh ticket without re-triggering mode popup
-        await loadTicketById(activeTicket.id, false);
+        await loadTicketById(currentTicket.id, false);
       } else {
         const errText = await res.text();
         toast.error(`Save failed: ${errText || res.statusText}`);
@@ -833,7 +865,7 @@ function ServiceTicketsContent() {
               <div className="flex-1 overflow-y-auto pr-1 w-full max-w-5xl mx-auto py-1">
                 <TicketFieldsEditor
                   ticket={activeTicket}
-                  onChange={setActiveTicket}
+                  onChange={handleUpdateTicket}
                   highlightSection={highlightedSection}
                   onSectionFocused={(s) => setHighlightedSection(s)}
                 />
@@ -847,7 +879,7 @@ function ServiceTicketsContent() {
                   ticket={activeTicket}
                   selectedSection={highlightedSection}
                   onSelectSection={(s) => setHighlightedSection(s)}
-                  onUpdateTicket={setActiveTicket}
+                  onUpdateTicket={handleUpdateTicket}
                 />
               </div>
             )}

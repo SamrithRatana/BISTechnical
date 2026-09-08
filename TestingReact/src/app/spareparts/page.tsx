@@ -21,6 +21,8 @@ import {
   Image as ImageIcon,
   Smartphone,
   Printer,
+  Eye,
+  EyeOff,
 } from "lucide-react";
 import { useCompanionScanner } from "@/context/CompanionScannerContext";
 import {
@@ -32,6 +34,7 @@ import {
   invalidateCachePrefix,
   SparePartItem,
   fetchSparePartById,
+  toggleSparePartDraft,
 } from "@/services/api";
 import { uploadImage, UploadError } from "@/services/upload";
 import { uploadErrorTranslationKey } from "@/lib/uploadErrorMessage";
@@ -87,19 +90,21 @@ interface ColumnSort {
  * progress bar and the filter chips — they used to be three separate `if`
  * ladders over the same two thresholds.
  */
-type StockBand = "good" | "critical" | "out";
+type StockBand = "good" | "critical" | "out" | "draft";
 
-function stockBand(qty: number): StockBand {
+function stockBand(qty: number, isDraft?: boolean): StockBand {
+  if (isDraft) return "draft";
   if (qty <= 0) return "out";
   if (qty <= 2) return "critical";
   return "good";
 }
 
-const BAND_TONE = { good: "success", critical: "warning", out: "danger" } as const;
+const BAND_TONE = { good: "success", critical: "warning", out: "danger", draft: "neutral" } as const;
 const BAND_LABEL = {
   good: "sp.stockGood",
   critical: "sp.stockCritical",
   out: "sp.stockOut",
+  draft: "sp.stockDraft",
 } as const;
 
 /**
@@ -203,6 +208,7 @@ const PartRow = memo(function PartRow({
   onEdit,
   onDelete,
   onPrint,
+  onToggleDraft,
   isRibbonMode,
   isSelected,
   onToggleSelect,
@@ -220,6 +226,7 @@ const PartRow = memo(function PartRow({
   onEdit: (part: SparePartItem) => void;
   onDelete: (part: SparePartItem) => void;
   onPrint: (part: SparePartItem) => void;
+  onToggleDraft?: (part: SparePartItem) => void;
   isRibbonMode?: boolean;
   isSelected?: boolean;
   onToggleSelect?: (part: SparePartItem) => void;
@@ -232,7 +239,7 @@ const PartRow = memo(function PartRow({
   const qty    = part.quantity ?? 0;
   const price  = part.defaultPrice ?? 0;
 
-  const band = stockBand(qty);
+  const band = stockBand(qty, part.isDraft);
 
   return (
     <tr
@@ -375,7 +382,7 @@ const PartRow = memo(function PartRow({
             </Badge>
             <ProgressBar
               value={(Math.min(qty, STOCK_BAR_FULL) / STOCK_BAR_FULL) * 100}
-              tone={BAND_TONE[band]}
+              tone={band === "draft" ? "accent" : BAND_TONE[band]}
               className="w-14 mt-0.5"
             />
           </button>
@@ -430,16 +437,33 @@ const PartRow = memo(function PartRow({
         <td className="py-2 px-2 sm:px-2.5 text-center whitespace-nowrap" onClick={(e) => e.stopPropagation()}>
           <div className="flex items-center justify-center gap-1.5">
             {isRibbonMode ? (
-              <button
-                type="button"
-                onClick={() => onPrint(part)}
-                className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-xs font-semibold text-accent hover:bg-accent-soft border border-accent/30 transition-colors shadow-2xs cursor-pointer"
-                title={t("crud.print")}
-                aria-label={`${t("crud.print")} — ${name}`}
-              >
-                <Printer className="w-3.5 h-3.5" />
-                <span>{t("crud.print")}</span>
-              </button>
+              <>
+                <button
+                  type="button"
+                  onClick={() => onPrint(part)}
+                  className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-xs font-semibold text-accent hover:bg-accent-soft border border-accent/30 transition-colors shadow-2xs cursor-pointer"
+                  title={t("crud.print")}
+                  aria-label={`${t("crud.print")} — ${name}`}
+                >
+                  <Printer className="w-3.5 h-3.5" />
+                  <span>{t("crud.print")}</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => onToggleDraft?.(part)}
+                  className={cn(
+                    "inline-flex items-center gap-1 px-2 py-1 rounded-md text-xs font-semibold border transition-colors shadow-2xs cursor-pointer",
+                    part.isDraft
+                      ? "text-purple-600 dark:text-purple-400 bg-purple-500/10 hover:bg-purple-500/20 border-purple-500/30"
+                      : "text-ink-secondary hover:bg-cushion hover:text-ink border-subtle"
+                  )}
+                  title={part.isDraft ? t("sp.markUndraft") : t("sp.markDraft")}
+                  aria-label={`${part.isDraft ? t("sp.markUndraft") : t("sp.markDraft")} — ${name}`}
+                >
+                  {part.isDraft ? <Eye className="w-3.5 h-3.5 text-purple-600" /> : <EyeOff className="w-3.5 h-3.5" />}
+                  <span className="hidden xl:inline">{part.isDraft ? t("sp.markUndraft") : t("sp.markDraft")}</span>
+                </button>
+              </>
             ) : (
               <>
                 <button
@@ -450,6 +474,20 @@ const PartRow = memo(function PartRow({
                   aria-label={`${t("sp.edit")} — ${name}`}
                 >
                   <Edit className="w-3.5 h-3.5" />
+                </button>
+                <button
+                  type="button"
+                  onClick={() => onToggleDraft?.(part)}
+                  className={cn(
+                    "grid place-items-center w-7 h-7 rounded-full transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-ring cursor-pointer",
+                    part.isDraft
+                      ? "text-purple-600 bg-purple-500/10 hover:bg-purple-500/20"
+                      : "text-ink-secondary hover:bg-cushion hover:text-ink"
+                  )}
+                  title={part.isDraft ? t("sp.markUndraft") : t("sp.markDraft")}
+                  aria-label={`${part.isDraft ? t("sp.markUndraft") : t("sp.markDraft")} — ${name}`}
+                >
+                  {part.isDraft ? <Eye className="w-3.5 h-3.5 text-purple-600" /> : <EyeOff className="w-3.5 h-3.5" />}
                 </button>
                 <button
                   type="button"
@@ -610,7 +648,8 @@ export default function SparePartsPage() {
     good: number;
     critical: number;
     out: number;
-  }>({ total: 0, good: 0, critical: 0, out: 0 });
+    draft: number;
+  }>({ total: 0, good: 0, critical: 0, out: 0, draft: 0 });
 
   // Table header column filters & sorting
   const [columnFilters, setColumnFilters] = useState<ColumnFilters>({
@@ -804,6 +843,7 @@ export default function SparePartsPage() {
           good: res.goodCount ?? 0,
           critical: res.criticalCount ?? 0,
           out: res.outOfStockCount ?? 0,
+          draft: res.draftCount ?? 0,
         });
       }
       return res;
@@ -812,6 +852,20 @@ export default function SparePartsPage() {
     resetKey: `spareparts:${listKey}`,
     getId: (p) => p?.id,
   });
+
+  const handleToggleDraft = useCallback(
+    async (part: SparePartItem) => {
+      const targetDraft = !part.isDraft;
+      const ok = await toggleSparePartDraft(part.id, targetDraft);
+      if (ok) {
+        toast.success(targetDraft ? t("sp.draftSuccess") : t("sp.undraftSuccess"));
+        loadData();
+      } else {
+        toast.error(lang === "km" ? "មិនអាចកែប្រែស្ថានភាព Draft បានទេ" : "Failed to update draft status");
+      }
+    },
+    [t, lang, loadData]
+  );
 
   // Distinct Item Names present in current table data
   const visibleItems = useMemo(() => {
@@ -1435,6 +1489,22 @@ export default function SparePartsPage() {
               isLoading={isLoading}
               extraActions={
                 <div className="flex items-center gap-1.5">
+                  {checkedRow && (
+                    <button
+                      type="button"
+                      onClick={() => handleToggleDraft(checkedRow)}
+                      className={cn(
+                        "inline-flex items-center gap-1 px-2.5 py-1 text-xs font-semibold rounded-lg transition-all shadow-2xs cursor-pointer border whitespace-nowrap",
+                        checkedRow.isDraft
+                          ? "text-purple-700 dark:text-purple-300 bg-purple-500/15 hover:bg-purple-500/25 border-purple-500/30"
+                          : "text-ink-secondary bg-surface hover:bg-cushion border-subtle"
+                      )}
+                      title={checkedRow.isDraft ? t("sp.markUndraft") : t("sp.markDraft")}
+                    >
+                      {checkedRow.isDraft ? <Eye className="w-3.5 h-3.5 text-purple-600" /> : <EyeOff className="w-3.5 h-3.5" />}
+                      <span>{checkedRow.isDraft ? t("sp.markUndraft") : t("sp.markDraft")}</span>
+                    </button>
+                  )}
                   <button
                     type="button"
                     onClick={openPairingModal}
@@ -1468,7 +1538,7 @@ export default function SparePartsPage() {
 
               {/* Stock-band chips */}
               <div className="flex items-center gap-1 sm:gap-1.5 flex-wrap">
-                {(["all", "good", "critical", "out"] as const).map((key) => {
+                {(["all", "good", "critical", "out", "draft"] as const).map((key) => {
                   const active = band === key;
                   const count =
                     key === "all"
@@ -1477,7 +1547,9 @@ export default function SparePartsPage() {
                       ? bandCounts.good
                       : key === "critical"
                       ? bandCounts.critical
-                      : bandCounts.out;
+                      : key === "out"
+                      ? bandCounts.out
+                      : bandCounts.draft;
 
                   return (
                     <button
@@ -1490,7 +1562,9 @@ export default function SparePartsPage() {
                         "border transition-colors cursor-pointer",
                         "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-ring",
                         active
-                          ? "bg-accent-soft text-accent-soft-fg border-accent/40"
+                          ? key === "draft"
+                            ? "bg-purple-500/20 text-purple-700 dark:text-purple-300 border-purple-500/40"
+                            : "bg-accent-soft text-accent-soft-fg border-accent/40"
                           : "bg-surface text-ink-secondary border-subtle hover:bg-cushion hover:text-ink"
                       )}
                     >
@@ -1499,7 +1573,13 @@ export default function SparePartsPage() {
                           aria-hidden
                           className={cn(
                             "w-1.5 h-1.5 rounded-full",
-                            key === "good" ? "bg-success" : key === "critical" ? "bg-warning" : "bg-danger"
+                            key === "good"
+                              ? "bg-success"
+                              : key === "critical"
+                              ? "bg-warning"
+                              : key === "out"
+                              ? "bg-danger"
+                              : "bg-purple-500"
                           )}
                         />
                       )}
@@ -1632,7 +1712,7 @@ export default function SparePartsPage() {
 
             {/* Stock-band chips. Reflects true catalogue / search breakdown counts. */}
             <div className="flex items-center gap-1 sm:gap-1.5 w-full">
-              {(["all", "good", "critical", "out"] as const).map((key) => {
+              {(["all", "good", "critical", "out", "draft"] as const).map((key) => {
                 const active = band === key;
                 const count =
                   key === "all"
@@ -1641,7 +1721,9 @@ export default function SparePartsPage() {
                     ? bandCounts.good
                     : key === "critical"
                     ? bandCounts.critical
-                    : bandCounts.out;
+                    : key === "out"
+                    ? bandCounts.out
+                    : bandCounts.draft;
 
                 return (
                   <button
@@ -1654,7 +1736,9 @@ export default function SparePartsPage() {
                       "border transition-colors cursor-pointer",
                       "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-ring",
                       active
-                        ? "bg-accent-soft text-accent-soft-fg border-accent/40"
+                        ? key === "draft"
+                          ? "bg-purple-500/20 text-purple-700 dark:text-purple-300 border-purple-500/40"
+                          : "bg-accent-soft text-accent-soft-fg border-accent/40"
                         : "bg-surface text-ink-secondary border-subtle hover:bg-cushion hover:text-ink"
                     )}
                   >
@@ -1663,7 +1747,13 @@ export default function SparePartsPage() {
                         aria-hidden
                         className={cn(
                           "w-1.5 h-1.5 rounded-full",
-                          key === "good" ? "bg-success" : key === "critical" ? "bg-warning" : "bg-danger"
+                          key === "good"
+                            ? "bg-success"
+                            : key === "critical"
+                            ? "bg-warning"
+                            : key === "out"
+                            ? "bg-danger"
+                            : "bg-purple-500"
                         )}
                       />
                     )}
@@ -1995,6 +2085,7 @@ export default function SparePartsPage() {
                             { key: "good", label: t("sp.stockGood") },
                             { key: "critical", label: t("sp.stockCritical") },
                             { key: "out", label: t("sp.stockOut") },
+                            { key: "draft", label: t("sp.stockDraft") },
                           ].map((opt) => (
                             <label key={opt.key} className="flex items-center gap-2 p-1 rounded-lg hover:bg-cushion cursor-pointer select-none text-xs">
                               <input
@@ -2053,6 +2144,7 @@ export default function SparePartsPage() {
                       onEdit={handleEditPart}
                       onDelete={handleDeletePart}
                       onPrint={handlePrintPart}
+                      onToggleDraft={handleToggleDraft}
                       isRibbonMode={isRibbonMode}
                       isSelected={checkedRow?.id === part.id}
                       onToggleSelect={(p) => setCheckedRow(checkedRow?.id === p.id ? null : p)}

@@ -14,6 +14,7 @@ public record Sparepart
     public Guid LinkItemId { get; init; }
     public int Quantity { get; init; }
     public decimal DefaultPrice { get; init; }
+    public bool IsDraft { get; init; }
 
     // Classification — all null for parts that have not been classified yet.
     // Names and the brand logo are projected alongside the ids so the list

@@ -36,7 +36,7 @@ import {
   type ItemModel,
 } from "@/services/api";
 import { fetchUsersList, type UserDto } from "@/services/userService";
-import { matchSparePartInventory } from "@/report-layout";
+import { matchSparePartInventory, ticketSparePartLines } from "@/report-layout";
 import { useI18n } from "@/i18n/LanguageProvider";
 import HighlightText from "@/components/HighlightText";
 import { getImageUrl } from "@/lib/utils";
@@ -47,6 +47,9 @@ interface TicketFieldsEditorProps {
   highlightSection?: string | null;
   onSectionFocused?: (sectionId: string) => void;
 }
+
+const getTicketParts = (t: RepairServiceItem): SparePartItemDetail[] =>
+  (ticketSparePartLines(t as unknown as Record<string, unknown>) as unknown as SparePartItemDetail[]) || [];
 
 function toLocalDatetimeValue(iso?: string | null): string {
   if (!iso) return "";
@@ -239,7 +242,7 @@ export default function TicketFieldsEditor({
       try {
         const res = await fetchSparePartsInventory(1, 25, rowSearchQuery.trim());
         if (active) {
-          setSparePartsList(res.items || []);
+          setSparePartsList((res.items || []).filter((p) => !p.isDraft));
           setSparePartsTotal(res.totalCount || (res.items || []).length);
           setPartsPage(1);
         }
@@ -264,7 +267,7 @@ export default function TicketFieldsEditor({
         try {
           const nextPage = partsPage + 1;
           const res = await fetchSparePartsInventory(nextPage, 25, rowSearchQuery.trim());
-          setSparePartsList((prev) => [...prev, ...(res.items || [])]);
+          setSparePartsList((prev) => [...prev, ...((res.items || []).filter((p) => !p.isDraft))]);
           setPartsPage(nextPage);
         } catch (err) {
           console.warn("Failed to load more spare parts:", err);
@@ -291,7 +294,7 @@ export default function TicketFieldsEditor({
 
   const handleAddNewSparepart = () => {
     if (isSparepartLocked) return;
-    const existingParts = [...(ticket.sparepartItems || [])];
+    const existingParts = [...getTicketParts(ticket)];
     const lastPart = existingParts[existingParts.length - 1];
     if (lastPart && !(lastPart.description || lastPart.itemName || "").trim()) {
       setActiveSearchRowIdx(existingParts.length - 1);
@@ -302,6 +305,7 @@ export default function TicketFieldsEditor({
     const newPart: SparePartItemDetail = {
       id: "part-" + Date.now(),
       sparePartId: "00000000-0000-0000-0000-000000000000",
+      sparepartId: "00000000-0000-0000-0000-000000000000",
       itemName: "",
       description: "",
       useFor: ticket.itemName || "—",
@@ -314,6 +318,7 @@ export default function TicketFieldsEditor({
     onChange({
       ...ticket,
       sparepartItems: updated,
+      sparePartItems: updated,
     });
     setActiveSearchRowIdx(updated.length - 1);
     setRowSearchQuery("");
@@ -321,7 +326,7 @@ export default function TicketFieldsEditor({
 
   const handleSelectPartForRow = (rowIndex: number, invPart: any) => {
     if (isSparepartLocked) return;
-    const existingParts = [...(ticket.sparepartItems || [])];
+    const existingParts = [...getTicketParts(ticket)];
     const name = invPart.itemName || invPart.name || invPart.description || "Spare Part";
     const model = invPart.useFor || invPart.compatibleModel || ticket.itemName || "Universal";
     const partNo = invPart.partNumber || invPart.serialNumber || invPart.code || "—";
@@ -330,10 +335,13 @@ export default function TicketFieldsEditor({
     existingParts[rowIndex] = {
       ...existingParts[rowIndex],
       sparePartId: invPart.id,
+      sparepartId: invPart.id,
+      SparepartId: invPart.id,
       itemName: name,
       description: name,
       useFor: model,
       partNumber: partNo,
+      serialNumber: partNo,
       condition: normalizeCondition(existingParts[rowIndex]?.condition),
       quantity: existingParts[rowIndex]?.quantity || 1,
       defaultPrice: price,
@@ -344,6 +352,7 @@ export default function TicketFieldsEditor({
       existingParts.push({
         id: "part-" + (Date.now() + 1),
         sparePartId: "00000000-0000-0000-0000-000000000000",
+        sparepartId: "00000000-0000-0000-0000-000000000000",
         itemName: "",
         description: "",
         useFor: ticket.itemName || "—",
@@ -357,17 +366,19 @@ export default function TicketFieldsEditor({
     onChange({
       ...ticket,
       sparepartItems: existingParts,
+      sparePartItems: existingParts,
     });
     setActiveSearchRowIdx(null);
   };
 
   const handleRemovePart = (index: number) => {
     if (isSparepartLocked) return;
-    const existingParts = [...(ticket.sparepartItems || [])];
+    const existingParts = [...getTicketParts(ticket)];
     existingParts.splice(index, 1);
     onChange({
       ...ticket,
       sparepartItems: existingParts,
+      sparePartItems: existingParts,
     });
     if (activeSearchRowIdx === index) {
       setActiveSearchRowIdx(null);
@@ -376,7 +387,7 @@ export default function TicketFieldsEditor({
 
   const handleUpdatePartQty = (index: number, qty: number) => {
     if (isSparepartLocked) return;
-    const existingParts = [...(ticket.sparepartItems || [])];
+    const existingParts = [...getTicketParts(ticket)];
     if (existingParts[index]) {
       existingParts[index] = {
         ...existingParts[index],
@@ -385,13 +396,14 @@ export default function TicketFieldsEditor({
       onChange({
         ...ticket,
         sparepartItems: existingParts,
+        sparePartItems: existingParts,
       });
     }
   };
 
   const handleUpdatePartCondition = (index: number, condition: string) => {
     if (isSparepartLocked) return;
-    const existingParts = [...(ticket.sparepartItems || [])];
+    const existingParts = [...getTicketParts(ticket)];
     if (existingParts[index]) {
       existingParts[index] = {
         ...existingParts[index],
@@ -400,13 +412,14 @@ export default function TicketFieldsEditor({
       onChange({
         ...ticket,
         sparepartItems: existingParts,
+        sparePartItems: existingParts,
       });
     }
   };
 
   const handleUpdatePartDesc = (index: number, description: string) => {
     if (isSparepartLocked) return;
-    const existingParts = [...(ticket.sparepartItems || [])];
+    const existingParts = [...getTicketParts(ticket)];
     if (existingParts[index]) {
       existingParts[index] = {
         ...existingParts[index],
@@ -417,13 +430,14 @@ export default function TicketFieldsEditor({
       onChange({
         ...ticket,
         sparepartItems: existingParts,
+        sparePartItems: existingParts,
       });
     }
   };
 
   const handleUpdatePartModel = (index: number, useFor: string) => {
     if (isSparepartLocked) return;
-    const existingParts = [...(ticket.sparepartItems || [])];
+    const existingParts = [...getTicketParts(ticket)];
     if (existingParts[index]) {
       existingParts[index] = {
         ...existingParts[index],
@@ -432,21 +446,24 @@ export default function TicketFieldsEditor({
       onChange({
         ...ticket,
         sparepartItems: existingParts,
+        sparePartItems: existingParts,
       });
     }
   };
 
   const handleUpdatePartNo = (index: number, partNumber: string) => {
     if (isSparepartLocked) return;
-    const existingParts = [...(ticket.sparepartItems || [])];
+    const existingParts = [...getTicketParts(ticket)];
     if (existingParts[index]) {
       existingParts[index] = {
         ...existingParts[index],
         partNumber,
+        serialNumber: partNumber,
       };
       onChange({
         ...ticket,
         sparepartItems: existingParts,
+        sparePartItems: existingParts,
       });
     }
   };

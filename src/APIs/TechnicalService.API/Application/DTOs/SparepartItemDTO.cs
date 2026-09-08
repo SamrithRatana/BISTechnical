@@ -1,7 +1,8 @@
-﻿namespace TechnicalService.API.Application.DTOs;
+namespace TechnicalService.API.Application.DTOs;
 
 public record SparepartItemDTO
 {
+    public Guid? Id { get; init; }
     public Guid SparepartId { get; init; }
     public string Description { get; init; }
     public int Quantity { get; init; }
@@ -9,5 +10,4 @@ public record SparepartItemDTO
     public bool IsHoldStatus { get; init; } = false;
     public string Remarks { get; init; }
     public DateTime? RemarksUpdatedAt { get; init; }
-
 }

@@ -54,12 +54,13 @@ import { fetchHealthSnapshot, subscribeToHealth, readHealth, publishHealth, type
 import { prefetchRouteData } from "@/services/routePrefetch";
 import { NAV_GROUPS, HOME_ITEM, SETTINGS_ITEM, findNavItem, type NavSubGroup } from "@/config/navigation";
 import { useUserPermissions } from "@/hooks/useUserPermissions";
-import { hasAnyRole } from "@/services/authSession";
+import { hasAnyRole, ROLES } from "@/services/authSession";
 import { ProgressBar } from "@/components/av";
 import { cn } from "@/lib/utils";
 import toast from "react-hot-toast";
 
 const ICONS: Record<string, React.ElementType> = {
+  "/system-monitor": Activity,
   "/templates-settings": SlidersHorizontal,
   "/service-tickets": FileText,
   "/pending-repairs": Clock,
@@ -511,12 +512,18 @@ const HealthWidget = memo(function HealthWidget({
   if (collapsed) {
     return (
       <div className="grid place-items-center py-2 space-y-2" title={t("sysmon.tooltipSummary", { pct: String(Math.round(pct)), mb: String(memTotal) })}>
-        <Activity
-          className={cn(
-            "w-5 h-5",
-            tone === "success" ? "text-success" : tone === "warning" ? "text-warning" : "text-danger"
-          )}
-        />
+        <Link
+          href="/system-monitor"
+          title={lang === "km" ? "ត្រួតពិនិត្យប្រព័ន្ធ (Observability & Topology)" : "System Observability & Topology"}
+          className="cursor-pointer hover:scale-110 transition-transform"
+        >
+          <Activity
+            className={cn(
+              "w-5 h-5",
+              tone === "success" ? "text-success" : tone === "warning" ? "text-warning" : "text-danger"
+            )}
+          />
+        </Link>
         <button
           type="button"
           onClick={handleCleanRam}
@@ -700,6 +707,28 @@ const HealthWidget = memo(function HealthWidget({
               </div>
             </div>
           </div>
+
+          {/* Direct Observability Access for SuperAdmin */}
+          {hasAnyRole([ROLES.superAdmin]) && (
+            <Link
+              href="/system-monitor"
+              className={cn(
+                "mt-2.5 flex items-center justify-between px-2.5 py-1.5 rounded-lg text-[10px] font-semibold transition-all border shadow-xs group",
+                isCarbon
+                  ? "bg-slate-800/80 text-cyan-300 border-cyan-800/50 hover:bg-slate-700"
+                  : "bg-accent-soft/70 text-accent border-accent/25 hover:bg-accent hover:text-white"
+              )}
+              title={lang === "km" ? "បើកផ្ទាំងគ្រប់គ្រង Observability (Topology, Errors & Live Stream)" : "Open System Observability Dashboard"}
+            >
+              <div className="flex items-center gap-1.5 truncate">
+                <Activity className="w-3 h-3 text-emerald-500 group-hover:text-emerald-300 animate-pulse shrink-0" />
+                <span className="truncate">{lang === "km" ? "📡 ត្រួតពិនិត្យប្រព័ន្ធ (Topology & Logs)" : "📡 System Observability"}</span>
+              </div>
+              <span className="text-[9px] px-1.5 py-0.5 rounded-full font-bold bg-accent/20 group-hover:bg-white/20 uppercase tracking-wider">
+                Live
+              </span>
+            </Link>
+          )}
         </div>
       )}
     </div>

@@ -14,8 +14,15 @@
 
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { fetchDashboardStats, fetchRepairServices } from "@/services/api";
-import { fetchGlobalBranding } from "@/services/appSettings";
+import {
+  fetchDashboardStats,
+  fetchRepairServices,
+  fetchSparepartTransactions,
+} from "@/services/api";
+import { fetchAppLogoUrl, fetchGlobalBranding } from "@/services/appSettings";
+import { publishBrandLogo } from "@/services/brandLogoStore";
+import { loadTickets } from "@/hooks/useTicketSeries";
+import { primeListCache } from "@/hooks/useInfiniteList";
 import { SESSION_CHANGED_EVENT } from "@/services/authSession";
 import { publishHealth } from "@/services/healthSnapshot";
 import type { LoginResponse } from "@/services/types";
@@ -162,18 +169,38 @@ export function useLoginPipeline(): LoginPipeline {
           : "[03/05] Technical Core API: Synchronizing tickets, spare parts & probing health...",
       ]);
 
-      // Fire dashboard warm-up prefetches in background
-      void Promise.all([
-        fetchDashboardStats().catch(() => null),
-        fetchRepairServices(1, 25, "Today", "").catch(() => null),
-        fetchRepairServices(1, 400, "All", "", { projection: "summary" }).catch(() => null),
-        fetchUserMap().catch(() => ({})),
-        fetchGlobalBranding().catch(() => null),
-        fetchMyPermissions().catch(() => null),
+      // Fire and coordinate full workspace data pre-warm in parallel
+      const prewarmPromise = Promise.allSettled([
+        fetchDashboardStats(),
+        loadTickets(),
+        fetchRepairServices(1, 25, "Today", "").then((res) => {
+          if (res?.items) {
+            primeListCache("Today|", res.items, res.totalCount);
+          }
+          return res;
+        }),
+        fetchSparepartTransactions(1, 25, "All", "", false),
+        fetchUserMap(),
+        fetchGlobalBranding().then((b) => {
+          if (b?.logoUrl) publishBrandLogo(b.logoUrl);
+          return b;
+        }),
+        fetchAppLogoUrl().then((url) => {
+          if (url) publishBrandLogo(url);
+          return url;
+        }),
+        fetchMyPermissions(),
       ]);
 
-      // Await parallelized health report
-      const healthReport = await healthProbePromise;
+      // Await health report + prewarm with a safety ceiling so login animation never hangs
+      const [healthReport] = await Promise.all([
+        healthProbePromise,
+        Promise.race([
+          prewarmPromise,
+          new Promise((r) => setTimeout(r, 650)),
+        ]),
+      ]);
+
       if (healthReport) {
         publishHealth(healthReport);
       }
@@ -205,6 +232,7 @@ export function useLoginPipeline(): LoginPipeline {
       if (typeof window !== "undefined") {
         localStorage.setItem("last_workspace_sync_time", Date.now().toString());
         sessionStorage.setItem("workspace_pipeline_synced", "true");
+        sessionStorage.setItem("workspace_dashboard_prewarmed_v1", "true");
       }
 
       // Final celebration pause so all 5 green checkmarks are clearly visible before entering dashboard

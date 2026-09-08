@@ -35,7 +35,8 @@ const STAGES: { key: ServiceStageKey; labelKey: string }[] = [
 ];
 
 export default function StageReportPage() {
-  const { t } = useI18n();
+  const { t, lang } = useI18n();
+  const isKhmer = lang === "km";
 
   // Active Stage selection — NO "ALL" option
   const [selectedStage, setSelectedStage] = useState<ServiceStageKey>("Inspection");
@@ -123,7 +124,7 @@ export default function StageReportPage() {
       </div>
 
       {/* KPI Metric Strip */}
-      <div className="mb-4 flex flex-wrap items-center gap-3">
+      <div className="mb-3 flex flex-wrap items-center gap-3">
         <div className="flex items-center gap-2 rounded-xl border border-subtle bg-surface px-3 py-2 text-xs shadow-xs">
           <span className="font-semibold text-ink-primary">
             {t("report.stageCount", { count: totalCount })}
@@ -131,6 +132,23 @@ export default function StageReportPage() {
           <span className="text-ink-muted">
             ({translateStatus(selectedStage, t)})
           </span>
+        </div>
+      </div>
+
+      {/* Informative Process Date Filtering Note */}
+      <div className="mb-4 rounded-xl border border-sky-500/30 bg-sky-500/10 p-3 text-xs leading-relaxed text-sky-950 dark:text-sky-200 shadow-xs">
+        <div className="flex items-start gap-2">
+          <span className="shrink-0 text-sm">📌</span>
+          <div>
+            <span className="font-bold text-sky-800 dark:text-sky-300">
+              {isKhmer ? "ចំណាំអំពីការទាញទិន្នន័យ (Process Date Filtering) ៖ " : "Data Filtering Note: "}
+            </span>
+            <span>
+              {isKhmer
+                ? `របាយការណ៍នេះបង្ហាញរាល់សំបុត្រដែលបានឆ្លងកាត់ ឬស្ថិតក្នុងដំណាក់កាល «${translateStatus(selectedStage, t)}» ក្នុងចន្លោះថ្ងៃ ខែ ឆ្នាំដែលបានជ្រើសរើស (Process Date) — ដោយមិនខ្វល់ថាសំបុត្រនោះបច្ចុប្បន្នស្ថិតនៅដំណាក់កាលណា ឬបានជួសជុលរួចរាល់ (Finished) ហើយនោះឡើយ (ទោះជាជួសជុលរួចហើយ ក៏ទាញមកដែរឱ្យតែបានចូល ឬមានសកម្មភាពក្នុងចន្លោះកាលបរិច្ឆេទនេះ)។`
+                : `This report queries all tickets that transitioned through '${translateStatus(selectedStage, t)}' within the selected date range — regardless of where the ticket sits today (even if already completed or delivered).`}
+            </span>
+          </div>
         </div>
       </div>
 
