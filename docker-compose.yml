@@ -23,7 +23,7 @@ services:
       - NEXT_TELEMETRY_DISABLED=1
       - PORT=3000
       - HOSTNAME=0.0.0.0
-      - NEXT_PUBLIC_TECHNICAL_API_URL=${NEXT_PUBLIC_TECHNICAL_API_URL:-https://techapi.camprotec.com.kh}
+      - NEXT_PUBLIC_TECHNICAL_API_URL=${NEXT_PUBLIC_TECHNICAL_API_URL:-https://technicalservicesapi.camprotec.com.kh}
       - NEXT_PUBLIC_JWT_API_URL=${NEXT_PUBLIC_JWT_API_URL:-https://user.camprotec.com.kh}
       - NEXT_PUBLIC_CUSTOMER_API_URL=${NEXT_PUBLIC_CUSTOMER_API_URL:-https://customerapi.camprotec.com.kh}
       - NEXT_PUBLIC_API_VERSION=1.0

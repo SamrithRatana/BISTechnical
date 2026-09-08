@@ -8,7 +8,7 @@ import {
 
 export const dynamic = "force-dynamic";
 
-const TECHNICAL_API = process.env.NEXT_PUBLIC_TECHNICAL_API_URL || "https://techapi.camprotec.com.kh";
+const TECHNICAL_API = process.env.NEXT_PUBLIC_TECHNICAL_API_URL || "https://technicalservicesapi.camprotec.com.kh";
 const USER_API = process.env.NEXT_PUBLIC_USER_MANAGEMENT_API_URL || "https://user.camprotec.com.kh";
 
 async function probeUrl(url: string, timeoutMs = 1200): Promise<{ ok: boolean; latencyMs: number | null; data?: any }> {
