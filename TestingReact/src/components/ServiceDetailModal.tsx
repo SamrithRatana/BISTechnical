@@ -80,6 +80,8 @@ interface ModalProps {
    * the dropdown before it will save, because only that yields a real itemId.
    */
   prefill?: ActionValues;
+  /** Custom z-index when opened from nested modals (e.g. AllTicketsSearchModal) */
+  zIndex?: number;
 }
 
 /**
@@ -1278,7 +1280,7 @@ function EditContent({
 // ─────────────────────────────────────────────────────────────────────────────
 // Main export
 // ─────────────────────────────────────────────────────────────────────────────
-export default function ServiceDetailModal({ item, onClose, mode = "view", onSave, prefill }: ModalProps) {
+export default function ServiceDetailModal({ item, onClose, mode = "view", onSave, prefill, zIndex }: ModalProps) {
   const later = useSafeTimeout();
   const isReceivedStage =
     !item ||
@@ -1695,12 +1697,14 @@ export default function ServiceDetailModal({ item, onClose, mode = "view", onSav
   const currentDays = currentItem?.daysTaken ?? (currentItem ? calculateDaysTaken(currentItem) : null);
 
 
+  const effectiveZIndex = zIndex ?? 50;
+
   return (
     <ModalWrapper
       open={!!item}
       onClose={onClose}
       maxWidth="max-w-3xl xl:max-w-4xl"
-      zIndex={50}
+      zIndex={effectiveZIndex}
       labelledBy="service-detail-title"
     >
       <div className={`w-full overflow-hidden flex flex-col max-h-[var(--av-modal-inner-maxh)] ${modalWrapperClass}`}>
@@ -1782,7 +1786,7 @@ export default function ServiceDetailModal({ item, onClose, mode = "view", onSav
           open={showConfirmDelete}
           onClose={() => setShowConfirmDelete(false)}
           maxWidth="max-w-md"
-          zIndex={60}
+          zIndex={effectiveZIndex + 10}
           isAlert
         >
           <div className="p-6 space-y-4">

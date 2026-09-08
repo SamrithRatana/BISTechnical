@@ -69,6 +69,37 @@ function withTimeout(clientSignal?: AbortSignal): AbortSignal {
     : timeoutSignal;
 }
 
+/**
+ * Detects whether an error was caused by a client-side abort (navigating away, page refresh),
+ * container restart socket drop, or undici ResponseAborted event.
+ */
+function isAbortOrClientDisconnect(error: unknown): boolean {
+  if (!error) return false;
+  if (error instanceof Error) {
+    if (
+      error.name === "AbortError" ||
+      error.name === "ResponseAborted"
+    ) {
+      return true;
+    }
+    const errStr = `${error.name} ${error.message} ${error.stack ?? ""}`.toLowerCase();
+    if (
+      errStr.includes("abort") ||
+      errStr.includes("signal") ||
+      errStr.includes("cancelled") ||
+      errStr.includes("canceled") ||
+      errStr.includes("econnreset")
+    ) {
+      return true;
+    }
+  }
+  const code = (error as { code?: string })?.code;
+  if (code === "UND_ERR_ABORTED" || code === "ECONNRESET" || code === "ERR_ABORTED") {
+    return true;
+  }
+  return false;
+}
+
 function getTargetUrl(req: NextRequest, pathString: string): string {
   const searchParams = new URLSearchParams(req.nextUrl.searchParams);
   const targetService = searchParams.get("service") || "technical";
@@ -386,7 +417,7 @@ export async function GET(
       });
       return NextResponse.json({ error: "Backend API timed out" }, { status: 504 });
     }
-    if (msg.includes("abort") || msg.includes("signal")) {
+    if (isAbortOrClientDisconnect(error)) {
       return NextResponse.json({ error: "Request aborted" }, { status: 499 });
     }
     console.error("❌ Proxy GET Error:", msg);
@@ -395,7 +426,7 @@ export async function GET(
       endpoint: `/api/${pathString}`,
       method: "GET",
       statusCode: 500,
-      message: `Proxy GET Error: ${msg}`,
+      message: `Proxy GET Error: ${msg || error?.constructor?.name || "Unknown error"}`,
       stackTrace: error instanceof Error ? error.stack : undefined,
       userContext: user ? { username: user } : undefined,
     });
@@ -488,6 +519,9 @@ export async function POST(
 
     return relay(res, data);
   } catch (error: unknown) {
+    if (isAbortOrClientDisconnect(error)) {
+      return NextResponse.json({ error: "Request aborted" }, { status: 499 });
+    }
     const msg = error instanceof Error ? error.message : "Unknown error";
     const durationMs = Math.round(performance.now() - startTime);
     const serviceId = mapServiceId(targetService);
@@ -499,7 +533,7 @@ export async function POST(
       endpoint: `/api/${pathString}`,
       method: "POST",
       statusCode: 500,
-      message: `Proxy POST Error: ${msg}`,
+      message: `Proxy POST Error: ${msg || error?.constructor?.name || "Unknown error"}`,
       stackTrace: error instanceof Error ? error.stack : undefined,
       payloadSnippet: typeof body === "string" ? body.substring(0, 300) : undefined,
       userContext: user ? { username: user } : undefined,
@@ -602,6 +636,9 @@ export async function PUT(
 
     return relay(res, data);
   } catch (error: unknown) {
+    if (isAbortOrClientDisconnect(error)) {
+      return NextResponse.json({ error: "Request aborted" }, { status: 499 });
+    }
     const msg = error instanceof Error ? error.message : "Unknown error";
     const durationMs = Math.round(performance.now() - startTime);
     const serviceId = mapServiceId(targetService);
@@ -613,7 +650,7 @@ export async function PUT(
       endpoint: `/api/${pathString}`,
       method: "PUT",
       statusCode: 500,
-      message: `Proxy PUT Error: ${msg}`,
+      message: `Proxy PUT Error: ${msg || error?.constructor?.name || "Unknown error"}`,
       stackTrace: error instanceof Error ? error.stack : undefined,
       payloadSnippet: typeof body === "string" ? body.substring(0, 300) : undefined,
       userContext: user ? { username: user } : undefined,
@@ -699,6 +736,9 @@ export async function DELETE(
 
     return relay(res, data);
   } catch (error: unknown) {
+    if (isAbortOrClientDisconnect(error)) {
+      return NextResponse.json({ error: "Request aborted" }, { status: 499 });
+    }
     const msg = error instanceof Error ? error.message : "Unknown error";
     const durationMs = Math.round(performance.now() - startTime);
     const serviceId = mapServiceId(targetService);
@@ -710,7 +750,7 @@ export async function DELETE(
       endpoint: `/api/${pathString}`,
       method: "DELETE",
       statusCode: 500,
-      message: `Proxy DELETE Error: ${msg}`,
+      message: `Proxy DELETE Error: ${msg || error?.constructor?.name || "Unknown error"}`,
       stackTrace: error instanceof Error ? error.stack : undefined,
       userContext: user ? { username: user } : undefined,
     });

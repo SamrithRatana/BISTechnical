@@ -175,6 +175,21 @@ export function analyzeRootCause(
     };
   }
 
+  if (
+    lowerMsg.includes("abort") ||
+    lowerMsg.includes("responseaborted") ||
+    lowerMsg.includes("und_err_aborted") ||
+    lowerMsg.includes("request aborted") ||
+    statusCode === 499
+  ) {
+    return {
+      rootCauseKm: "សំណើត្រូវបានផ្អាក ឬលុបចោលដោយ Browser (Client Aborted / Navigation Cancel)",
+      rootCauseEn: "The HTTP request connection was aborted by browser navigation, page reload, or container restart.",
+      actionAdviceKm: "នេះជាដំណើរការធម្មតាពេល User ប្តូរទំព័រ ឬ Refresh កំឡុងពេលទិន្នន័យកំពុងផ្ទេរ។ មិនមានបញ្ហាអ្វីដល់ប្រព័ន្ធឡើយ។",
+      actionAdviceEn: "Harmless cancellation triggered by browser navigation or restart. No action needed.",
+    };
+  }
+
   if (statusCode === 500 || lowerMsg.includes("internal server error")) {
     return {
       rootCauseKm: "កំហុសខាងក្នុងប្រព័ន្ធ API (Unhandled Backend Exception / Server Fault)",

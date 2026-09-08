@@ -439,6 +439,7 @@ export default function AllTicketsSearchModal({
           item={selectedTicket}
           onClose={() => setSelectedTicket(null)}
           mode="view"
+          zIndex={300}
         />
       )}
     </>
